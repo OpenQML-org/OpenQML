@@ -154,6 +154,17 @@ class OpenQMLDataset(OpenQMLEntity):
         if self.data_type != "hamiltonian":
             raise ValueError(f"dataset {self.name!r} is not a Hamiltonian dataset")
         arrays = self._materialise()
+        if not self.hamiltonians and self.generator:
+            # The array cache holds the separations and the reference energies,
+            # but not the operators themselves -- and it is what _materialise()
+            # loads on every run after the first. Rebuild them from the same
+            # seeded generator, or a ground-state task silently scores nothing.
+            self._run_generator()
+        if not self.hamiltonians:
+            raise OpenQMLCacheError(
+                f"dataset {self.name!r} declares data_type='hamiltonian' but carries "
+                "no operators and no generator to rebuild them from"
+            )
         records = []
         for i, entry in enumerate(self.hamiltonians or []):
             terms = terms_from_json(entry["terms"])

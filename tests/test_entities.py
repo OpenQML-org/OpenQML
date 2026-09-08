@@ -36,6 +36,48 @@ def test_hamiltonian_dataset_reference_energies_are_exact():
         assert exact == pytest.approx(record["reference_energy"], abs=1e-12)
 
 
+def test_hamiltonians_survive_the_array_cache():
+    """The .npz cache holds energies, not operators -- they must be rebuilt.
+
+    Everything after the first call in a fresh cache goes through the cached
+    arrays, and the operators are not in there. Losing them turned every
+    ground-state run into a run over nothing at all, scored as a success.
+    """
+    dataset = openqml.get_dataset("h2-surrogate-2q")
+    assert len(dataset.get_hamiltonians()) == 12
+    dataset._materialise()  # write the array cache
+
+    reloaded = openqml.get_dataset("h2-surrogate-2q")
+    assert reloaded.hamiltonians is None  # nothing carried over in the metadata
+    records = reloaded.get_hamiltonians()
+    assert len(records) == 12
+    assert records[0]["terms"] == dataset.get_hamiltonians()[0]["terms"]
+
+
+def test_an_unrebuildable_hamiltonian_dataset_says_so():
+    from openqml.exceptions import OpenQMLCacheError
+
+    dataset = openqml.get_dataset("h2-surrogate-2q")
+    dataset.hamiltonians, dataset.generator = [], None
+    with pytest.raises(OpenQMLCacheError, match="no operators"):
+        dataset.get_hamiltonians()
+
+
+def test_a_ground_state_run_refuses_an_empty_hamiltonian_set():
+    """Scoring nothing is not a result; it used to be reported as one."""
+    from openqml.exceptions import OpenQMLError
+    from openqml.models import ExactDiagonalisation
+
+    class EmptyTask(type(openqml.get_task(4))):
+        def get_hamiltonians(self):
+            return []
+
+    task = EmptyTask(name="empty", dataset_id=6, target_name="energy",
+                     evaluation_measure="absolute_energy_error", id=4)
+    with pytest.raises(OpenQMLError, match="no Hamiltonians"):
+        openqml.run_model_on_task(ExactDiagonalisation(2), task)
+
+
 def test_create_and_publish_dataset():
     X = np.random.default_rng(0).normal(size=(20, 3))
     y = (X.sum(axis=1) > 0).astype(int)

@@ -57,6 +57,23 @@ def test_shared_weights_broadcast_over_a_feature_batch():
     assert np.allclose(shared, tiled)
 
 
+def test_amplitude_embedding_survives_a_weight_batch():
+    """One prepared state, many parameter rows -- the shape a gradient asks for."""
+    from openqml.circuits import Circuit, hardware_efficient_ansatz
+
+    circuit = Circuit(2).amplitude_embedding().compose(hardware_efficient_ansatz(2, 1))
+    rng = np.random.default_rng(5)
+    vector = rng.normal(size=4)
+    vector /= np.linalg.norm(vector)
+    weights = rng.normal(size=(6, circuit.n_parameters))
+
+    batched = batched_z(circuit, [0, 1], weights, vector)
+    loop = np.array([[StatevectorSimulator(2).run(circuit, row, vector).expval({q: "Z"})
+                      for q in (0, 1)] for row in weights])
+    assert batched.shape == (6, 2)
+    assert np.allclose(batched, loop)
+
+
 def test_training_gradient_matches_finite_differences():
     """The batched training gradient is the true gradient of the loss.
 

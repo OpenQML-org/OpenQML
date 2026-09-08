@@ -19,6 +19,8 @@ __all__ = [
     "StatevectorSimulator", "get_backend", "list_backends", "register_backend",
     "simulate", "expectations", "z_expectations", "statevectors",
     "batched_states", "batched_z", "batched_energies", "chunk_limit",
+    "batched_z_jacobian", "batched_energy_jacobian", "supports_adjoint", "prefers_adjoint",
+    "ADJOINT_MIN_WORK",
     "DEFAULT_BACKEND", "MAX_BATCH_ELEMENTS", "MAX_BATCH_AMPLITUDES",
 ]
 
@@ -180,6 +182,74 @@ def batched_energies(circuit: Circuit, terms: Sequence, weights=None, features=N
     else:  # pragma: no cover - optional backends
         collect = lambda sim: np.array([sim.expval_hamiltonian(terms)])
     return _chunked(circuit, weights, features, device, collect, chunk)
+
+
+# -- analytic gradients -------------------------------------------------------
+
+def supports_adjoint(device) -> bool:
+    """True when this device can differentiate a circuit by the adjoint method."""
+    return getattr(device, "supports_batch", False) and hasattr(device, "z_jacobian")
+
+
+#: Where the backward sweep starts paying off, in ``amplitudes * parameters``.
+#: Calibrated by measuring both rules from 2 to 12 qubits and 6 to 60
+#: parameters; the crossover sits near 2e3 and the curve is flat around it, so
+#: a wrong call near the boundary costs a few percent either way.
+ADJOINT_MIN_WORK = 2_000
+
+
+def prefers_adjoint(batch: int, n_qubits: int, n_parameters: int,
+                    n_observables: int = 1) -> bool:
+    """Is the backward sweep actually the cheaper gradient at this size?
+
+    Not always, even though it does asymptotically less work. The shift rule
+    stacks all ``2P+1`` parameter sets into *one* batched run, so it issues
+    O(gates) NumPy calls on a large array; the sweep issues O(P) calls per
+    observable on a small one. Below a few thousand amplitude-parameters the
+    per-call overhead is the whole cost and the shift rule wins -- a 6-qubit
+    VQE is on that side of the line, a 10-qubit one is 8x the other side.
+    """
+    work = batch * (1 << int(n_qubits)) * max(int(n_parameters), 1)
+    return work >= ADJOINT_MIN_WORK * (1 + max(int(n_observables), 1)) / 2
+
+
+def _chunked_pair(circuit, weights, features, device, call, chunk: Optional[int]):
+    """Same chunking as :func:`_chunked`, for a call returning two arrays."""
+    total = _batch_size(weights, features)
+    limit = chunk or chunk_limit(circuit.n_qubits)
+    if total <= limit:
+        return call(weights, features)
+    values, jacobians = [], []
+    for start in range(0, total, limit):
+        stop = min(start + limit, total)
+        value, jacobian = call(_slice(weights, start, stop), _slice(features, start, stop))
+        values.append(value)
+        jacobians.append(jacobian)
+    return np.concatenate(values, axis=0), np.concatenate(jacobians, axis=0)
+
+
+def batched_z_jacobian(circuit: Circuit, wires: Sequence[int], weights=None, features=None,
+                       device=None, backend: str = DEFAULT_BACKEND, seed=None,
+                       chunk: Optional[int] = None):
+    """``(batch, W)`` values of <Z> and their ``(batch, W, P)`` derivatives.
+
+    Exact and analytic, by one backward sweep per batch rather than the ``2P+1``
+    forward runs the parameter-shift rule needs. Requires a device that
+    implements ``z_jacobian``; ask :func:`supports_adjoint` first.
+    """
+    device = _resolve_device(device, circuit, backend, seed, None)
+    wires = [int(q) for q in wires]
+    return _chunked_pair(circuit, weights, features, device,
+                         lambda w, f: device.z_jacobian(circuit, wires, w, f), chunk)
+
+
+def batched_energy_jacobian(circuit: Circuit, terms: Sequence, weights=None, features=None,
+                            device=None, backend: str = DEFAULT_BACKEND, seed=None,
+                            chunk: Optional[int] = None):
+    """``(batch,)`` energies and their ``(batch, P)`` derivatives, analytically."""
+    device = _resolve_device(device, circuit, backend, seed, None)
+    return _chunked_pair(circuit, weights, features, device,
+                         lambda w, f: device.energy_jacobian(circuit, terms, w, f), chunk)
 
 
 def statevectors(circuit: Circuit, X, weights=None, backend: str = DEFAULT_BACKEND,

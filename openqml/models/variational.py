@@ -13,15 +13,19 @@ from typing import Callable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from ..backends import DEFAULT_BACKEND, batched_z, get_backend
-from ..circuits.circuit import Circuit
+from ..backends import (DEFAULT_BACKEND, batched_z, batched_z_jacobian, get_backend,
+                        prefers_adjoint, supports_adjoint)
+from ..circuits.circuit import Circuit, Ref
 from ..circuits.templates import data_reuploading, get_ansatz, get_feature_map
 from .base import QuantumModel, adam, pad_to_power_of_two
 
 __all__ = [
     "VariationalQuantumClassifier", "VariationalQuantumRegressor",
-    "parameter_shift_gradient", "shift_sets",
+    "parameter_shift_gradient", "shift_sets", "GRADIENT_METHODS",
 ]
+
+#: ``"auto"`` picks ``"adjoint"`` when it applies and ``"parameter_shift"`` otherwise.
+GRADIENT_METHODS = ("auto", "adjoint", "parameter_shift")
 
 SHIFT = math.pi / 2
 EPSILON = 1e-4
@@ -119,6 +123,48 @@ class _VariationalBase(QuantumModel):
         """Same, for raw user input: scale first, then encode."""
         return self._outputs_prepared(weights, self._prepare_X(self._transform_features(X)))
 
+    def _gradient_method(self, batch: int = 1) -> str:
+        """Which differentiation rule this fit will actually use, and why.
+
+        The adjoint sweep and the shift rule agree to machine precision on an
+        exact simulator, and the sweep is O(P) state passes where the rule is
+        O(P**2) -- so it is the default wherever it applies. It does not apply
+        under shot noise (it is analytic), on a backend that cannot run it, or
+        on a circuit carrying a gate whose generator is not registered.
+        """
+        requested = getattr(self, "gradient", "auto")
+        if requested not in GRADIENT_METHODS:
+            raise ValueError(f"unknown gradient method {requested!r}; "
+                             f"expected one of {list(GRADIENT_METHODS)}")
+        if requested == "parameter_shift":
+            return "parameter_shift"
+        device = self._get_device()
+        usable = (not self.shots and supports_adjoint(device)
+                  and all(device.is_differentiable(gate.name)
+                          for gate in self.circuit_.gates
+                          if any(isinstance(p, Ref) and p.kind == "weights"
+                                 for p in gate.params)))
+        if requested == "adjoint":
+            if not usable:
+                raise ValueError(
+                    "gradient='adjoint' needs an analytic run (shots=None) on a backend "
+                    "that implements z_jacobian, with a differentiable circuit"
+                )
+            return "adjoint"
+        if usable and prefers_adjoint(batch, self.circuit_.n_qubits,
+                                      self.circuit_.n_parameters, len(self._readout_wires)):
+            return "adjoint"
+        return "parameter_shift"
+
+    def _loss_and_adjoint_gradient(self, weights, X, targets):
+        """Square loss and its gradient from one forward pass and one sweep."""
+        outputs, jacobian = batched_z_jacobian(self.circuit_, self._readout_wires, weights, X,
+                                               device=self._get_device())
+        residual = outputs - targets
+        loss = float(np.mean(residual ** 2))
+        gradient = 2.0 * np.einsum("bw,bwp->p", residual, jacobian) / residual.size
+        return loss, gradient
+
     def _loss_and_gradient(self, weights, X, targets, unique):
         """Square loss and its exact gradient, evaluated in a single batch.
 
@@ -144,12 +190,16 @@ class _VariationalBase(QuantumModel):
         n_weights = max(self.circuit_.n_parameters, 1)
         unique = _weights_are_unique(self.circuit_)
         X = self._prepare_X(X)
+        step_size = min(int(self.batch_size), len(X)) if self.batch_size else len(X)
+        self.gradient_method_ = self._gradient_method(step_size)
 
         def step(weights):
             if self.batch_size and self.batch_size < len(X):
                 batch = rng.choice(len(X), int(self.batch_size), replace=False)
             else:
                 batch = slice(None)
+            if self.gradient_method_ == "adjoint":
+                return self._loss_and_adjoint_gradient(weights, X[batch], targets[batch])
             return self._loss_and_gradient(weights, X[batch], targets[batch], unique)
 
         weights, history = adam(step, rng.normal(0, 0.1, n_weights), self.maxiter,
@@ -172,7 +222,7 @@ class VariationalQuantumClassifier(_VariationalBase):
     def __init__(self, feature_map: str = "angle", ansatz: str = "hardware_efficient",
                  layers: int = 2, n_qubits: Optional[int] = None, maxiter: int = 60,
                  learning_rate: float = 0.2, batch_size: Optional[int] = None,
-                 rescale="auto", shots: Optional[int] = None,
+                 rescale="auto", shots: Optional[int] = None, gradient: str = "auto",
                  backend: str = DEFAULT_BACKEND, seed: int = 0):
         self.feature_map = feature_map
         self.ansatz = ansatz
@@ -183,6 +233,7 @@ class VariationalQuantumClassifier(_VariationalBase):
         self.batch_size = batch_size
         self.rescale = rescale
         self.shots = shots
+        self.gradient = gradient
         self.backend = backend
         self.seed = seed
 
@@ -237,7 +288,7 @@ class VariationalQuantumRegressor(_VariationalBase):
     def __init__(self, feature_map: str = "reuploading", ansatz: str = "hardware_efficient",
                  layers: int = 3, n_qubits: Optional[int] = None, maxiter: int = 120,
                  learning_rate: float = 0.25, batch_size: Optional[int] = 24,
-                 rescale="auto", shots: Optional[int] = None,
+                 rescale="auto", shots: Optional[int] = None, gradient: str = "auto",
                  backend: str = DEFAULT_BACKEND, seed: int = 0):
         self.feature_map = feature_map
         self.ansatz = ansatz
@@ -248,6 +299,7 @@ class VariationalQuantumRegressor(_VariationalBase):
         self.batch_size = batch_size
         self.rescale = rescale
         self.shots = shots
+        self.gradient = gradient
         self.backend = backend
         self.seed = seed
 
