@@ -99,6 +99,11 @@ def _run_supervised(model, task, measures, seed):
 
 def _run_ground_state(model, task, measures, seed):
     records = task.get_hamiltonians()
+    if not records:
+        raise OpenQMLError(
+            f"task {task.id} has no Hamiltonians to estimate; a run over an empty "
+            "set would score nothing at all"
+        )
     fold_evaluations: Dict[str, Dict[int, Dict[int, float]]] = {}
     predictions = []
     for index, record in enumerate(records):

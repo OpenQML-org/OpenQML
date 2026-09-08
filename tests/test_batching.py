@@ -57,6 +57,23 @@ def test_shared_weights_broadcast_over_a_feature_batch():
     assert np.allclose(shared, tiled)
 
 
+def test_amplitude_embedding_survives_a_weight_batch():
+    """One prepared state, many parameter rows -- the shape a gradient asks for."""
+    from openqml.circuits import Circuit, hardware_efficient_ansatz
+
+    circuit = Circuit(2).amplitude_embedding().compose(hardware_efficient_ansatz(2, 1))
+    rng = np.random.default_rng(5)
+    vector = rng.normal(size=4)
+    vector /= np.linalg.norm(vector)
+    weights = rng.normal(size=(6, circuit.n_parameters))
+
+    batched = batched_z(circuit, [0, 1], weights, vector)
+    loop = np.array([[StatevectorSimulator(2).run(circuit, row, vector).expval({q: "Z"})
+                      for q in (0, 1)] for row in weights])
+    assert batched.shape == (6, 2)
+    assert np.allclose(batched, loop)
+
+
 def test_training_gradient_matches_finite_differences():
     """The batched training gradient is the true gradient of the loss.
 
@@ -110,6 +127,56 @@ def test_shift_sets_layout():
     assert sets.shape == (5, 2) and scale == 0.5
     assert np.allclose(sets[0], [0.0, 1.0])
     assert sets[1][0] > sets[2][0] and np.allclose(sets[1][1], 1.0)
+
+
+def test_a_backend_without_the_fast_path_still_works():
+    """The batched helpers and the adjoint sweep are both optional.
+
+    A backend offering only run/state/expval falls back to a loop and to the
+    parameter-shift rule, and has to reach the same answer either way.
+    """
+    from openqml import backends, models
+    from openqml.backends.statevector import StatevectorSimulator as Reference
+
+    class SlowSimulator:
+        name = "slow"
+        supports_batch = False
+
+        def __init__(self, n_qubits, seed=None, shots=None):
+            self._inner = Reference(n_qubits, seed=seed, shots=shots)
+            self.n_qubits = n_qubits
+
+        def run(self, circuit, weights=None, features=None):
+            self._inner.run(circuit, weights, features)
+            return self
+
+        @property
+        def state(self):
+            return self._inner.state
+
+        def expval(self, word):
+            return self._inner.expval(word)
+
+        def expval_hamiltonian(self, terms):
+            return self._inner.expval_hamiltonian(terms)
+
+    backends.register_backend("test.slow", lambda n, **kw: SlowSimulator(n, **kw))
+    assert not backends.supports_adjoint(SlowSimulator(2))
+
+    rng = np.random.default_rng(6)
+    X = rng.normal(size=(24, 2))
+    y = (X[:, 0] > 0).astype(int)
+    kwargs = dict(n_qubits=2, layers=1, maxiter=4, seed=0)
+    slow = VariationalQuantumClassifier(backend="test.slow", **kwargs).fit(X, y)
+    fast = VariationalQuantumClassifier(**kwargs).fit(X, y)
+
+    assert slow.gradient_method_ == "parameter_shift"
+    assert np.allclose(slow.weights_, fast.weights_)
+    assert np.array_equal(slow.predict(X), fast.predict(X))
+
+    kernel = models.QuantumKernelClassifier(feature_map="zz", n_qubits=2, backend="test.slow")
+    reference = models.QuantumKernelClassifier(feature_map="zz", n_qubits=2)
+    assert np.array_equal(kernel.fit(X, y).predict(X), reference.fit(X, y).predict(X))
 
 
 def test_state_cache_is_transparent():

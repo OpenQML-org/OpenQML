@@ -6,7 +6,8 @@ from typing import List, Optional, Sequence
 
 import numpy as np
 
-from ..backends import DEFAULT_BACKEND, batched_energies, get_backend
+from ..backends import (DEFAULT_BACKEND, batched_energies, batched_energy_jacobian,
+                        get_backend, prefers_adjoint, supports_adjoint)
 from ..circuits.templates import get_ansatz
 from ..hamiltonians import exact_ground_state, n_qubits_of, parse_terms
 from .base import QuantumModel, adam
@@ -23,13 +24,14 @@ class VQE(QuantumModel):
     def __init__(self, ansatz: str = "real_amplitudes", layers: int = 2,
                  n_qubits: Optional[int] = None, maxiter: int = 80,
                  learning_rate: float = 0.1, shots: Optional[int] = None,
-                 backend: str = DEFAULT_BACKEND, seed: int = 0):
+                 gradient: str = "auto", backend: str = DEFAULT_BACKEND, seed: int = 0):
         self.ansatz = ansatz
         self.layers = layers
         self.n_qubits = n_qubits
         self.maxiter = maxiter
         self.learning_rate = learning_rate
         self.shots = shots
+        self.gradient = gradient
         self.backend = backend
         self.seed = seed
 
@@ -47,12 +49,20 @@ class VQE(QuantumModel):
         def energy(weights: np.ndarray) -> float:
             return float(energies(np.atleast_2d(weights))[0])
 
-        def loss_and_gradient(weights):
+        def parameter_shift(weights):
             # the value and every parameter-shift evaluation in one batched pass
             sets, scale = shift_sets(weights, unique=True)
             values = energies(sets)
             return float(values[0]), scale * (values[1::2] - values[2::2])
 
+        def adjoint(weights):
+            # the same numbers from one backward sweep instead of 2P+1 runs
+            value, jacobian = batched_energy_jacobian(circuit, terms, np.atleast_2d(weights),
+                                                      device=device)
+            return float(value[0]), jacobian[0]
+
+        self.gradient_method_ = self._gradient_method(device, circuit)
+        loss_and_gradient = adjoint if self.gradient_method_ == "adjoint" else parameter_shift
         initial = rng.normal(0, 0.3, max(circuit.n_parameters, 1))
         weights, history = adam(loss_and_gradient, initial, self.maxiter, self.learning_rate)
         self.circuit_ = circuit
@@ -62,6 +72,26 @@ class VQE(QuantumModel):
         device.run(circuit, weights, None)
         self.state_ = device.state
         return self.energy_
+
+    def _gradient_method(self, device, circuit) -> str:
+        """``"adjoint"`` where the analytic sweep applies, else the shift rule."""
+        if self.gradient not in ("auto", "adjoint", "parameter_shift"):
+            raise ValueError(f"unknown gradient method {self.gradient!r}; expected one of "
+                             "['auto', 'adjoint', 'parameter_shift']")
+        if self.gradient == "parameter_shift":
+            return "parameter_shift"
+        usable = (not self.shots and supports_adjoint(device)
+                  and hasattr(device, "energy_jacobian")
+                  and all(device.is_differentiable(gate.name) for gate in circuit.gates
+                          if gate.params))
+        if self.gradient == "adjoint":
+            if not usable:
+                raise ValueError("gradient='adjoint' needs an analytic run (shots=None) on a "
+                                 "backend that implements energy_jacobian")
+            return "adjoint"
+        if usable and prefers_adjoint(1, circuit.n_qubits, circuit.n_parameters):
+            return "adjoint"
+        return "parameter_shift"
 
     def fit(self, terms, y=None):
         self.estimate(terms)
