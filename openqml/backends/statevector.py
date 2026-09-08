@@ -199,7 +199,6 @@ _DIAGONAL_2Q = {
 
 #: name -> the four entries [[m00, m01], [m10, m11]] of a single-qubit gate
 _DENSE_1Q = {
-    "h": lambda p: ([_INV_SQRT2, _INV_SQRT2], [_INV_SQRT2, -_INV_SQRT2]),
     "y": lambda p: ([0.0, -1j], [1j, 0.0]),
     "rx": _rx_entries,
     "ry": _ry_entries,
@@ -411,6 +410,19 @@ class StatevectorSimulator:
         builder = _DENSE_1Q.get(name)
         if builder is not None:
             self._apply_entries_1q(_transpose(builder(params), dagger), wires[0], state)
+            return True
+        if name == "h":
+            # sum and difference, then one scaling each: four passes over the
+            # state where the generic 2x2 needs six. Every feature map opens
+            # with a layer of these, so it is worth the special case.
+            view = self._split_1q(wires[0], state)
+            lower, upper = view[:, :, 0, :], view[:, :, 1, :]
+            total = lower + upper
+            total *= _INV_SQRT2
+            difference = lower - upper
+            difference *= _INV_SQRT2
+            lower[...] = total
+            upper[...] = difference
             return True
         if name == "x":
             view = self._split_1q(wires[0], state)
