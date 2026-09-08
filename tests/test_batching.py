@@ -129,6 +129,56 @@ def test_shift_sets_layout():
     assert sets[1][0] > sets[2][0] and np.allclose(sets[1][1], 1.0)
 
 
+def test_a_backend_without_the_fast_path_still_works():
+    """The batched helpers and the adjoint sweep are both optional.
+
+    A backend offering only run/state/expval falls back to a loop and to the
+    parameter-shift rule, and has to reach the same answer either way.
+    """
+    from openqml import backends, models
+    from openqml.backends.statevector import StatevectorSimulator as Reference
+
+    class SlowSimulator:
+        name = "slow"
+        supports_batch = False
+
+        def __init__(self, n_qubits, seed=None, shots=None):
+            self._inner = Reference(n_qubits, seed=seed, shots=shots)
+            self.n_qubits = n_qubits
+
+        def run(self, circuit, weights=None, features=None):
+            self._inner.run(circuit, weights, features)
+            return self
+
+        @property
+        def state(self):
+            return self._inner.state
+
+        def expval(self, word):
+            return self._inner.expval(word)
+
+        def expval_hamiltonian(self, terms):
+            return self._inner.expval_hamiltonian(terms)
+
+    backends.register_backend("test.slow", lambda n, **kw: SlowSimulator(n, **kw))
+    assert not backends.supports_adjoint(SlowSimulator(2))
+
+    rng = np.random.default_rng(6)
+    X = rng.normal(size=(24, 2))
+    y = (X[:, 0] > 0).astype(int)
+    kwargs = dict(n_qubits=2, layers=1, maxiter=4, seed=0)
+    slow = VariationalQuantumClassifier(backend="test.slow", **kwargs).fit(X, y)
+    fast = VariationalQuantumClassifier(**kwargs).fit(X, y)
+
+    assert slow.gradient_method_ == "parameter_shift"
+    assert np.allclose(slow.weights_, fast.weights_)
+    assert np.array_equal(slow.predict(X), fast.predict(X))
+
+    kernel = models.QuantumKernelClassifier(feature_map="zz", n_qubits=2, backend="test.slow")
+    reference = models.QuantumKernelClassifier(feature_map="zz", n_qubits=2)
+    assert np.array_equal(kernel.fit(X, y).predict(X), reference.fit(X, y).predict(X))
+
+
 def test_state_cache_is_transparent():
     X = np.random.default_rng(2).normal(size=(12, 3))
     clear_state_cache()

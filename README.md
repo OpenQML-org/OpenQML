@@ -93,9 +93,9 @@ diagonalisations of the same operators the VQE optimises.
 | --- | --- | --- |
 | `QuantumKernelClassifier` / `Regressor` | quantum | fidelity kernel + kernel ridge, no training loop |
 | `ClassicalKernelClassifier` / `Regressor` | classical | *identical solver*, RBF/linear/poly kernel |
-| `VariationalQuantumClassifier` | quantum | feature map + ansatz, parameter-shift gradients |
+| `VariationalQuantumClassifier` | quantum | feature map + ansatz, [analytic gradients](#gradients) |
 | `VariationalQuantumRegressor` | quantum | data re-uploading with a linear read-out |
-| `VQE` | quantum | ground-state energy, parameter-shift + Adam |
+| `VQE` | quantum | ground-state energy, adjoint or parameter-shift + Adam |
 | `ExactDiagonalisation` | reference | the yardstick, not a competitor |
 | `MajorityClassifier` / `LinearRegressor` | classical | the floor |
 
@@ -151,8 +151,10 @@ Four things in that table are worth stating out loud:
 * On **moons** and **circles**, the classical kernel matches the best quantum
   entry, in microseconds instead of seconds.
 * The **variational** row is behind the kernel row on three of four tasks while
-  costing four orders of magnitude more compute. That is the honest state of
-  these two approaches at this scale.
+  costing about two orders of magnitude more compute — 77× over this suite,
+  measured. (It was four orders before the simulator and the gradients were
+  rewritten; the gap is smaller now, and still the wrong way round.) That is
+  the honest state of these two approaches at this scale.
 
 `compare()` runs every model over every task and returns the whole grid,
 because a benchmark that reports only its wins is not a benchmark.
@@ -176,37 +178,92 @@ ansätze (`hardware_efficient`, `strongly_entangling`, `real_amplitudes`).
 
 ## Performance
 
-The simulator carries a batch dimension: the state is a `(batch, 2, ..., 2)`
-tensor, a gate is one reshape and one matmul, and angles may differ per batch
-element. Encoding a dataset is therefore a single pass, and a parameter-shift
-gradient — all `2P+1` shifted parameter sets against all samples in the
-mini-batch — is one array of circuits instead of thousands of calls.
+Three things carry it, in order of how much they matter.
 
-Measured on one CPU core, against the same code path with batching switched off:
+**The state is `(batch, 2**n)` and a gate never moves it.** Qubit 0 is the most
+significant bit, so the amplitudes any gate mixes are already a fixed stride
+apart: reshaping to `(batch, left, 2, right)` is a view, and the gate is a few
+elementwise operations on the two halves written straight back in place. No
+permutation, no copy, and no stacked 2×2 matmul — which is what a per-batch
+angle used to force, and it is the worst shape NumPy has. Angles may still
+differ per batch element, so one call covers a whole dataset or every shifted
+parameter set a gradient needs.
 
-| workload | batched | one circuit at a time |
-| --- | --- | --- |
-| encode 400 rows (4 qubits, 34 gates) | 6 ms | 325 ms |
-| one gradient step (1312 circuit evaluations) | 20 ms | 1199 ms |
+Gates also carry their structure. Diagonal ones (`rz`, `phase`, `rzz`, `cz`,
+`crz`, `z`, `s`, `t`) scale the halves and build nothing; permutations (`x`,
+`cnot`, `swap`) exchange two slices; controlled rotations touch only the
+control-is-set half; the Hadamard is a sum and a difference. Between them that
+is most of the gates in the bundled feature maps and ansätze.
 
-End-to-end, on the bundled tasks:
+**Gradients are one backward sweep, not `2P+1` forward runs.** The
+parameter-shift rule costs two whole circuit evaluations per gate parameter —
+O(P²) gate applications for one gradient. On an exact simulator the same
+numbers come out of a single adjoint sweep in O(P) state passes. See
+[Gradients](#gradients) below; it is the same number, not an approximation.
 
-| workload | time |
-| --- | --- |
-| encode 200 rows through the ZZ map | 4 ms |
-| quantum kernel, 5-fold CV on `moons-2d` | 17 ms |
-| VQE over all 12 Hamiltonians (80 steps each) | 0.43 s, mean error 2.3e-05 |
-| variational classifier, 5-fold CV on `moons-2d` | 4.5 s |
-| four kernel models across the whole suite | 0.19 s |
-| the test suite (52 tests) | 1.6 s |
+**Cross-validation encodes its rows once** rather than once per fold (a small
+cache, clearable with `models.clear_state_cache()`), and `<Z>` read-outs come
+straight off the probability vector — one matmul against a cached sign matrix,
+whatever the number of wires. The all-Z terms of a Hamiltonian collapse into a
+single cached diagonal, so a VQE step costs one pass over the state instead of
+one per term.
 
-Two more things keep the common paths cheap: k-fold cross-validation encodes
-its rows once rather than once per fold (a small cache, clearable with
-`models.clear_state_cache()`), and `<Z>` read-outs come straight off the
-probability vector instead of a separate matrix product per wire.
+Measured on one CPU core, against the previous implementation of the same API.
+Every score in this README is unchanged to ten decimal places; only the clock
+moved.
+
+| workload | before | after | |
+| --- | --- | --- | --- |
+| encode 200 rows through the ZZ map | 1.1 ms | 0.3 ms | 4.5× |
+| encode 400 rows (4 qubits, 34 gates) | 6.1 ms | 1.6 ms | 3.9× |
+| encode 512 rows (8 qubits, 74 gates) | 75 ms | 38 ms | 2.0× |
+| one gradient step (1312 circuit evaluations) | 19 ms | 7 ms | 2.7× |
+| quantum kernel, 5-fold CV on `moons-2d` | 11 ms | 7 ms | 1.5× |
+| four kernel models across the whole suite | 96 ms | 70 ms | 1.4× |
+| VQE over all 12 Hamiltonians (80 steps each) | 0.40 s | 0.22 s | 1.8× |
+| VQE, 10 qubits, 40 steps | 1.02 s | 0.13 s | 8.1× |
+| variational classifier, 5-fold CV on `moons-2d` | 4.6 s | 0.33 s | 14× |
+| variational classifier, 5-fold CV on `blobs-4d` | 20.0 s | 1.5 s | 13× |
+| the test suite (69 tests) | | 1.2 s | |
 
 Batches larger than `backends.MAX_BATCH_ELEMENTS` are split automatically, so
-callers never size a gradient against the qubit count by hand.
+callers never size a gradient against the qubit count by hand. The chunk is
+also capped at `MAX_BATCH_AMPLITUDES` total amplitudes: a gate is memory-bound,
+so the fastest chunk is the one whose working set stays in L2, not the largest
+one that fits in RAM.
+
+## Gradients
+
+A variational model reports which rule it used in `model.gradient_method_`, and
+takes `gradient=` to force one:
+
+| `gradient` | what happens |
+| --- | --- |
+| `"auto"` (default) | the adjoint sweep where it is both valid and cheaper, else the shift rule |
+| `"adjoint"` | the sweep, or an error saying why it cannot be used |
+| `"parameter_shift"` | the two-term rule, always |
+
+The two agree to machine precision — the test suite pins that, and a model
+trained either way reaches bitwise-identical weights. Writing
+`f(θ) = <ψ|O|ψ>` with `|ψ> = U_P…U_1|0>` and walking backwards while carrying
+both `|ψ_j>` and `|b_j> = (U_j+1…U_P)† O |ψ>`, the derivative for gate `j` is
+`Im(<b_j| G_j |ψ_j>)` for that gate's generator. Every gate here is
+`exp(-iθG/2)` for a Pauli-built `G` and has a closed-form inverse, so the walk
+is cheap. Where a weight drives several gates the sweep is *more* correct than
+the two-term rule, which does not apply there at all (the shift path falls back
+to central differences).
+
+`"auto"` does not simply always pick the sweep, because asymptotically cheaper
+is not the same as cheaper here. The shift rule stacks all `2P+1` parameter
+sets into one batched run: O(gates) NumPy calls on a large array, against O(P)
+calls on a small one. Below a few thousand amplitude-parameters the per-call
+overhead is the whole cost and the shift rule wins — a 6-qubit VQE is on that
+side of the line and a 10-qubit one is 8× the other side.
+`backends.prefers_adjoint()` states the crossover and is calibrated by
+measuring both rules from 2 to 12 qubits.
+
+Shot noise always falls back to the shift rule: the sweep is analytic and has
+no meaning under sampling.
 
 ## Backends
 
@@ -221,8 +278,11 @@ openqml.backends.register_backend("my.simulator", lambda n_qubits, **kw: MySim(n
 A backend needs `run(circuit, weights, features)`, `state`, `expval(word)` and
 `expval_hamiltonian(terms)`. Set `supports_batch = True` and implement
 `run_batch`, `states`, `z_expvals(wires)` and `energies(terms)` to get the fast
-path; without them the helpers fall back to a loop and everything still works.
-See `openqml/backends/pennylane_backend.py` for a worked bridge.
+path; add `z_jacobian`, `energy_jacobian` and `is_differentiable` to get the
+adjoint one. Without any of them the helpers fall back to a loop, and
+everything still works — a backend that cannot differentiate simply gets the
+parameter-shift rule. See `openqml/backends/pennylane_backend.py` for a worked
+bridge.
 
 ## Local store and server mode
 
@@ -258,7 +318,7 @@ python examples/02_quantum_vs_classical.py     # the comparison table above
 python examples/03_vqe_ground_states.py        # VQE vs exact diagonalisation
 python examples/04_custom_dataset_and_task.py  # publish your own
 python examples/05_periodic_advantage.py       # re-uploading vs ridge regression
-python examples/06_variational_vs_kernel.py    # accuracy against cost (~30 s)
+python examples/06_variational_vs_kernel.py    # accuracy against cost (~3 s)
 ```
 
 ## What this package does not claim
@@ -277,14 +337,15 @@ python examples/06_variational_vs_kernel.py    # accuracy against cost (~30 s)
 ## Tests
 
 ```bash
-python -m pytest tests -q     # 52 tests, ~2 s
+python -m pytest tests -q     # 69 tests, ~1 s
 ```
 
 The suite pins the claims above: the variational bound holds in VQE, the IQP
 kernel solves parity while the RBF kernel anti-learns it, batched execution
-matches the one-at-a-time path exactly, the training gradient matches finite
-differences, splits are deterministic and stratified, flows refuse to import
-arbitrary modules, and runs survive a filesystem round trip.
+matches the one-at-a-time path exactly, the adjoint sweep matches the
+parameter-shift rule and both match finite differences, the training gradient
+matches finite differences, splits are deterministic and stratified, flows
+refuse to import arbitrary modules, and runs survive a filesystem round trip.
 
 ## Layout
 
