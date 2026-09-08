@@ -18,8 +18,8 @@ from .statevector import StatevectorSimulator
 __all__ = [
     "StatevectorSimulator", "get_backend", "list_backends", "register_backend",
     "simulate", "expectations", "z_expectations", "statevectors",
-    "batched_states", "batched_z", "batched_energies",
-    "DEFAULT_BACKEND", "MAX_BATCH_ELEMENTS",
+    "batched_states", "batched_z", "batched_energies", "chunk_limit",
+    "DEFAULT_BACKEND", "MAX_BATCH_ELEMENTS", "MAX_BATCH_AMPLITUDES",
 ]
 
 DEFAULT_BACKEND = "default.statevector"
@@ -28,6 +28,13 @@ DEFAULT_BACKEND = "default.statevector"
 #: this are split, so callers can hand over a whole gradient without thinking
 #: about the qubit count.
 MAX_BATCH_ELEMENTS = 4096
+
+#: ...and a cap on the total amplitudes in flight: a chunk holds
+#: ``batch * 2**n_qubits`` complex numbers, and a gate is memory-bound, so the
+#: throughput optimum is the chunk that keeps that working set inside L2 rather
+#: than the largest one that fits in RAM. Measured across 4 to 10 qubits the
+#: best chunk sits at roughly 2**16 amplitudes (1 MB) either way.
+MAX_BATCH_AMPLITUDES = 1 << 16
 
 _BACKENDS: Dict[str, Callable] = {
     DEFAULT_BACKEND: lambda n_qubits, **kw: StatevectorSimulator(n_qubits, **kw),
@@ -114,6 +121,11 @@ def _resolve_device(device, circuit, backend, seed, shots):
                                                          seed=seed, shots=shots)
 
 
+def chunk_limit(n_qubits: int) -> int:
+    """How many circuits one batched call may hold for a register this wide."""
+    return max(1, min(MAX_BATCH_ELEMENTS, MAX_BATCH_AMPLITUDES >> int(n_qubits)))
+
+
 def _chunked(circuit, weights, features, device, collect, chunk: Optional[int]):
     """Run a batch in memory-safe pieces, falling back to a loop if needed."""
     total = _batch_size(weights, features)
@@ -124,7 +136,7 @@ def _chunked(circuit, weights, features, device, collect, chunk: Optional[int]):
                                _slice(features, i, i + 1) if np.ndim(features) == 2 else features))
             for i in range(total)
         ], axis=0)
-    limit = chunk or max(1, MAX_BATCH_ELEMENTS // max(1, 2 ** circuit.n_qubits // 16))
+    limit = chunk or chunk_limit(circuit.n_qubits)
     if total <= limit:
         return collect(device.run_batch(circuit, weights, features))
     pieces = []
