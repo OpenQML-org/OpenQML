@@ -1,0 +1,176 @@
+"""Execution backends and the batched helpers the models are built on.
+
+``default.statevector`` is the pure-NumPy simulator that ships with the
+package. ``pennylane.default.qubit`` is used when PennyLane is installed.
+Backends that cannot batch still work: the helpers below fall back to a loop.
+"""
+
+from __future__ import annotations
+
+from typing import Callable, Dict, List, Mapping, Optional, Sequence
+
+import numpy as np
+
+from ..circuits.circuit import Circuit
+from ..exceptions import BackendNotAvailableError
+from .statevector import StatevectorSimulator
+
+__all__ = [
+    "StatevectorSimulator", "get_backend", "list_backends", "register_backend",
+    "simulate", "expectations", "z_expectations", "statevectors",
+    "batched_states", "batched_z", "batched_energies",
+    "DEFAULT_BACKEND", "MAX_BATCH_ELEMENTS",
+]
+
+DEFAULT_BACKEND = "default.statevector"
+
+#: Cap on how many statevectors are held in memory at once. Batches larger than
+#: this are split, so callers can hand over a whole gradient without thinking
+#: about the qubit count.
+MAX_BATCH_ELEMENTS = 4096
+
+_BACKENDS: Dict[str, Callable] = {
+    DEFAULT_BACKEND: lambda n_qubits, **kw: StatevectorSimulator(n_qubits, **kw),
+}
+
+
+def register_backend(name: str, factory: Callable) -> None:
+    """Register ``factory(n_qubits, seed=..., shots=...) -> simulator``."""
+    _BACKENDS[name] = factory
+
+
+def list_backends() -> List[str]:
+    names = list(_BACKENDS)
+    try:  # pragma: no cover - depends on the environment
+        import pennylane  # noqa: F401
+
+        names.append("pennylane.default.qubit")
+    except ImportError:
+        pass
+    return sorted(set(names))
+
+
+def get_backend(name: str = DEFAULT_BACKEND, n_qubits: int = 1, **kwargs):
+    """Instantiate a backend by name."""
+    if name.startswith("pennylane."):  # pragma: no cover - optional dependency
+        try:
+            import pennylane  # noqa: F401
+        except ImportError:
+            raise BackendNotAvailableError(
+                "PennyLane is not installed; pip install openqml[pennylane]"
+            ) from None
+        from .pennylane_backend import PennyLaneSimulator
+
+        return PennyLaneSimulator(n_qubits, device=name.split("pennylane.", 1)[1], **kwargs)
+    try:
+        factory = _BACKENDS[name]
+    except KeyError:
+        raise BackendNotAvailableError(
+            f"unknown backend {name!r}; available: {list_backends()}"
+        ) from None
+    return factory(n_qubits, **kwargs)
+
+
+# -- single-run helpers -------------------------------------------------------
+
+def simulate(circuit: Circuit, weights=None, features=None, backend: str = DEFAULT_BACKEND,
+             seed=None, shots: Optional[int] = None):
+    """Run a circuit once and return the simulator holding the final state."""
+    device = get_backend(backend, circuit.n_qubits, seed=seed, shots=shots)
+    return device.run(circuit, weights, features)
+
+
+def expectations(circuit: Circuit, observables: Sequence[Mapping[int, str]], weights=None,
+                 features=None, backend: str = DEFAULT_BACKEND, seed=None,
+                 shots: Optional[int] = None) -> np.ndarray:
+    """Expectation values of several Pauli words after one circuit execution."""
+    device = simulate(circuit, weights, features, backend, seed, shots)
+    return np.array([device.expval(obs) for obs in observables], dtype=float)
+
+
+def z_expectations(circuit: Circuit, wires: Sequence[int], weights=None, features=None,
+                   backend: str = DEFAULT_BACKEND, seed=None,
+                   shots: Optional[int] = None) -> np.ndarray:
+    """<Z> on the given wires -- the usual read-out for a variational classifier."""
+    return expectations(circuit, [{int(q): "Z"} for q in wires], weights, features,
+                        backend, seed, shots)
+
+
+# -- batched helpers ----------------------------------------------------------
+
+def _batch_size(*arrays) -> int:
+    sizes = [np.shape(a)[0] for a in arrays if a is not None and np.ndim(a) == 2]
+    return max(sizes) if sizes else 1
+
+
+def _slice(array, start: int, stop: int):
+    if array is None or np.ndim(array) == 1:
+        return array
+    return array[start:stop]
+
+
+def _resolve_device(device, circuit, backend, seed, shots):
+    return device if device is not None else get_backend(backend, circuit.n_qubits,
+                                                         seed=seed, shots=shots)
+
+
+def _chunked(circuit, weights, features, device, collect, chunk: Optional[int]):
+    """Run a batch in memory-safe pieces, falling back to a loop if needed."""
+    total = _batch_size(weights, features)
+    if not getattr(device, "supports_batch", False):  # pragma: no cover - optional backends
+        return np.concatenate([
+            collect(device.run(circuit,
+                               _slice(weights, i, i + 1) if np.ndim(weights) == 2 else weights,
+                               _slice(features, i, i + 1) if np.ndim(features) == 2 else features))
+            for i in range(total)
+        ], axis=0)
+    limit = chunk or max(1, MAX_BATCH_ELEMENTS // max(1, 2 ** circuit.n_qubits // 16))
+    if total <= limit:
+        return collect(device.run_batch(circuit, weights, features))
+    pieces = []
+    for start in range(0, total, limit):
+        stop = min(start + limit, total)
+        pieces.append(collect(device.run_batch(circuit, _slice(weights, start, stop),
+                                               _slice(features, start, stop))))
+    return np.concatenate(pieces, axis=0)
+
+
+def batched_states(circuit: Circuit, features=None, weights=None, device=None,
+                   backend: str = DEFAULT_BACKEND, seed=None,
+                   chunk: Optional[int] = None) -> np.ndarray:
+    """``(batch, 2**n)`` statevectors for a batch of feature/weight rows."""
+    device = _resolve_device(device, circuit, backend, seed, None)
+    collect = lambda sim: (sim.states if getattr(sim, "supports_batch", False)
+                           else sim.state.reshape(1, -1))
+    return _chunked(circuit, weights, features, device, collect, chunk)
+
+
+def batched_z(circuit: Circuit, wires: Sequence[int], weights=None, features=None, device=None,
+              backend: str = DEFAULT_BACKEND, seed=None, shots: Optional[int] = None,
+              chunk: Optional[int] = None) -> np.ndarray:
+    """``(batch, len(wires))`` values of <Z>, for a batch of weights and/or features."""
+    device = _resolve_device(device, circuit, backend, seed, shots)
+    wires = [int(q) for q in wires]
+    if getattr(device, "supports_batch", False):
+        collect = lambda sim: sim.z_expvals(wires)
+    else:  # pragma: no cover - optional backends
+        collect = lambda sim: np.array([[sim.expval({q: "Z"}) for q in wires]])
+    return _chunked(circuit, weights, features, device, collect, chunk)
+
+
+def batched_energies(circuit: Circuit, terms: Sequence, weights=None, features=None, device=None,
+                     backend: str = DEFAULT_BACKEND, seed=None, shots: Optional[int] = None,
+                     chunk: Optional[int] = None) -> np.ndarray:
+    """``(batch,)`` energies of one Hamiltonian over a batch of parameter rows."""
+    device = _resolve_device(device, circuit, backend, seed, shots)
+    if getattr(device, "supports_batch", False):
+        collect = lambda sim: sim.energies(terms)
+    else:  # pragma: no cover - optional backends
+        collect = lambda sim: np.array([sim.expval_hamiltonian(terms)])
+    return _chunked(circuit, weights, features, device, collect, chunk)
+
+
+def statevectors(circuit: Circuit, X, weights=None, backend: str = DEFAULT_BACKEND,
+                 seed=None) -> np.ndarray:
+    """Encode every row of ``X`` and stack the resulting statevectors."""
+    return batched_states(circuit, np.asarray(X), weights, backend=backend, seed=seed)

@@ -1,0 +1,122 @@
+"""The batched execution path has to agree with the naive one, exactly."""
+
+import numpy as np
+import pytest
+
+from openqml.backends import batched_energies, batched_states, batched_z
+from openqml.backends.statevector import StatevectorSimulator
+from openqml.circuits import angle_embedding, hardware_efficient_ansatz
+from openqml.models.kernel import clear_state_cache, encode_states
+from openqml.models.variational import (
+    VariationalQuantumClassifier,
+    parameter_shift_gradient,
+    shift_sets,
+)
+
+CIRCUIT = angle_embedding(3, 3).compose(hardware_efficient_ansatz(3, 2))
+TERMS = [(0.7, {0: "X", 1: "Y"}), (-1.3, {2: "Z"}), (0.4, {0: "Z", 2: "Z"}), (0.2, {})]
+
+
+def _inputs(n=6, seed=0):
+    rng = np.random.default_rng(seed)
+    return rng.normal(size=(n, CIRCUIT.n_parameters)), rng.normal(size=(n, 3))
+
+
+def test_batched_states_match_the_loop():
+    weights, features = _inputs()
+    batched = batched_states(CIRCUIT, features, weights)
+    loop = np.stack([StatevectorSimulator(3).run(CIRCUIT, w, f).state
+                     for w, f in zip(weights, features)])
+    assert np.allclose(batched, loop)
+
+
+def test_batched_expectations_match_the_loop():
+    weights, features = _inputs()
+    batched = batched_z(CIRCUIT, [0, 2], weights, features)
+    loop = np.array([[StatevectorSimulator(3).run(CIRCUIT, w, f).expval({q: "Z"}) for q in (0, 2)]
+                     for w, f in zip(weights, features)])
+    assert np.allclose(batched, loop)
+
+    energies = batched_energies(CIRCUIT, TERMS, weights, features)
+    reference = [StatevectorSimulator(3).run(CIRCUIT, w, f).expval_hamiltonian(TERMS)
+                 for w, f in zip(weights, features)]
+    assert np.allclose(energies, reference)
+
+
+def test_chunking_does_not_change_the_answer():
+    weights, features = _inputs(n=17)
+    whole = batched_states(CIRCUIT, features, weights)
+    split = batched_states(CIRCUIT, features, weights, chunk=3)
+    assert np.allclose(whole, split)
+
+
+def test_shared_weights_broadcast_over_a_feature_batch():
+    weights, features = _inputs()
+    shared = batched_z(CIRCUIT, [0], weights[0], features)
+    tiled = batched_z(CIRCUIT, [0], np.repeat(weights[:1], len(features), axis=0), features)
+    assert np.allclose(shared, tiled)
+
+
+def test_training_gradient_matches_finite_differences():
+    """The batched training gradient is the true gradient of the loss.
+
+    Ground truth here is a central difference, not the shift rule: the shift
+    rule is exact for an expectation value, and a squared loss is not one.
+    """
+    rng = np.random.default_rng(1)
+    X = rng.normal(size=(8, 2))
+    y = (X[:, 0] > 0).astype(int)
+    model = VariationalQuantumClassifier(n_qubits=2, layers=1, maxiter=1, seed=0).fit(X, y)
+    targets = np.where(y == model.classes_[0], -1.0, 1.0).reshape(-1, 1)
+    weights = rng.normal(size=len(model.weights_))
+    encoded = model._prepare_X(model._transform_features(X))
+
+    loss, gradient = model._loss_and_gradient(weights, encoded, targets, unique=True)
+
+    def evaluate(candidate):
+        return float(np.mean((model._outputs_prepared(candidate, encoded) - targets) ** 2))
+
+    numerical = np.zeros_like(weights)
+    for index in range(len(weights)):
+        plus, minus = weights.copy(), weights.copy()
+        plus[index] += 1e-6
+        minus[index] -= 1e-6
+        numerical[index] = (evaluate(plus) - evaluate(minus)) / 2e-6
+
+    assert loss == pytest.approx(evaluate(weights))
+    assert np.allclose(gradient, numerical, atol=1e-6)
+
+
+def test_shift_rule_is_exact_for_an_expectation_value():
+    """Where the shift rule does apply, it agrees with finite differences."""
+    rng = np.random.default_rng(3)
+    weights = rng.normal(size=CIRCUIT.n_parameters)
+    features = rng.normal(size=3)
+
+    def energy(candidate):
+        return float(batched_energies(CIRCUIT, TERMS, np.atleast_2d(candidate), features)[0])
+
+    exact = parameter_shift_gradient(energy, weights)
+    numerical = np.array([
+        (energy(weights + 1e-6 * np.eye(len(weights))[i])
+         - energy(weights - 1e-6 * np.eye(len(weights))[i])) / 2e-6
+        for i in range(len(weights))
+    ])
+    assert np.allclose(exact, numerical, atol=1e-6)
+
+
+def test_shift_sets_layout():
+    sets, scale = shift_sets(np.array([0.0, 1.0]))
+    assert sets.shape == (5, 2) and scale == 0.5
+    assert np.allclose(sets[0], [0.0, 1.0])
+    assert sets[1][0] > sets[2][0] and np.allclose(sets[1][1], 1.0)
+
+
+def test_state_cache_is_transparent():
+    X = np.random.default_rng(2).normal(size=(12, 3))
+    clear_state_cache()
+    uncached = encode_states(X, "zz", 3, use_cache=False)
+    cached = encode_states(X, "zz", 3)
+    again = encode_states(X, "zz", 3)
+    assert np.allclose(uncached, cached) and np.allclose(cached, again)
+    assert not np.allclose(encode_states(X + 1.0, "zz", 3), cached)
