@@ -581,7 +581,18 @@ class StatevectorSimulator:
         return self
 
     def run(self, circuit: Circuit, weights=None, features=None) -> "StatevectorSimulator":
-        """Single-shot convenience wrapper around :meth:`run_batch`."""
+        """Single-shot convenience wrapper around :meth:`run_batch`.
+
+        A batch is refused rather than flattened. ``run_batch`` takes the same
+        arguments, so handing this one a ``(batch, P)`` array is an easy slip,
+        and ``reshape(-1)`` used to answer for row 0 without saying so.
+        """
+        for name, array in (("weights", weights), ("features", features)):
+            if array is not None and np.ndim(array) == 2 and np.shape(array)[0] > 1:
+                raise ValueError(
+                    f"run() is the single-circuit path but {name} has "
+                    f"{np.shape(array)[0]} rows; use run_batch() for a batch"
+                )
         weights = None if weights is None else np.asarray(weights).reshape(-1)
         features = None if features is None else np.asarray(features).reshape(-1)
         return self.run_batch(circuit, weights, features)

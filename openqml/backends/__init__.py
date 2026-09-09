@@ -112,8 +112,23 @@ def _batch_size(*arrays) -> int:
     return max(sizes) if sizes else 1
 
 
+def _chunk_limit_for(chunk, n_qubits: int) -> int:
+    """Resolve an explicit ``chunk`` argument, rejecting the useless values."""
+    if chunk is None:
+        return chunk_limit(n_qubits)
+    if int(chunk) < 1:
+        raise ValueError(f"chunk must be at least 1, got {chunk}")
+    return int(chunk)
+
+
 def _slice(array, start: int, stop: int):
-    if array is None or np.ndim(array) == 1:
+    """Take one chunk's rows, leaving a shared array alone.
+
+    ``StatevectorSimulator._prepare`` treats both a 1-D array and a 2-D array
+    with a single row as "shared by the whole batch". Slicing the second form
+    like a batch hands every chunk after the first an empty array.
+    """
+    if array is None or np.ndim(array) == 1 or np.shape(array)[0] == 1:
         return array
     return array[start:stop]
 
@@ -138,7 +153,7 @@ def _chunked(circuit, weights, features, device, collect, chunk: Optional[int]):
                                _slice(features, i, i + 1) if np.ndim(features) == 2 else features))
             for i in range(total)
         ], axis=0)
-    limit = chunk or chunk_limit(circuit.n_qubits)
+    limit = _chunk_limit_for(chunk, circuit.n_qubits)
     if total <= limit:
         return collect(device.run_batch(circuit, weights, features))
     pieces = []
@@ -216,7 +231,7 @@ def prefers_adjoint(batch: int, n_qubits: int, n_parameters: int,
 def _chunked_pair(circuit, weights, features, device, call, chunk: Optional[int]):
     """Same chunking as :func:`_chunked`, for a call returning two arrays."""
     total = _batch_size(weights, features)
-    limit = chunk or chunk_limit(circuit.n_qubits)
+    limit = _chunk_limit_for(chunk, circuit.n_qubits)
     if total <= limit:
         return call(weights, features)
     values, jacobians = [], []

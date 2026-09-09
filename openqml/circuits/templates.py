@@ -86,8 +86,10 @@ def data_reuploading(n_qubits: int, n_features: int, layers: int = 2,
     for _ in range(layers):
         # one encoding gate per qubit per layer: the reachable Fourier spectrum
         # grows with the number of encoding gates, not with the parameter count
-        for q in range(n_qubits):
-            circuit.ry(x(q % n_features, scale=math.pi), q)
+        # loop over features, not qubits: with more features than qubits the
+        # other way round never reaches the trailing columns at all
+        for f in range(n_features):
+            circuit.ry(x(f, scale=math.pi), f % n_qubits)
         for q in range(n_qubits):
             circuit.rz(w(index), q); index += 1
             circuit.ry(w(index), q); index += 1

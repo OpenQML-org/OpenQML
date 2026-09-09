@@ -7,6 +7,7 @@ direction, which the leaderboard needs in order to sort.
 
 from __future__ import annotations
 
+import inspect
 from typing import Callable, Dict, Optional
 
 import numpy as np
@@ -24,6 +25,7 @@ __all__ = [
     "state_fidelity",
     "get_measure",
     "list_measures",
+    "takes_classes",
     "higher_is_better",
 ]
 
@@ -47,6 +49,12 @@ def balanced_accuracy(y_true, y_pred, y_proba=None) -> float:
 
 
 def f1_macro(y_true, y_pred, y_proba=None) -> float:
+    """Macro F1 over the labels that appear in ``y_true``.
+
+    sklearn averages over the union of true and predicted labels, so a class
+    the model invents but never should adds its own zero-F1 row there and not
+    here. The difference only shows when a model predicts an absent class.
+    """
     y_true, y_pred = _as_1d(y_true), _as_1d(y_pred)
     scores = []
     for label in np.unique(y_true):
@@ -58,29 +66,50 @@ def f1_macro(y_true, y_pred, y_proba=None) -> float:
     return float(np.mean(scores))
 
 
-def log_loss(y_true, y_pred, y_proba=None, eps: float = 1e-12) -> float:
+def log_loss(y_true, y_pred, y_proba=None, eps: float = 1e-12, classes=None) -> float:
+    """Cross-entropy against ``y_proba``.
+
+    ``classes`` is the ordering the columns of ``y_proba`` follow -- the fitted
+    estimator's ``classes_``. Without it the only thing to go on is the labels
+    present in *this* fold, and a fold that happens to be missing a class
+    shifts every column after it, reading a neighbour's probability instead.
+    """
     if y_proba is None:
         raise ValueError("log_loss requires probability estimates")
     y_true = _as_1d(y_true)
     proba = np.clip(np.asarray(y_proba, dtype=float), eps, 1.0)
+    if proba.ndim != 2:
+        raise ValueError("log_loss needs a (n_samples, n_classes) probability matrix")
     proba = proba / proba.sum(axis=1, keepdims=True)
-    classes = np.unique(y_true)
-    index = {c: i for i, c in enumerate(classes)}
+    order = np.unique(y_true) if classes is None else np.asarray(classes).reshape(-1)
+    if proba.shape[1] != len(order):
+        raise ValueError(
+            f"y_proba has {proba.shape[1]} columns but {len(order)} classes were given"
+        )
+    index = {c: i for i, c in enumerate(order)}
+    missing = {c for c in y_true if c not in index}
+    if missing:
+        raise ValueError(f"labels {sorted(missing)} are not among the estimator's classes")
     picked = np.array([proba[i, index[c]] for i, c in enumerate(y_true)])
     return float(-np.mean(np.log(picked)))
 
 
-def roc_auc(y_true, y_pred, y_proba=None) -> float:
-    """Binary ROC AUC via the rank statistic (ties averaged)."""
+def roc_auc(y_true, y_pred, y_proba=None, classes=None) -> float:
+    """Binary ROC AUC via the rank statistic (ties averaged).
+
+    ``classes`` names the estimator's class ordering, so that "the positive
+    class" and "column 1 of ``y_proba``" mean the same thing even when a fold's
+    labels are a subset of the training labels.
+    """
     y_true = _as_1d(y_true)
-    classes = np.unique(y_true)
-    if len(classes) != 2:
+    order = np.unique(y_true) if classes is None else np.asarray(classes).reshape(-1)
+    if len(order) != 2:
         raise ValueError("roc_auc is only defined for binary problems")
     if y_proba is None:
         scores = _as_1d(y_pred).astype(float)
     else:
         scores = np.asarray(y_proba, dtype=float)[:, 1]
-    positive = y_true == classes[1]
+    positive = y_true == order[1]
     n_pos, n_neg = int(positive.sum()), int((~positive).sum())
     if n_pos == 0 or n_neg == 0:
         return float("nan")
@@ -118,10 +147,13 @@ def absolute_energy_error(y_true, y_pred, y_proba=None) -> float:
 
 
 def state_fidelity(psi, phi, y_proba=None) -> float:
-    """|<psi|phi>|^2 for two normalised statevectors."""
+    """|<psi|phi>|^2, normalising first so the result cannot exceed 1."""
     psi = np.asarray(psi).reshape(-1)
     phi = np.asarray(phi).reshape(-1)
-    return float(np.abs(np.vdot(psi, phi)) ** 2)
+    norms = np.linalg.norm(psi) * np.linalg.norm(phi)
+    if norms == 0:
+        raise ValueError("state_fidelity needs two non-zero vectors")
+    return float(np.abs(np.vdot(psi, phi)) ** 2 / norms ** 2)
 
 
 _MEASURES: Dict[str, Callable] = {
@@ -165,4 +197,10 @@ def list_measures() -> Dict[str, bool]:
 
 
 def higher_is_better(name: str) -> bool:
+    get_measure(name)  # same ValueError, same message, for an unknown name
     return _HIGHER_IS_BETTER[name]
+
+
+def takes_classes(measure: Callable) -> bool:
+    """True when a measure accepts the estimator's ``classes_`` ordering."""
+    return "classes" in inspect.signature(measure).parameters

@@ -5,6 +5,7 @@ import pytest
 
 from openqml.backends import expectations, simulate, z_expectations
 from openqml.circuits import Circuit, angle_embedding, hardware_efficient_ansatz, w, x
+from openqml.circuits.circuit import Ref
 
 
 def test_bell_state():
@@ -62,3 +63,57 @@ def test_shots_add_noise_but_stay_in_range():
 def test_z_expectations_shape():
     circuit = angle_embedding(3, 3)
     assert z_expectations(circuit, [0, 1, 2], features=[0.1, 0.2, 0.3]).shape == (3,)
+
+
+def test_a_pauli_word_cannot_name_a_wire_twice():
+    """``'X0 Y0'`` is i*Z0, not Y0 -- overwriting silently changes the operator."""
+    from openqml.hamiltonians import parse_terms
+
+    with pytest.raises(ValueError, match="appears twice"):
+        parse_terms([(1.0, "X0 Y0")])
+
+
+def test_the_two_spellings_of_a_pauli_word_agree():
+    from openqml.hamiltonians import parse_terms
+
+    assert parse_terms([(1.0, "I0 Z1")]) == parse_terms([(1.0, {0: "I", 1: "Z"})])
+    assert parse_terms([(1.0, "I0 Z1")]) == [(1.0, {1: "Z"})]
+
+
+def test_a_hamiltonian_wider_than_the_register_is_refused():
+    """kron only walks range(n_qubits), so a higher wire would be dropped --
+    silently replacing the operator with its restriction."""
+    from openqml.hamiltonians import exact_ground_state
+
+    terms = [(1.0, {0: "Z"}), (0.5, {3: "X"})]
+    assert exact_ground_state(terms)[0] == pytest.approx(-1.5)
+    with pytest.raises(ValueError, match="does not fit"):
+        exact_ground_state(terms, 2)
+
+
+def test_data_reuploading_encodes_every_feature():
+    """The loop runs over features, not qubits: with more features than qubits
+    the other way round never reaches the trailing columns."""
+    from openqml.circuits import data_reuploading
+
+    circuit = data_reuploading(n_qubits=2, n_features=5, layers=2)
+    assert circuit.n_features == 5
+    referenced = {p.index for gate in circuit.gates for p in gate.params
+                  if isinstance(p, Ref) and p.kind == "x"}
+    assert referenced == {0, 1, 2, 3, 4}
+
+
+def test_stable_hash_does_not_depend_on_set_iteration_order():
+    """A set iterates in hash order, randomised per process for strings, and
+    sort_keys does not reorder a list -- so run identity used to drift."""
+    import subprocess
+    import sys
+
+    code = ("from openqml.utils import stable_hash;"
+            "print(stable_hash({'tags': {'a', 'b', 'c', 'd', 'e', 'f'}}))")
+    digests = {
+        subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                       env={"PATH": "/usr/bin:/bin", "PYTHONHASHSEED": "random"}).stdout.strip()
+        for _ in range(4)
+    }
+    assert len(digests) == 1, f"stable_hash drifted across processes: {digests}"

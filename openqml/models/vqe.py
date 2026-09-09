@@ -68,7 +68,11 @@ class VQE(QuantumModel):
         self.circuit_ = circuit
         self.weights_ = weights
         self.loss_curve_ = history
-        self.energy_ = float(min(history + [energy(weights)]))
+        # the energy of the state we actually return, not the luckiest sample
+        # along the way: min() over a noisy history is a biased order statistic,
+        # and under shots it drives the estimate below the true ground state --
+        # the variational bound is the one thing a VQE must not break
+        self.energy_ = energy(weights)
         device.run(circuit, weights, None)
         self.state_ = device.state
         return self.energy_
