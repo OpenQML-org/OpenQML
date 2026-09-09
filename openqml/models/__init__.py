@@ -1,12 +1,13 @@
 """Built-in models. Any scikit-learn style estimator works here too."""
 
-from .base import QuantumModel, adam
+from .base import QuantumModel, adam, pad_to_power_of_two
 from .baselines import LinearRegressor, MajorityClassifier
 from .kernel import (
     ClassicalKernelClassifier,
     ClassicalKernelRegressor,
     QuantumKernelClassifier,
     QuantumKernelRegressor,
+    clear_state_cache,
     encode_states,
     quantum_kernel,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "VQE", "ExactDiagonalisation",
     "MajorityClassifier", "LinearRegressor",
     "quantum_kernel", "encode_states", "parameter_shift_gradient",
+    "clear_state_cache", "pad_to_power_of_two",
     "list_models",
 ]
 
