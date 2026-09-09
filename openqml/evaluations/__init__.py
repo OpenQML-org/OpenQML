@@ -42,7 +42,8 @@ def list_evaluations(function: str = "accuracy", tasks: Optional[Sequence[int]] 
             "function": function,
             "value": float(value),
             "std": float(np.std(spread)) if spread else 0.0,
-            "folds": len(spread),
+            "folds": max((len(folds) for folds in per_fold.values()), default=0),
+            "repeats": len(per_fold),
             "backend": payload.get("backend"),
             "shots": payload.get("shots"),
             "runtime_seconds": payload.get("runtime_seconds"),
@@ -93,7 +94,7 @@ def compare(models, tasks, publish: bool = False, measure: Optional[str] = None,
     the whole table, including the columns where the classical baseline wins --
     a benchmark that only shows its wins is advertising.
     """
-    from ..exceptions import OpenQMLError
+    from ..exceptions import DuplicateRunError
 
     tasks = [t if hasattr(t, "task_type") else get_task(t) for t in tasks]
     labels = _labels(models)
@@ -104,7 +105,7 @@ def compare(models, tasks, publish: bool = False, measure: Optional[str] = None,
             if publish:
                 try:
                     run.publish()
-                except OpenQMLError:
+                except DuplicateRunError:
                     pass  # an identical run is already on the board; keep ours in memory
             values = run.get_metric_fn(measure or run.evaluation_measure)
             rows[index][task.name] = f"{values.mean():.4f} +/- {values.std():.4f}"

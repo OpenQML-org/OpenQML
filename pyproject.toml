@@ -25,6 +25,11 @@ classifiers = [
 ]
 dependencies = ["numpy>=1.22"]
 
+[project.urls]
+Homepage = "https://openqml.org"
+Repository = "https://github.com/OpenQML-org/OpenQML"
+Issues = "https://github.com/OpenQML-org/OpenQML/issues"
+
 [project.optional-dependencies]
 pandas = ["pandas>=1.4"]
 pennylane = ["pennylane>=0.33"]
@@ -35,6 +40,9 @@ openqml = "openqml.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["openqml"]
+
+[tool.hatch.build.targets.sdist]
+include = ["openqml", "docs", "tests", "examples", "README.md", "LICENSE", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

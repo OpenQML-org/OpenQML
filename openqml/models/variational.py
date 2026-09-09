@@ -32,8 +32,21 @@ EPSILON = 1e-4
 
 
 def _weights_are_unique(circuit: Circuit) -> bool:
-    """True when each weight drives exactly one gate (the two-term rule applies)."""
-    indices = [index for _, index in circuit.parameter_indices_per_gate()]
+    """True when the two-term shift rule applies to every weight.
+
+    Two conditions, not one. Each weight has to drive exactly one gate, and the
+    gate angle has to be the weight itself: the rule assumes a generator with
+    eigenvalues +/-1/2, so a reference carrying ``scale`` or ``offset`` breaks
+    it. A ``w(i, scale=2)`` shifted by pi/2 moves the angle by pi and the two
+    terms cancel, which reads as a gradient of exactly zero.
+    """
+    indices = []
+    for gate in circuit.gates:
+        for param in gate.params:
+            if isinstance(param, Ref) and param.kind == "weights":
+                if param.scale != 1.0 or param.offset != 0.0:
+                    return False
+                indices.append(param.index)
     return len(indices) == len(set(indices))
 
 

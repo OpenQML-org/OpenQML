@@ -7,6 +7,7 @@ __all__ = [
     "OpenQMLNotAuthorizedError",
     "OpenQMLCacheError",
     "ObjectNotPublishedError",
+    "DuplicateRunError",
     "BackendNotAvailableError",
     "OpenQMLHashError",
 ]
@@ -39,6 +40,15 @@ class OpenQMLCacheError(OpenQMLError):
 
 class ObjectNotPublishedError(OpenQMLError):
     """The entity has no id yet because it has never been published."""
+
+
+class DuplicateRunError(OpenQMLError):
+    """An identical run is already published.
+
+    Its own class because bulk publishing wants to skip this one and only this
+    one -- catching the base class there would swallow an auth or server
+    failure and report success having uploaded nothing.
+    """
 
 
 class BackendNotAvailableError(OpenQMLError):

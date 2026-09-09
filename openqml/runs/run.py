@@ -11,7 +11,7 @@ import numpy as np
 
 from .._store import get_store
 from ..entities import OpenQMLEntity
-from ..exceptions import OpenQMLError
+from ..exceptions import DuplicateRunError, OpenQMLError
 from ..utils import as_table, jsonify, stable_hash
 
 __all__ = ["OpenQMLRun"]
@@ -146,7 +146,7 @@ class OpenQMLRun(OpenQMLEntity):
         if config.avoid_duplicate_runs:
             existing = run_exists(self)
             if existing is not None:
-                raise OpenQMLError(
+                raise DuplicateRunError(
                     f"an identical run is already published (id={existing}). Set "
                     f"openqml.config.avoid_duplicate_runs = False to publish it anyway."
                 )

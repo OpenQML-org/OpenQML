@@ -168,3 +168,32 @@ def test_the_cost_model_prefers_the_sweep_only_when_it_is_worth_it():
     assert not prefers_adjoint(batch=1, n_qubits=4, n_parameters=12)
     assert prefers_adjoint(batch=1, n_qubits=12, n_parameters=36)
     assert prefers_adjoint(batch=160, n_qubits=2, n_parameters=15)
+
+
+def test_the_shift_rule_declines_a_scaled_weight_reference():
+    """The two-term rule assumes the gate angle *is* the weight.
+
+    With ``w(0, scale=2)`` a pi/2 shift moves the angle by pi and the two terms
+    cancel, so the rule reports a gradient of exactly zero. The circuit has to
+    be routed to the fallback instead.
+    """
+    from openqml.models.variational import _weights_are_unique
+
+    scaled = Circuit(1).h(0).ry(w(0, scale=2.0), 0)
+    plain = Circuit(1).h(0).ry(w(0), 0)
+    assert _weights_are_unique(plain)
+    assert not _weights_are_unique(scaled)
+    assert not _weights_are_unique(Circuit(1).h(0).ry(w(0, offset=0.5), 0))
+
+
+def test_a_scaled_weight_still_gets_a_correct_gradient():
+    scaled = Circuit(1).h(0).ry(w(0, scale=2.0), 0)
+    weights = np.array([0.4])
+    evaluate = lambda t: batched_z(scaled, [0], np.asarray(t).reshape(1, -1))[0, 0]
+
+    _, jacobian = batched_z_jacobian(scaled, [0], weights.reshape(1, -1))
+    eps = 1e-6
+    finite = (evaluate(weights + eps) - evaluate(weights - eps)) / (2 * eps)
+
+    assert jacobian[0, 0, 0] == pytest.approx(finite, abs=1e-6)
+    assert abs(jacobian[0, 0, 0]) > 1.0  # not the zero the two-term rule returned

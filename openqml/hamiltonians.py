@@ -16,17 +16,38 @@ Term = Tuple[float, PauliWord]
 
 
 def parse_terms(terms) -> List[Term]:
-    """Accept ``[(coeff, {wire: 'X'}), ...]`` or ``[(coeff, 'X0 Z1'), ...]``."""
+    """Accept ``[(coeff, {wire: 'X'}), ...]`` or ``[(coeff, 'X0 Z1'), ...]``.
+
+    Both spellings produce the same word: identities are dropped, and a wire
+    named twice is an error rather than a silent overwrite. ``'X0 Y0'`` is
+    ``i*Z0``, not ``Y0``, and quietly returning the second factor would hand
+    back a different Hermitian operator with a different spectrum.
+    """
     parsed: List[Term] = []
     for coefficient, word in terms:
+        mapping: PauliWord = {}
         if isinstance(word, str):
-            mapping: PauliWord = {}
             for token in word.split():
-                if token.upper() in ("I", ""):
+                letter, wire = token[0].upper(), token[1:]
+                if letter == "I" or not token:
                     continue
-                mapping[int(token[1:])] = token[0].upper()
+                if letter not in PAULI:
+                    raise ValueError(f"unknown Pauli letter {letter!r} in {word!r}")
+                wire = int(wire)
+                if wire in mapping:
+                    raise ValueError(
+                        f"wire {wire} appears twice in {word!r}; write the product out "
+                        f"as a single Pauli letter instead"
+                    )
+                mapping[wire] = letter
         else:
-            mapping = {int(k): str(v).upper() for k, v in dict(word).items() if str(v).upper() != "I"}
+            for k, v in dict(word).items():
+                letter = str(v).upper()
+                if letter == "I":
+                    continue
+                if letter not in PAULI:
+                    raise ValueError(f"unknown Pauli letter {letter!r}")
+                mapping[int(k)] = letter
         parsed.append((float(coefficient), mapping))
     return parsed
 
@@ -39,7 +60,15 @@ def n_qubits_of(terms: Sequence[Term]) -> int:
 def to_matrix(terms, n_qubits: int | None = None) -> np.ndarray:
     """Dense matrix of a Pauli sum (only sensible for a handful of qubits)."""
     terms = parse_terms(terms)
-    n_qubits = n_qubits or n_qubits_of(terms)
+    needed = n_qubits_of(terms)
+    n_qubits = n_qubits or needed
+    if needed > n_qubits:
+        # kron only walks range(n_qubits), so a factor on a higher wire would be
+        # dropped -- silently replacing the operator with its restriction, which
+        # has different eigenvalues.
+        raise ValueError(
+            f"a term acts on wire {needed - 1}, which does not fit in {n_qubits} qubits"
+        )
     if n_qubits > 14:
         raise ValueError("dense construction is capped at 14 qubits")
     dimension = 2 ** n_qubits

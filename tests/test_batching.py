@@ -3,7 +3,8 @@
 import numpy as np
 import pytest
 
-from openqml.backends import batched_energies, batched_states, batched_z
+from openqml.backends import (batched_energies, batched_states, batched_z,
+                              batched_z_jacobian, simulate)
 from openqml.backends.statevector import StatevectorSimulator
 from openqml.circuits import angle_embedding, hardware_efficient_ansatz
 from openqml.models.kernel import clear_state_cache, encode_states
@@ -187,3 +188,43 @@ def test_state_cache_is_transparent():
     again = encode_states(X, "zz", 3)
     assert np.allclose(uncached, cached) and np.allclose(cached, again)
     assert not np.allclose(encode_states(X + 1.0, "zz", 3), cached)
+
+
+def test_chunking_handles_weights_shared_as_a_single_row():
+    """``(1, P)`` means "shared by the batch", the same as a 1-D array.
+
+    Slicing it like a batch hands every chunk after the first an empty array.
+    """
+    circuit = angle_embedding(3, 3).compose(hardware_efficient_ansatz(3, 2))
+    rng = np.random.default_rng(0)
+    shared = rng.normal(size=(1, circuit.n_parameters))
+    features = rng.normal(size=(9, 3))
+
+    whole = batched_z(circuit, [0], shared, features)
+    pieces = batched_z(circuit, [0], shared, features, chunk=4)
+    assert pieces.shape == whole.shape == (9, 1)
+    assert np.allclose(whole, pieces)
+
+    value, jacobian = batched_z_jacobian(circuit, [0], shared, features)
+    chunked_value, chunked_jacobian = batched_z_jacobian(circuit, [0], shared, features, chunk=4)
+    assert np.allclose(value, chunked_value)
+    assert np.allclose(jacobian, chunked_jacobian)
+
+
+def test_a_useless_chunk_size_is_refused():
+    circuit = angle_embedding(2, 2)
+    rng = np.random.default_rng(0)
+    features = rng.normal(size=(4, 2))
+    for bad in (0, -1):
+        with pytest.raises(ValueError, match="chunk must be at least 1"):
+            batched_z(circuit, [0], None, features, chunk=bad)
+
+
+def test_the_single_run_path_refuses_a_batch():
+    """``run``/``simulate`` used to reshape(-1) a batch and answer for row 0."""
+    circuit = angle_embedding(2, 2)
+    rng = np.random.default_rng(0)
+    features = rng.normal(size=(4, 2))
+    with pytest.raises(ValueError, match="single-circuit path"):
+        simulate(circuit, None, features)
+    assert simulate(circuit, None, features[0]).batch_size == 1

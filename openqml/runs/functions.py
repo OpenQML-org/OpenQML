@@ -10,9 +10,9 @@ import numpy as np
 from .. import config
 from .._store import get_store
 from ..backends import DEFAULT_BACKEND
-from ..exceptions import OpenQMLError
+from ..exceptions import DuplicateRunError, OpenQMLError
 from ..flows import model_to_flow, publish_flow
-from ..metrics import get_measure
+from ..metrics import get_measure, takes_classes as _takes_classes
 from ..tasks import OpenQMLTask, get_task
 from ..utils import as_table, clone, get_params, jsonify
 from .run import OpenQMLRun
@@ -61,13 +61,24 @@ def _seeded(estimator, seed):
     return estimator
 
 
-def _score(measures, y_true, y_pred, y_proba) -> Dict[str, float]:
+def _score(measures, y_true, y_pred, y_proba, classes=None) -> Dict[str, float]:
+    """Score one fold, skipping only the measures that genuinely do not apply.
+
+    ``classes`` is the fitted estimator's own class ordering, which is what the
+    columns of ``y_proba`` follow. Probability measures need it: the labels
+    present in a *test* fold are not always all of them.
+    """
     scores = {}
     for name in measures:
+        measure = get_measure(name)
+        kwargs = {"classes": classes} if _takes_classes(measure) else {}
         try:
-            scores[name] = float(get_measure(name)(y_true, y_pred, y_proba))
-        except Exception:
-            continue  # a measure that does not apply to this fold is simply skipped
+            scores[name] = float(measure(y_true, y_pred, y_proba, **kwargs))
+        except (ValueError, TypeError):
+            # "does not apply to this fold" -- a regression measure on labels, a
+            # probability measure with no probabilities. Anything else is a bug
+            # and is left to propagate rather than silently dropping a column.
+            continue
     return scores
 
 
@@ -92,7 +103,8 @@ def _run_supervised(model, task, measures, seed):
             if y_proba is not None:
                 record["confidence"] = float(np.max(y_proba[position]))
             predictions.append(record)
-        for name, value in _score(measures, y[test], y_pred, y_proba).items():
+        classes = getattr(estimator, "classes_", None)
+        for name, value in _score(measures, y[test], y_pred, y_proba, classes).items():
             fold_evaluations.setdefault(name, {}).setdefault(repeat, {})[fold] = value
     return fold_evaluations, predictions
 
@@ -200,8 +212,8 @@ def run_models_on_tasks(models, tasks, publish: bool = False, **kwargs) -> List[
             if publish:
                 try:
                     run.publish()
-                except OpenQMLError:
-                    pass  # already published; keep the in-memory result
+                except DuplicateRunError:
+                    pass  # already on the board; keep the in-memory result
             runs.append(run)
     return runs
 

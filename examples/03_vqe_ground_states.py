@@ -5,11 +5,10 @@
 
 import numpy as np
 
-import openqml
-from openqml.models import VQE
+from openqml import VQE, get_task, run_model_on_task
 
-task = openqml.get_task(4)
-run = openqml.run_model_on_task(VQE(ansatz="real_amplitudes", layers=2, maxiter=80), task)
+task = get_task(4)
+run = run_model_on_task(VQE(ansatz="real_amplitudes", layers=2, maxiter=80), task)
 
 print(f"{'separation':>11} {'VQE energy':>12} {'exact':>12} {'error':>10}")
 for record in run.predictions:

@@ -52,7 +52,12 @@ def jsonify(obj):
         return jsonify(obj.item())
     if isinstance(obj, Mapping):
         return {str(k): jsonify(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple, set)):
+    if isinstance(obj, (set, frozenset)):
+        # a set iterates in hash order, which is randomised per process for
+        # strings -- and json.dumps(sort_keys=True) does not reorder a list, so
+        # leaving it unsorted makes stable_hash unstable across runs.
+        return sorted((jsonify(v) for v in obj), key=repr)
+    if isinstance(obj, (list, tuple)):
         return [jsonify(v) for v in obj]
     if hasattr(obj, "to_dict"):
         return jsonify(obj.to_dict())

@@ -6,14 +6,14 @@ some of these tasks and loses on others, and both belong in the report.
     python examples/02_quantum_vs_classical.py
 """
 
-import openqml
-from openqml.models import (
+from openqml import (
     ClassicalKernelClassifier,
     MajorityClassifier,
     QuantumKernelClassifier,
+    get_suite,
 )
 
-suite = openqml.get_suite("qml-cls-1")
+suite = get_suite("qml-cls-1")
 print(repr(suite))
 print(suite.description, "\n")
 

@@ -3,17 +3,18 @@
     python examples/05_periodic_advantage.py
 """
 
-import openqml
-from openqml.models import (
+from openqml import (
     ClassicalKernelRegressor,
     LinearRegressor,
     VariationalQuantumRegressor,
+    compare,
+    get_task,
 )
 
-task = openqml.get_task(5)  # y = sin(3*pi*x)
+task = get_task(5)  # y = sin(3*pi*x)
 print(repr(task), "\n")
 
-table = openqml.compare(
+table = compare(
     [
         VariationalQuantumRegressor(),
         LinearRegressor(n_frequencies=0),

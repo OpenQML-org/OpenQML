@@ -126,3 +126,28 @@ def test_variational_model_accepts_statevector_inputs():
     assert not [w for w in caught if "Complex" in type(w.message).__name__]
     assert model.n_qubits_ == 6  # 64 amplitudes loaded directly, not 64 rotations
     assert model.score(X[test], y[test]) > 0.5
+
+
+def test_vqe_reports_the_energy_of_the_state_it_returns():
+    """``min()`` over a noisy history is a biased order statistic.
+
+    Under shots it drove the reported energy below the exact ground state --
+    the variational bound is the one thing a VQE must not appear to break. The
+    fix is to report the energy at the weights actually returned; what is left
+    is ordinary sampling noise, which is symmetric rather than one-sided.
+    """
+    terms = [(1.0, {0: "X"}), (1.0, {0: "Z"}), (0.5, {1: "Z"}), (0.3, {0: "Z", 1: "Z"})]
+    reference = ExactDiagonalisation(n_qubits=2).estimate(terms)
+
+    analytic = VQE(layers=2, maxiter=40, seed=1).fit(terms)
+    assert analytic.energy_ >= reference - 1e-9
+    assert analytic.energy_ == pytest.approx(min(analytic.loss_curve_), abs=0.05)
+
+    sampled = [VQE(layers=2, maxiter=40, seed=s, shots=256).fit(terms).energy_
+               for s in range(12)]
+    old_rule = [min(VQE(layers=2, maxiter=40, seed=s, shots=256).fit(terms).loss_curve_)
+                for s in range(12)]
+    # the old rule sat below the true ground state almost every time; the new
+    # one scatters either side of it
+    assert sum(e < reference for e in old_rule) > sum(e < reference for e in sampled)
+    assert np.mean(sampled) > np.mean(old_rule)
