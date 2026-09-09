@@ -2,7 +2,8 @@
 
 Detail moved out of the README: what makes the simulator fast, how the
 gradients are derived, what a backend has to implement, and the REST surface
-the client expects in server mode.
+the client expects in server mode. For using the library rather than its
+insides, see [guide.md](guide.md).
 
 ## Performance
 
