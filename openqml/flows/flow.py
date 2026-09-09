@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 from typing import Any, Dict, Optional
 
 from .._store import get_store
@@ -64,7 +65,15 @@ class OpenQMLFlow(OpenQMLEntity):
         return cls(**{k: v for k, v in payload.items() if k in known})
 
     def to_model(self, allowed_prefixes=ALLOWED_MODULE_PREFIXES, **overrides):
-        """Instantiate the model this flow describes."""
+        """Instantiate the model this flow describes.
+
+        A flow is data from a stranger, and reconstructing one imports code, so
+        two rules hold whatever the payload says. The module has to sit under
+        ``allowed_prefixes``, and the name has to resolve to a *class* -- a
+        module-level function would turn "rebuild this model" into "call this
+        function with attacker-chosen keyword arguments", which is a different
+        and much larger permission.
+        """
         module_name, _, class_name = self.model_class.rpartition(".")
         if allowed_prefixes is not None and not module_name.startswith(tuple(allowed_prefixes)):
             raise OpenQMLError(
@@ -72,11 +81,22 @@ class OpenQMLFlow(OpenQMLEntity):
                 f"only {allowed_prefixes} are allowed by default. Pass allowed_prefixes=None "
                 f"if you trust this flow."
             )
+        if "allowed_prefixes" in self.parameters:
+            raise OpenQMLError(
+                "refusing to rebuild a flow whose parameters carry 'allowed_prefixes': a "
+                "stored parameter must not be able to widen what this flow may import"
+            )
         try:
             module = importlib.import_module(module_name)
             factory = getattr(module, class_name)
         except (ImportError, AttributeError) as error:
             raise OpenQMLError(f"cannot import {self.model_class}: {error}") from None
+        if not inspect.isclass(factory):
+            raise OpenQMLError(
+                f"refusing to call {self.model_class}: a flow names the model's class, and "
+                f"{class_name!r} is a {type(factory).__name__}. Calling it would let a "
+                f"published flow invoke any function in an allowed module."
+            )
         parameters = dict(self.parameters)
         parameters.update(overrides)
         return factory(**parameters)

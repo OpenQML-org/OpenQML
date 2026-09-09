@@ -73,8 +73,23 @@ def set_root_cache_directory(path) -> None:
 
 
 def get_cache_directory(*parts) -> pathlib.Path:
-    """Return (and create) a sub-directory of the cache, e.g. ``("datasets", "3")``."""
-    path = _root_cache_directory.joinpath(*[str(p) for p in parts])
+    """Return (and create) a sub-directory of the cache, e.g. ``("datasets", "3")``.
+
+    Every part is a single name, never a path. Entity ids and names reach here
+    from stored or downloaded JSON, and ``Path.joinpath`` treats an absolute
+    part as a fresh root -- ``joinpath("datasets", "/etc/x")`` is ``/etc/x`` --
+    so an unchecked part would let a payload choose where the cache is written.
+    """
+    safe = []
+    for part in parts:
+        name = str(part)
+        if not name or name in (".", "..") or "/" in name or "\\" in name or os.path.isabs(name):
+            raise ValueError(
+                f"invalid cache path component {name!r}: a component must be a single "
+                f"name, not a path"
+            )
+        safe.append(name)
+    path = _root_cache_directory.joinpath(*safe)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
