@@ -116,6 +116,8 @@ where it is actually cheaper, and `model.gradient_method_` reports which ran.
 * [docs/internals.md](docs/internals.md) — the simulator, the adjoint gradients,
   the backend protocol, server mode.
 * [examples/](examples) — six runnable scripts, `01_quickstart.py` first.
+* [docs/audit-findings.md](docs/audit-findings.md) — known open issues, from an
+  audit of the numerics, the models and the store.
 * `python -m pytest tests -q` — 126 tests, ~2 s.
 
 MIT licensed.
