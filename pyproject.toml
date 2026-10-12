@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openqml"
+version = "0.1.0"
+description = "Quantum circuits, learning models, and reproducible benchmarks with a NumPy core"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "OpenQML contributors"}]
+dependencies = ["numpy>=1.24"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Physics",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "build>=1", "ruff>=0.9"]
+qiskit = ["qiskit>=1"]
+
+[project.urls]
+Homepage = "https://openqml.org"
+Repository = "https://github.com/OpenQML-org/OpenQML"
+Documentation = "https://github.com/OpenQML-org/OpenQML/tree/main/docs"
+Issues = "https://github.com/OpenQML-org/OpenQML/issues"
+
+[project.scripts]
+openqml = "openqml.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+openqml = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

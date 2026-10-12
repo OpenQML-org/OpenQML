@@ -1,0 +1,4234 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+new file mode 100644
+index 0000000..daf7ee0
+--- /dev/null
++++ b/.github/workflows/ci.yml
+@@ -0,0 +1,67 @@
++name: Python SDK
++
++on:
++  push:
++  pull_request:
++
++permissions:
++  contents: read
++
++jobs:
++  core:
++    runs-on: ${{ matrix.os }}
++    strategy:
++      fail-fast: false
++      matrix:
++        include:
++          - python: "3.10"
++            numpy: "numpy==1.24.4"
++            os: ubuntu-latest
++          - python: "3.11"
++            numpy: "numpy<2"
++            os: ubuntu-latest
++          - python: "3.12"
++            numpy: "numpy>=2"
++            os: ubuntu-latest
++          - python: "3.13"
++            numpy: "numpy>=2"
++            os: ubuntu-latest
++          - python: "3.11"
++            numpy: "numpy>=2"
++            os: windows-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-python@v5
++        with:
++          python-version: ${{ matrix.python }}
++          cache: pip
++      - run: python -m pip install -e ".[dev]" "${{ matrix.numpy }}"
++      - run: python -m ruff check .
++      - run: python -m ruff format --check .
++      - run: python -m pytest -q
++      - run: python examples/quantum_programming.py
++      - run: python examples/quantum_learning.py
++      - run: python -m build
++      - name: Install wheel and import away from the source checkout
++        shell: bash
++        run: |
++          python -m pip uninstall -y openqml
++          python -m pip install --no-deps dist/*.whl
++          cd "$(mktemp -d)"
++          python -c "import openqml; assert openqml.bell().run().expectation('ZZ') > 0.999"
++          python -m openqml demo --qubits 40 --shots 16
++      - uses: actions/upload-artifact@v4
++        with:
++          name: distributions-${{ matrix.os }}-py${{ matrix.python }}
++          path: dist/*
++
++  qiskit:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-python@v5
++        with:
++          python-version: "3.12"
++          cache: pip
++      - run: python -m pip install -e ".[dev,qiskit]"
++      - run: python -m pytest -q tests/test_optimization_interop.py
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..8e0ac7a
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,9 @@
++__pycache__/
++*.py[cod]
++*.egg-info/
++.pytest_cache/
++.ruff_cache/
++.venv/
++build/
++dist/
++benchmark-results*.json
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+new file mode 100644
+index 0000000..05faf3d
+--- /dev/null
++++ b/CHANGELOG.md
+@@ -0,0 +1,14 @@
++# Changelog
++
++## 0.1.0
++
++- Installable Python SDK with a NumPy-only core and top-level `import openqml` API.
++- Exact dense/sparse circuit simulation, measurement feedback, small-register
++  density channels, partial traces, entropy, and explicit resource budgets.
++- Circuit composition, inversion, custom unitary gates, QFT, GHZ, Grover, VQE,
++  QAOA MaxCut, Pauli Hamiltonians, and hybrid optimizers.
++- Quantum fidelity kernels, kernel ridge classification, variational classifiers
++  and regressors, gate-wise loss gradients, and classical baselines.
++- Offline seeded datasets, local tasks/suites, and provenance-rich benchmarks.
++- Strict OpenQASM 2 exchange, optional Qiskit conversion, and CLI examples.
++- Numerical reference tests and Python/NumPy compatibility CI.
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+new file mode 100644
+index 0000000..7b67c18
+--- /dev/null
++++ b/CONTRIBUTING.md
+@@ -0,0 +1,29 @@
++# Contributing
++
++Use Python 3.10+ and install the editable package and development tools:
++
++```bash
++python -m pip install -e ".[dev]"
++python -m pytest -q
++python -m ruff check .
++python -m ruff format --check .
++python -m build
++```
++
++Keep the core NumPy-only. Import optional frameworks inside their adapters, and
++never contact a service or change global random state during package import.
++Use explicit seeds and document wire order, mathematical conventions, and
++resource bounds. Reject unsupported conversions instead of dropping operations.
++
++Numerical changes need independent references: analytic values, full small-system
++matrices, finite differences for gradients, or exact eigenspectra. Learning
++changes need training-only preprocessing and held-out metrics. Do not add fixed
++success numbers, unstated parameter matching, or quantum advantage claims.
++
++For new datasets/models/tasks, register metadata and include the source or
++generator version, reproducible settings, and a classical comparator where
++appropriate. Synthetic toy tasks must be labeled as such.
++
++The strict QASM subset and simulation budgets are public contracts. Broadening
++them requires correctness and allocation/work checks before documenting support.
++Add runnable examples and keep the Chinese README and English quickstart aligned.
+diff --git a/MANIFEST.in b/MANIFEST.in
+new file mode 100644
+index 0000000..1cc062e
+--- /dev/null
++++ b/MANIFEST.in
+@@ -0,0 +1,3 @@
++include CHANGELOG.md CONTRIBUTING.md VALIDATION.md
++recursive-include docs *.md
++recursive-include examples *.py
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..e47f309
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,248 @@
++# OpenQML
++
++**一个可以直接 `import openqml` 的 Python 量子编程与机器学习库。**
++
++参考 [openqml.org](https://openqml.org) 的量子编程、模型、数据集和实验流程，
++提供独立的 NumPy 实现。用户可以在普通电脑上编写线路、读取量子态、训练模型，
++并用固定数据划分比较量子与经典方法。Python 3.10+；核心依赖只有 NumPy。
++
++当前版本：**0.1.0 / Alpha**。这是 Python SDK 的首个实现，
++不是网站 JavaScript 引擎的包装，也不声称复现网站上的全部模型或评测协议。
++
++## 安装，然后直接引用
++
++下载源码压缩包，解压并进入包含 `pyproject.toml` 的目录，执行（Windows / macOS / Linux）：
++
++```bash
++python -m pip install .
++```
++
++如果下载包内含 `dist/openqml-0.1.0-py3-none-any.whl`，也可直接安装 wheel，无需安装 Git：
++
++```bash
++python -m pip install dist/openqml-0.1.0-py3-none-any.whl
++```
++
++这个命令会安装包，随后在**其他目录**的 Python 程序中也能运行：
++
++```python
++import openqml
++
++state = openqml.Circuit(2).h(0).cx(0, 1).run()
++print(state.sample(1024, seed=7))  # 只出现 00 和 11
++print(state.expectation("ZZ"))  # 接近 1
++print(state.reduced_density([0]))  # 单比特约化态 I/2
++```
++
++当前尚未发布到 PyPI；不要将 `pip install openqml` 当作本仓库已发布的承诺。
++导入本库不会联网，不需要 API key，不会自动安装或导入 Qiskit、Torch、PennyLane。
++
++## 量子编程
++
++```python
++import numpy as np
++import openqml as q
++
++circuit = q.Circuit(3)
++circuit.h(0).ry(np.pi / 3, 1).cx(0, 2).rz(0.2, 2)
++state = circuit.run(seed=42)
++
++print(state.probabilities())  # 数组索引是计算基底整数
++print(state.expectation("XIZ"))  # q2=X, q1=I, q0=Z
++print(state.bloch_vector(1))
++print(state.entropy([0]))  # 以 bit 为单位
++print(circuit.resources())  # 宽度、操作数、线路深度等
++
++# 自定义块、映射到目标比特、求逆。
++block = q.Circuit(2).h(0).cx(0, 1)
++larger = q.Circuit(4).compose(block, [3, 1])
++restored = larger.compose(q.Circuit(4).compose(block.inverse(), [3, 1])).run()
++assert np.isclose(restored.probabilities()[0], 1)
++```
++
++支持 H/X/Y/Z、S/T 及逆门、RX/RY/RZ、相位门、CX/CY/CZ/CP、SWAP、CCX/MCX、
++QFT/IQFT、Pauli 旋转、最多四个目标比特的自定义酉门、线路组合与反演。
++旋转方法使用 **`ry(angle, wire)`** 的参数顺序。
++
++支持测量反馈和精确混态噪声：
++
++```python
++import openqml as q
++
++# 测量会塌缩；run 的 seed 控制实际分支。
++circuit = q.Circuit(2).h(0).cx(0, 1).measure(0, "m")
++circuit.x(1, condition=("m", 1))
++state = circuit.run(seed=3)
++print(state.classical)  # {'m': 0} 或 {'m': 1}
++
++# sample 只抽样、不塌缩；reset 是精确的无条件信道。
++noisy = q.bell().amplitude_damping(0.1, 0).reset(1).run()
++print(noisy.reduced_density())
++```
++
++`Circuit.run()` 每次从新的零态开始；`initial_state=` 会复制传入态。
++`State` 也可直接调用门与 `measure`，在普通 Python 循环/分支中实现自己的算法。
++
++## 训练量子模型
++
++```python
++import openqml as q
++
++data = q.load_dataset("moons", n_samples=192, seed=7)
++X_train, X_test, y_train, y_test = data.split(seed=7)
++
++model = q.QuantumKernelClassifier(layers=2, regularization=0.01)
++model.fit(X_train, y_train)
++print(model.predict(X_test[:5]))
++print("Held-out accuracy:", model.score(X_test, y_test))
++
++vqc = q.VariationalQuantumClassifier(layers=2, epochs=60, seed=7)
++vqc.fit(X_train, y_train)
++print("Initial / best training loss:", vqc.history_[0], min(vqc.history_))
++```
++
++| 接口 | 实现与用途 |
++| --- | --- |
++| `QuantumKernel` | 数据重上传线路的精确保真度核、交叉核矩阵 |
++| `QuantumKernelClassifier` | 核岭分类，支持多类别；不是 SVM |
++| `VariationalQuantumClassifier` | 二分类、参数化线路、BCE 与逐门参数移位梯度 |
++| `VariationalQuantumRegressor` | 数据重上传、量子期望值、可训练仿射输出头 |
++| `LogisticClassifier` | 二分类逻辑回归经典基线 |
++| `RidgeRegressor` | 线性岭回归经典基线 |
++| `FourierRegressor` | 周期目标的傅里叶特征岭回归基线 |
++
++模型提供 `fit`、`predict`、`score`、`get_params`；分类模型提供 `predict_proba`。
++量子模型最多使用 8 个比特，输入特征数不能超过比特数。
++特征缩放只从训练数据学习；核岭的 softmax 分数未经概率校准。
++准确率与泛化能力取决于数据、编码、线路与优化，量子模型并不保证胜过经典基线。
++
++## 数据集、任务、Suite 和可复现实验
++
++```python
++import openqml as q
++
++print(q.list_datasets())
++print(q.list_models())
++suite = q.get_suite("qml-cls-1")  # xor、circles、moons
++
++task = q.get_task("moons", n_samples=96, seed=1)
++result = q.run_benchmark("quantum-kernel", task, seed=7)
++print(result.metrics)
++result.save("benchmark-results.json")
++
++# 每个 seed 下，各模型使用同一份数据和同一个 train/test split。
++comparison = q.compare_models(task, seeds=(1, 2, 3), epochs=40)
++print(comparison.summary())  # 各 seed 指标的中位数
++comparison.save("benchmark-results-comparison.json")
++```
++
++内置离线生成器：`xor`、`circles`、`moons`、`parity`、`sine`、`step`、`linear`。
++另有 `qml-reg-1` 回归套件。自己的数据可使用 `q.make_task(X, y, task_type=...)`。
++不会下载 MNIST、分子数据或网站远程数据；这些生成器是透明的小规模验证任务。
++
++结果保存模型配置、数据 SHA-256、数据生成配置、划分 seed、依赖版本、训练/预测耗时、
++参数数量与估算的线路计算次数。协议名是 `openqml-sdk-bench-v1`；
++它与网站 `openqml-duel-1` 分开，默认模型也**没有做参数数量匹配**。
++固定划分和 seed 的数值结果可复现，运行耗时和平台信息可能变化。
++
++## VQE、QAOA 和梯度
++
++```python
++import openqml as q
++
++H = q.Hamiltonian({"ZZ": -1, "XI": -0.5, "IX": -0.5})
++
++
++def ansatz(p):
++    return q.Circuit(2).ry(p[0], 0).ry(p[1], 1).cx(0, 1)
++
++
++fit = q.vqe(H, ansatz, [0.4, 0.3], steps=100, learning_rate=0.08)
++print(fit.value, H.ground_energy())
++
++qaoa = q.qaoa_maxcut(3, [(0, 1), (1, 2)], gammas=[0.3], betas=[0.2])
++print(qaoa.run().sample(1024, seed=7))
++```
++
++也可使用 `ghz`、`bell`、`grover`、`qft` 和 `hardware_efficient_ansatz` 生成线路。
++`gradient` 是完整目标函数的中心有限差分；`minimize` 支持 Adam 和回溯梯度下降。
++`parameter_shift` 的 ±π/2 公式仅对**每个参数独立出现一次、未缩放 Pauli 旋转的期望值**直接适用。
++共享参数、受控旋转与非线性损失请使用链式法则或 `gradient`。
++
++## 线路交换与 Qiskit
++
++```python
++import openqml as q
++
++circuit = q.bell()
++source = circuit.to_qasm()  # 明确的 OpenQASM 2 子集
++restored = q.Circuit.from_qasm(source)
++```
++
++OpenQASM 2 子集不支持的语法会明确报错，不会静默丢门；源代码不经 `eval` / `exec`。
++若需要导出到 Qiskit，在源码目录安装 `python -m pip install ".[qiskit]"`，
++或者另行安装 Qiskit，随后调用 `circuit.to_qiskit()`。
++该适配器支持酉门、噪声和测量反馈，但不会连接账号或提交真机任务。
++
++## 模拟资源边界
++
++| 功能 | 默认限制 |
++| --- | --- |
++| 线路描述 | 64 比特 |
++| 精确纯态模拟 | 最多 40 比特；由占据基底数与工作预算进一步限制 |
++| 完整状态向量 / 概率数组 | 最多 18 个请求比特 |
++| 稀疏占据基底 | 262,144 个；另有内存预算 |
++| 精确噪声 / reset | 整个寄存器最多 8 比特 |
++| 约化密度矩阵读数 | 最多 8 个请求比特 |
++| 自定义酉门与信道 | 最多 4 个目标比特 |
++| 默认分配预算 | 256 MiB；按保守中间数组估算，不是操作系统进程内存硬限额 |
++| 默认线路/工作预算 | 10,000 个操作 / 2,000 万估算标量工作量 |
++
++**40 比特 GHZ 等稀疏态可以运行；任意高度纠缠的 40 比特线路不保证能运行。**
++本版没有张量网络或稳定子专用后端，不会丢弃小振幅近似“跑完”。
++预算不足时抛出 `ResourceLimitError`。大态使用边缘概率或少量比特读数：
++
++```python
++import openqml as q
++
++state = q.ghz(40).run()
++print(state.sample(1024, seed=7))
++print(state.probabilities([0, 39]))  # 仅分配长度 4 的数组
++```
++
++需要调整时传入 `SimulationBudget`；其作用与局限见 [API 文档](docs/api.md)。
++
++## 比特顺序
++
++`q0` 是最低有效位。数组索引和采样字符串遵循 `q[n-1]...q0`，
++Pauli 字符串也将 q0 放在最右侧。矩阵的 `targets=[2, 0]` 表示 wire 2 是最低有效**局部**位。
++`probabilities([2, 0])` 的局部索引规则相同。
++网站部分显示使用 q0 在左侧；本 SDK 的字符串不能直接按页面显示顺序比较。
++
++## 示例与开发
++
++```bash
++python -m openqml demo --qubits 3 --seed 7
++python -m openqml datasets
++python -m openqml benchmark --task moons --seeds 1 2 3 --epochs 40 --output benchmark-results.json
++python examples/quantum_programming.py
++python examples/quantum_learning.py
++python examples/reproducible_benchmark.py
++```
++
++```bash
++python -m pip install -e ".[dev]"
++python -m pytest -q
++python -m ruff check .
++python -m build
++```
++
++CI 已配置 Python 3.10–3.13、Windows/Linux、NumPy 1.x/2.x、核心数值测试、安装包和可选 Qiskit 适配器，
++将在仓库推送后运行。已完成的本地验证见 [验证记录](VALIDATION.md)。
++测试包含独立矩阵参考、QFT/DFT、噪声物理性、传态测量分支、解析梯度、训练损失链式法则、
++可复现划分以及资源限制。
++
++- [API 说明](docs/api.md)
++- [English quickstart](docs/quickstart-en.md)
++- [贡献指南](CONTRIBUTING.md)
++- [MIT License](LICENSE)
+diff --git a/VALIDATION.md b/VALIDATION.md
+new file mode 100644
+index 0000000..c67cda3
+--- /dev/null
++++ b/VALIDATION.md
+@@ -0,0 +1,26 @@
++# 已完成的验证
++
++日期：2026-10-12（Asia/Shanghai）。版本：0.1.0。
++
++## 本地数值与接口检查
++
++- Python 3.12.14 / NumPy 2.3.5 / Qiskit 2.5.2：`python -m pytest -q`，**103 passed**。
++- 独立虚拟环境，安装正式 wheel，Python 3.12 / NumPy 1.26.4：在源码目录之外执行测试，
++  **102 passed, 1 skipped**；唯一跳过项是该环境未安装的可选 Qiskit 适配器。
++- `ruff check` 与 `ruff format --check` 通过。
++- wheel 与源码分发包构建成功；核对依赖、版本、MIT 许可证、类型标记及源码包内文档和示例。
++- 在源码目录之外导入安装后的 wheel，并完成 40 比特 GHZ CLI 采样。
++- 三个示例脚本均执行成功；内置分类 suite 覆盖三个数据集、三个模型、三个 seed。
++
++参考验证包括：独立小矩阵门计算、所有三比特 Pauli 字符串、QFT 与正号 DFT、
++约化态求迹、Kraus 信道与混态门、Born 测量及量子传态反馈、有限差分与逐门移位、
++BCE/MSE 损失链式法则、VQE 精确基态能量、强经典傅里叶基线、可复现数据划分、
++资源限制及严格 QASM 语义。
++
++## 尚未完成的外部步骤
++
++- GitHub 写入返回 `403: Resource not accessible by integration`；没有远程提交或 PR。
++- CI 配置已写入源码，Python 3.10/3.11/3.13 和 Windows 的远程检查尚未执行。
++- 未发布到 PyPI；未连接或测试量子真机。
++
++本记录说明实际执行过的验证，不表示量子优势、生产成熟度或任意 40 比特线路均可模拟。
+diff --git a/docs/api.md b/docs/api.md
+new file mode 100644
+index 0000000..f54490a
+--- /dev/null
++++ b/docs/api.md
+@@ -0,0 +1,192 @@
++# Python API 与数值约定
++
++安装方式见项目 README；所有下列入口均可从 `openqml` 顶层取得。
++
++## 线路和态
++
++| 接口 | 行为 |
++| --- | --- |
++| `Circuit(n_qubits)` | 创建 1–64 比特的可变线路；门调用返回自身 |
++| `State(n_qubits, backend='auto', seed=None, budget=None)` | 创建零态；对 State 的门调用原地修改自身 |
++| `State.from_vector(amplitudes)` | 从归一化向量复制创建纯态 |
++| `circuit.run(seed=None, backend='auto', budget=None, initial_state=None)` | 创建新态执行；传入态会先复制 |
++| `state.clone()` / `circuit.copy()` | 独立复制，随机数发生器状态也随态复制 |
++| `circuit.compose(block, mapping=None)` | 顺序附加线路；mapping 的第 i 项对应 block 的 qi |
++| `circuit.inverse()` | 无条件酉线路的逆；噪声、测量、反馈不支持反演 |
++| `circuit.repeat(n)` | 返回重复线路；重复测量键会被拒绝 |
++| `circuit.operations` / `circuit.resources()` | 独立操作快照 / 操作数、深度和测量等统计 |
++
++`run(seed=...)` 对同样的线路与初态产生同样的测量分支。`sample(seed=...)` 使用独立发生器，
++不修改态也不改变态内部发生器；未提供采样 seed 时，使用态自带发生器。
++对测量后态执行 `sample` 是对**该分支**采样。它不是反复重跑整个动态线路。
++若要统计完整反馈算法的分支，应使用多个 seed 重复调用 `circuit.run()`。
++
++**比特顺序：** q0 是整数索引的最低有效位，字符串右侧是 q0。
++矩阵 wire 列表的第一项是局部最低有效位。`state.sample(..., selected_wires=[2,0])`
++返回字符串右侧对应 q2，左侧对应 q0。
++
++### 门
++
++单比特：`h(q)`、`x(q)`、`y(q)`、`z(q)`、`s(q)`、`sdg(q)`、`t(q)`、`tdg(q)`、
++`rx(theta,q)`、`ry(theta,q)`、`rz(theta,q)`、`p(theta,q)`。
++
++多比特：`cx(control,target)`（别名 `cnot`）、`cy`、`cz`、`cp(theta,control,target)`、
++`swap(a,b)`、`ccx(a,b,target)`、`mcx(controls,target)`。
++`qft(selected_wires=None, inverse=False, swaps=True)` 使用正号 DFT：
++`U[j,k] = exp(2πijk/N)/sqrt(N)`；`iqft` 是其逆。
++
++`unitary(matrix, targets, controls=(), label='unitary')` 检查矩阵形状、有限值和 `U†U=I`。
++最多 4 个目标，controls 是与目标不同的任意数量比特，均为正控制。
++`pauli_rotation(theta, 'XYZ...')` 实现 `exp(-i theta P/2)`。
++`global_phase(theta)` 实现 `exp(i theta) I`。
++
++State 的直接门接口包括 H/X/Y/Z、RX/RY/RZ、CX/CZ、unitary。
++其他线路块可以用 `block.run(initial_state=state)` 应用到实时态。
++
++### 读数
++
++| 接口 | 返回值与限制 |
++| --- | --- |
++| `state.statevector()` | 纯态完整复数数组的副本，混态拒绝；默认至多 18 比特 |
++| `state.sparse_amplitudes()` | 纯态非零振幅字典，键为全局基底整数 |
++| `state.probabilities(selected_wires=None)` | 对其他比特求和后的概率数组，默认至多 18 个选中比特 |
++| `state.sample(shots=1024, seed=None, selected_wires=None)` | 无塌缩计数字典；稀疏态不展开完整 2^n 概率数组 |
++| `state.expectation(pauli_or_Hamiltonian)` | 精确实数期望值 |
++| `state.reduced_density(selected_wires=None)` | 约化密度矩阵，至多 max_density_qubits 个选中比特 |
++| `state.bloch_vector(q)` | `[<X>,<Y>,<Z>]` |
++| `state.entropy(selected_wires=None)` | 约化态的冯诺依曼熵，单位 bit |
++| `state.backend` / `state.work` | 实际后端 / 已消耗的估算门与读数工作量 |
++
++### 测量与噪声
++
++`state.measure(q, basis='Z')` 按 Born 规则抽取一个 bit 并塌缩到对应基底。
++`circuit.measure(q, key=None, basis='Z')` 在执行时记录到 `state.classical[key]`。
++基底支持 X/Y/Z。线路中 `h/x/y/z/rx/ry/rz/cx` 支持 `condition=('key', bit)`；
++键必须引用此前的测量。键在一条线路内必须唯一。
++
++`channel(kraus, targets)` 要求 `sum(K†K)=I`，在完整寄存器的小密度矩阵上精确执行。
++即使某次 p=0，本版本的信道接口仍使用密度矩阵路径。
++
++| 信道 | 定义 |
++| --- | --- |
++| `amplitude_damping(p,q)` | `K0=diag(1,sqrt(1-p))`，`K1=sqrt(p)|0><1|` |
++| `dephasing(p,q)` | 相位翻转 `(1-p)rho + p Z rho Z`；p 是翻转概率 |
++| `depolarizing(p,q)` | 以概率 p 将该比特替换为 I/2；Pauli 权重为 p/4 |
++| `reset(q)` | `|0><0|`、`|0><1|` 两个 Kraus 算符；无条件复位，纠缠伙伴可变成混态 |
++
++### SimulationBudget
++
++`SimulationBudget` 是不可变配置，可以传入 State 或 Circuit.run：
++
++```python
++import openqml as q
++
++budget = q.SimulationBudget(max_sparse_states=4096, max_operations=2000, max_work=5_000_000)
++state = q.ghz(30).run(budget=budget)
++```
++
++默认 `max_qubits=40`、`max_dense_qubits=18`、`max_sparse_states=262144`、
++`max_density_qubits=8`、`max_memory_mb=256`、`max_work=20000000`、`max_operations=10000`。
++全部取正整数；max_qubits 最多 40，max_density_qubits 最多 10。
++增加密度限制仍受工作和分配预算约束。密度读取与操作也消耗工作预算。
++
++auto 根据比特数选择 dense 或 sparse；它不实现任意线路的张量分解。
++稀疏预算按中间支持数保守检查，某个最终会抵消的中间展开也可能触发限制。
++它不是振幅截断。内存预算估算中间数组与稀疏项，不能保证 NumPy、Python 和 BLAS 的
++整个进程常驻内存都低于给定数值；工作预算也不是秒数或超时保证。
++
++## Hamiltonian 和优化
++
++`Hamiltonian({'ZZ': -1, 'XI': -0.5})` 或 `Hamiltonian([('ZZ', -1), ('XI', -0.5)])`。
++所有字符串长度相同，系数有限且为实数；重复项会合并。
++`H.matrix(max_qubits=10)` 和 `H.ground_energy(max_qubits=10)` 仅用于小寄存器的精确参考。
++`ising_hamiltonian(n, coupling=1, field=1, periodic=False)` 构造横场 Ising 链。
++
++`gradient(fn, parameters, epsilon=1e-6)`：完整标量目标的中心差分。
++`parameter_shift(fn, parameters)`：逐个角度 ±π/2 的期望值差分；仅满足单次未缩放
++Pauli 旋转假设时准确。该工具无法检查用户函数内部的参数复用。
++
++`minimize(fn, initial, gradient_fn=None, steps=100, learning_rate=0.05, method='adam', tolerance=1e-8)`。
++不提供 gradient_fn 时用中心差分。GD 有 Armijo 回溯，Adam 不要求每步损失单调。
++返回 OptimizeResult：最优的 `parameters/value`、实际迭代 `history`、
++`n_steps`、`n_evaluations`、`converged`。converged 只表示梯度范数达阈值；
++n_evaluations 不包含用户 gradient_fn 内部的目标调用。
++
++`vqe(H, ansatz, initial, ...)` 用用户线路的精确期望作为目标。
++`qaoa_maxcut(n, edges, gammas, betas)` 支持无权或非负权边；成本是
++`sum w(1-Z_i Z_j)/2`，成本层 `exp(-i gamma C)`，混合层 `exp(-i beta sum X)`。
++
++## 模型
++
++全部模型：`fit(X,y)` 返回自身；`predict(X)`、`score(X,y)`、`get_params()`。
++X 的推荐形状是 `(samples, features)`，一维数组解释为**多个单特征样本**，
++单个多特征样本必须写成 `[[f1,f2]]`。
++
++`QuantumKernel(layers=2, n_qubits=None)` 的直接输入是弧度，生成每层 RY 编码、
++固定 RZ、线性 CX 链的保真度核。
++`statevectors(X)` 返回样本在行的振幅矩阵；`pairwise(X,Y=None)` 返回核矩阵。
++最多 8 个比特，4 百万个批量振幅或核元素。
++
++`QuantumKernelClassifier(layers=2, regularization=0.01, n_qubits=None)`
++将训练数据按每列最大绝对值缩放至 `[-pi/2,pi/2]` 后拟合 one-hot 核岭目标。
++支持多类别数字或字符串标签；`predict_proba` 为 softmax 分数，未经校准。
++
++`VariationalQuantumClassifier(n_qubits=None,layers=2,epochs=60,learning_rate=0.08,seed=1)`
++和同构造参数的 `VariationalQuantumRegressor`：先 H 准备，然后每层可训练 RZ 相位偏移、
++RZ 数据编码、可训练 RY、闭合 CX 环，读出 q0 的 Z 期望。
++分类器将训练输入缩放至 `[-pi/2,pi/2]`，回归器至 `[-pi,pi]`；
++测试数据沿用训练缩放，可能超出该范围。
++回归器的仿射输出头也参与训练。
++
++每个量子角只出现于一个未缩放 Pauli 旋转；训练对期望值逐角移位，
++再用 BCE/MSE 链式法则传播，经典输出头使用解析导数。
++seed 控制初始参数；量子期望是精确计算，没有有限 shots 噪声。
++
++训练后：`parameters_`（核模型为 `coefficients_`）、`n_parameters_`、
++`n_features_in_`、`feature_scale_`、`n_circuit_evaluations_`；
++变分模型另有 `history_`、`optimization_result_`。
++线路次数统计计算过的样本数，含训练和后续预测，不等同于真机提交次数。
++
++经典基线：LogisticClassifier 为二分类线性逻辑回归；RidgeRegressor 为线性岭回归；
++FourierRegressor 用输入的原始弧度与每列 `1..harmonics` 的正余弦特征。
++分类 score 是 accuracy，回归 score 是 R²；常量目标采用有限 0/1 分数。
++它们没有做默认参数数量匹配，也不代表完整的强经典模型集合。
++
++## 数据和评测
++
++`list_datasets()` / `load_dataset(name, n_samples=192, seed=1, noise=0.08, frequency=3, n_features=4)`。
++Dataset 提供 `X/y/name/task_type/description/metadata/fingerprint` 和
++`split(test_size=0.25,seed=1)`，返回四项 `X_train,X_test,y_train,y_test`。
++分类按标签分层，每类测试数量独立四舍五入，保留至少一个训练/测试样本。
++所有生成器为本地合成数据，哈希包含数组 dtype、形状和字节内容。
++
++`get_task(name,n_samples=96,seed=1,test_size=0.25,**options)` 包装数据与划分策略。
++这里 seed 是**生成数据的 seed**，run_benchmark 的 seed 是**划分 seed**。
++`make_task(X,y,task_type='classification',name='custom',test_size=0.25)` 支持自有数据。
++`get_suite('qml-cls-1')` / `get_suite('qml-reg-1')` 返回可迭代的数据集 id 集合。
++
++`get_model(id,**parameters)` / `list_models()` 提供模型目录。
++`run_benchmark(model_or_id,task_or_dataset_id,seed=1)` 训练一次并测 held-out 指标。
++若传入模型对象，其初始化 seed 由模型配置决定，不会被划分 seed 隐式覆盖。
++`compare_models(task='moons',models=None,seeds=(1,2,3),epochs=40)` 每次创建独立模型；
++自定义 models 是 `{显示名: 零参数工厂}`，工厂负责自身随机种子。
++
++分类记录 accuracy / balanced_accuracy；回归记录 MSE / MAE / R²。
++比较结果按模型和指标报告中位数，不自动宣布胜负，也不做显著性检验。
++`to_dict()` / `save(path)` 序列化设置、指标、数据哈希、seed、版本和资源。
++结果文件不保存训练模型或原始数据，不作为模型持久化文件。
++
++## 交换与错误
++
++`to_qasm(circuit)` / `from_qasm(source)`：OpenQASM **2.0** 的明确子集。
++单 qreg，最多单 creg；标准单比特门、RX/RY/RZ、u1/p、CX/CY/CZ、cu1/cp、CCX、SWAP、
++单比特 Z 测量。角表达式仅支持数字、pi、加减乘除、括号。
++不支持 QASM 3、自定义 gate 定义、多个寄存器、广播、barrier、reset、反馈、噪声、
++全局相位。测量键导入时按 `creg名称+索引` 命名。语义外语法明确拒绝。
++
++`to_qiskit(circuit)` 延迟导入 Qiskit；支持包括噪声、X/Y/Z 测量和反馈的转换。
++这里只转换线路，不连接 IBM/IonQ，也不运行硬件任务。
++
++`OpenQMLError` 是库错误基类；`NotFittedError`、`ResourceLimitError`、
++`UnsupportedOperationError` 区分常见问题。格式和数据校验使用 ValueError。
++没有吞掉错误并返回假结果的兜底路径。
+diff --git a/docs/quickstart-en.md b/docs/quickstart-en.md
+new file mode 100644
+index 0000000..2a46aa3
+--- /dev/null
++++ b/docs/quickstart-en.md
+@@ -0,0 +1,71 @@
++# OpenQML Python SDK
++
++OpenQML is a NumPy-native Python library for quantum circuits, toy quantum learning
++models, and reproducible local quantum/classical comparisons, inspired by
++[openqml.org](https://openqml.org). It is an independent SDK, not the website's
++JavaScript simulator or an implementation of every model in its catalog.
++
++Requires Python 3.10+. The core dependency is NumPy; import does not contact any
++service. The current alpha version has not been published to PyPI. Extract the
++source bundle and run this in the directory containing pyproject.toml:
++
++```bash
++python -m pip install .
++```
++
++The delivery bundle also includes a wheel under `dist/`, which can be installed
++directly without Git.
++
++```python
++import openqml as q
++
++state = q.Circuit(2).h(0).cx(0, 1).run()
++print(state.sample(1024, seed=7))
++print(state.expectation("ZZ"))
++print(state.reduced_density([0]))
++
++data = q.load_dataset("moons", seed=7)
++X_train, X_test, y_train, y_test = data.split(seed=7)
++model = q.QuantumKernelClassifier().fit(X_train, y_train)
++print(model.score(X_test, y_test))
++
++comparison = q.compare_models("moons", seeds=(1, 2, 3), epochs=40)
++print(comparison.summary())
++comparison.save("benchmark-results.json")
++```
++
++The models expose `fit/predict/score/get_params`. The variational classifier and
++regressor use exact gate-wise parameter-shift derivatives with the loss chain
++rule. QuantumKernelClassifier is a multiclass kernel ridge classifier, not an
++SVM; its softmax scores are not calibrated probabilities. Classical logistic,
++linear ridge, and Fourier ridge comparators are included.
++
++The synthetic datasets and suites run offline. Benchmarks preserve data hashes,
++generation options, split seeds, configurations, versions, timings, and metrics.
++The SDK protocol is `openqml-sdk-bench-v1`, distinct from the website's protocol.
++Default comparisons are not parameter matched and imply no quantum advantage.
++
++q0 is the least significant bit and is rightmost in strings. Matrix wire lists
++put the least significant local wire first. All rotations use `(angle, wire)`.
++
++Sparse states such as GHZ can run up to 40 qubits within explicit support/work
++budgets. Arbitrary 40-qubit entangled states are not guaranteed to fit. Full
++vectors/probabilities default to at most 18 requested wires; exact noise/reset
++uses density matrices on at most 8 total qubits. Use selected-wire readouts for
++large sparse states. Budgets are conservative estimates, not process-wide
++operating-system memory limits or wall-clock timeouts.
++
++OpenQASM exchange supports a strict QASM 2 subset and rejects unsupported
++constructs. `circuit.to_qiskit()` is an optional adapter, with no hardware job
++submission. Install Qiskit separately or install `.[qiskit]` from a source checkout.
++
++```bash
++python -m openqml demo --qubits 40 --seed 7
++python -m openqml datasets
++python -m openqml benchmark --task sine --seeds 1 2 3 --epochs 40
++python -m pip install -e ".[dev]"
++python -m pytest -q
++```
++
++See [API documentation](api.md), the [examples](../examples/), and the
++[contribution guide](../CONTRIBUTING.md) for contracts and validation.
+diff --git a/examples/quantum_learning.py b/examples/quantum_learning.py
+new file mode 100644
+index 0000000..ef51f6a
+--- /dev/null
++++ b/examples/quantum_learning.py
+@@ -0,0 +1,30 @@
++"""Training and held-out metrics; results are computed, never preset."""
++
++import openqml as q
++
++
++def main():
++    data = q.load_dataset("moons", n_samples=128, seed=7)
++    X_train, X_test, y_train, y_test = data.split(seed=7)
++    models = [
++        q.QuantumKernelClassifier(),
++        q.VariationalQuantumClassifier(epochs=60, seed=7),
++        q.LogisticClassifier(seed=7),
++    ]
++    for model in models:
++        model.fit(X_train, y_train)
++        print(type(model).__name__, "held-out accuracy:", model.score(X_test, y_test))
++
++    # A smooth periodic target; Fourier is an essential classical comparator.
++    data = q.load_dataset("sine", frequency=1, n_samples=64, noise=0, seed=7)
++    a, b, c, d = data.split(seed=7)
++    for model in [
++        q.VariationalQuantumRegressor(epochs=100, seed=7),
++        q.FourierRegressor(harmonics=3),
++    ]:
++        model.fit(a, c)
++        print(type(model).__name__, "held-out R2:", model.score(b, d))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/examples/quantum_programming.py b/examples/quantum_programming.py
+new file mode 100644
+index 0000000..e767883
+--- /dev/null
++++ b/examples/quantum_programming.py
+@@ -0,0 +1,37 @@
++"""Bell/GHZ, custom blocks, measurement feedback, noise, and VQE."""
++
++import numpy as np
++
++import openqml as q
++
++
++def main():
++    state = q.bell().run(seed=7)
++    print("Bell counts:", state.sample(1024))
++    print("Bell entropy S(q0):", state.entropy([0]))
++    print("40-qubit GHZ marginal:", q.ghz(40).run().probabilities([0, 39]))
++
++    # Teleport a user's prepared qubit with actual measurement branches.
++    circuit = q.Circuit(3).ry(0.713, 0).rz(0.441, 0).h(1).cx(1, 2)
++    circuit.cx(0, 1).h(0).measure(0, "phase").measure(1, "flip")
++    circuit.x(2, condition=("flip", 1)).z(2, condition=("phase", 1))
++    result = circuit.run(seed=7)
++    expected = q.Circuit(1).ry(0.713, 0).rz(0.441, 0).run().reduced_density()
++    print("Teleportation branch:", result.classical)
++    print("Teleportation matches:", np.allclose(result.reduced_density([2]), expected))
++
++    noisy = q.bell().amplitude_damping(0.2, 0).run()
++    print("Noisy density eigenvalues:", np.linalg.eigvalsh(noisy.reduced_density()))
++    print("QASM 2 circuit:\n", q.bell().to_qasm())
++
++    H = q.Hamiltonian({"ZZ": -1, "XI": -0.5, "IX": -0.5})
++
++    def ansatz(p):
++        return q.Circuit(2).ry(p[0], 0).ry(p[1], 1).cx(0, 1)
++
++    fit = q.vqe(H, ansatz, [0.4, 0.3], steps=100, learning_rate=0.08)
++    print("VQE energy / exact reference:", fit.value, H.ground_energy())
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/examples/reproducible_benchmark.py b/examples/reproducible_benchmark.py
+new file mode 100644
+index 0000000..d0599ed
+--- /dev/null
++++ b/examples/reproducible_benchmark.py
+@@ -0,0 +1,21 @@
++"""Evaluate a local suite and optionally save result JSON with --output."""
++
++import argparse
++import json
++
++import openqml as q
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--output", help="Optional path for one full comparison JSON")
++    args = parser.parse_args()
++    for dataset_id in q.get_suite("qml-cls-1"):
++        comparison = q.compare_models(q.get_task(dataset_id), seeds=(1, 2, 3), epochs=30)
++        print(dataset_id, json.dumps(comparison.summary(), indent=2))
++        if args.output and dataset_id == "moons":
++            comparison.save(args.output)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/pyproject.toml b/pyproject.toml
+new file mode 100644
+index 0000000..b2133f7
+--- /dev/null
++++ b/pyproject.toml
+@@ -0,0 +1,54 @@
++[build-system]
++requires = ["setuptools>=77", "wheel"]
++build-backend = "setuptools.build_meta"
++
++[project]
++name = "openqml"
++version = "0.1.0"
++description = "Quantum circuits, learning models, and reproducible benchmarks with a NumPy core"
++readme = "README.md"
++requires-python = ">=3.10"
++license = "MIT"
++license-files = ["LICENSE"]
++authors = [{name = "OpenQML contributors"}]
++dependencies = ["numpy>=1.24"]
++classifiers = [
++  "Development Status :: 3 - Alpha",
++  "Intended Audience :: Science/Research",
++  "Programming Language :: Python :: 3",
++  "Programming Language :: Python :: 3.10",
++  "Programming Language :: Python :: 3.11",
++  "Programming Language :: Python :: 3.12",
++  "Programming Language :: Python :: 3.13",
++  "Topic :: Scientific/Engineering :: Physics",
++]
++
++[project.optional-dependencies]
++dev = ["pytest>=7", "build>=1", "ruff>=0.9"]
++qiskit = ["qiskit>=1"]
++
++[project.urls]
++Homepage = "https://openqml.org"
++Repository = "https://github.com/OpenQML-org/OpenQML"
++Documentation = "https://github.com/OpenQML-org/OpenQML/tree/main/docs"
++Issues = "https://github.com/OpenQML-org/OpenQML/issues"
++
++[project.scripts]
++openqml = "openqml.__main__:main"
++
++[tool.setuptools.packages.find]
++where = ["src"]
++
++[tool.setuptools.package-data]
++openqml = ["py.typed"]
++
++[tool.pytest.ini_options]
++testpaths = ["tests"]
++pythonpath = ["src"]
++
++[tool.ruff]
++line-length = 100
++target-version = "py310"
++
++[tool.ruff.lint]
++select = ["E4", "E7", "E9", "F", "I"]
+diff --git a/src/openqml/__init__.py b/src/openqml/__init__.py
+new file mode 100644
+index 0000000..35336b9
+--- /dev/null
++++ b/src/openqml/__init__.py
+@@ -0,0 +1,93 @@
++"""OpenQML: importable quantum programming, models, and local benchmark tasks."""
++
++__version__ = "0.1.0"
++
++from . import algorithms, benchmarks, datasets, models
++from .algorithms import bell, ghz, grover, hardware_efficient_ansatz, qaoa_maxcut, qft, vqe
++from .benchmarks import (
++    BenchmarkResult,
++    ComparisonResult,
++    Suite,
++    Task,
++    compare_models,
++    get_model,
++    get_suite,
++    get_task,
++    list_models,
++    make_task,
++    run_benchmark,
++)
++from .circuit import Circuit
++from .datasets import Dataset, list_datasets, load_dataset, train_test_split
++from .exceptions import (
++    NotFittedError,
++    OpenQMLError,
++    ResourceLimitError,
++    UnsupportedOperationError,
++)
++from .hamiltonian import Hamiltonian, ising_hamiltonian
++from .interop import from_qasm, to_qasm, to_qiskit
++from .models import (
++    FourierRegressor,
++    LogisticClassifier,
++    QuantumKernel,
++    QuantumKernelClassifier,
++    RidgeRegressor,
++    VariationalQuantumClassifier,
++    VariationalQuantumRegressor,
++)
++from .optimization import OptimizeResult, gradient, minimize, parameter_shift
++from .simulation import SimulationBudget, State
++
++__all__ = [
++    "__version__",
++    "Circuit",
++    "State",
++    "SimulationBudget",
++    "Hamiltonian",
++    "ising_hamiltonian",
++    "gradient",
++    "parameter_shift",
++    "minimize",
++    "OptimizeResult",
++    "QuantumKernel",
++    "QuantumKernelClassifier",
++    "VariationalQuantumClassifier",
++    "VariationalQuantumRegressor",
++    "LogisticClassifier",
++    "RidgeRegressor",
++    "FourierRegressor",
++    "Dataset",
++    "list_datasets",
++    "load_dataset",
++    "train_test_split",
++    "Task",
++    "Suite",
++    "get_task",
++    "make_task",
++    "get_suite",
++    "list_models",
++    "get_model",
++    "run_benchmark",
++    "compare_models",
++    "BenchmarkResult",
++    "ComparisonResult",
++    "bell",
++    "ghz",
++    "grover",
++    "qft",
++    "qaoa_maxcut",
++    "vqe",
++    "hardware_efficient_ansatz",
++    "to_qasm",
++    "from_qasm",
++    "to_qiskit",
++    "OpenQMLError",
++    "NotFittedError",
++    "ResourceLimitError",
++    "UnsupportedOperationError",
++    "algorithms",
++    "benchmarks",
++    "datasets",
++    "models",
++]
+diff --git a/src/openqml/__main__.py b/src/openqml/__main__.py
+new file mode 100644
+index 0000000..39b0bb1
+--- /dev/null
++++ b/src/openqml/__main__.py
+@@ -0,0 +1,49 @@
++"""python -m openqml: offline demo, catalog, or seeded local benchmark."""
++
++import argparse
++import json
++
++from . import compare_models, ghz, list_datasets, list_models
++
++
++def main(argv=None):
++    parser = argparse.ArgumentParser(description="OpenQML quantum programming and benchmarks")
++    commands = parser.add_subparsers(dest="command", required=True)
++    demo = commands.add_parser("demo", help="Run a Bell/GHZ state without any account")
++    demo.add_argument("--qubits", type=int, default=3)
++    demo.add_argument("--shots", type=int, default=1024)
++    demo.add_argument("--seed", type=int, default=1)
++    commands.add_parser("datasets", help="List offline dataset generators")
++    commands.add_parser("models", help="List built-in learning models")
++    benchmark = commands.add_parser("benchmark", help="Compare quantum and classical models")
++    benchmark.add_argument("--task", choices=[d["id"] for d in list_datasets()], default="moons")
++    benchmark.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
++    benchmark.add_argument("--epochs", type=int, default=40)
++    benchmark.add_argument("--output", help="Save all metrics and provenance to JSON")
++    args = parser.parse_args(argv)
++    try:
++        if args.command == "demo":
++            circuit = ghz(args.qubits)
++            state = circuit.run(seed=args.seed)
++            result = {
++                "circuit": circuit.resources(),
++                "backend": state.backend,
++                "counts": state.sample(args.shots),
++                "first_qubit_bloch": state.bloch_vector(0).tolist(),
++            }
++        elif args.command == "datasets":
++            result = list_datasets()
++        elif args.command == "models":
++            result = list_models()
++        else:
++            comparison = compare_models(args.task, seeds=args.seeds, epochs=args.epochs)
++            if args.output:
++                comparison.save(args.output)
++            result = comparison.to_dict()
++        print(json.dumps(result, indent=2, ensure_ascii=False))
++    except (ValueError, RuntimeError) as error:
++        parser.error(str(error))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/src/openqml/_validation.py b/src/openqml/_validation.py
+new file mode 100644
+index 0000000..bb4dc47
+--- /dev/null
++++ b/src/openqml/_validation.py
+@@ -0,0 +1,60 @@
++"""Small, consistent validation helpers; no optional dependency imports."""
++
++from numbers import Integral, Real
++
++import numpy as np
++
++
++def integer(value, name, minimum=0, maximum=None):
++    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Integral):
++        raise ValueError(f"{name} must be an integer")
++    value = int(value)
++    if value < minimum or (maximum is not None and value > maximum):
++        limit = f" through {maximum}" if maximum is not None else " or greater"
++        raise ValueError(f"{name} must be {minimum}{limit}")
++    return value
++
++
++def real(value, name):
++    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real):
++        raise ValueError(f"{name} must be a finite real number")
++    value = float(value)
++    if not np.isfinite(value):
++        raise ValueError(f"{name} must be a finite real number")
++    return value
++
++
++def probability(value, name="probability"):
++    value = real(value, name)
++    if not 0 <= value <= 1:
++        raise ValueError(f"{name} must be between 0 and 1")
++    return value
++
++
++def wires(values, n_qubits, *, allow_empty=False):
++    if isinstance(values, Integral):
++        values = (values,)
++    try:
++        result = tuple(integer(q, "wire", 0, n_qubits - 1) for q in values)
++    except TypeError as error:
++        raise ValueError("wires must be an integer or an iterable of integers") from error
++    if (not result and not allow_empty) or len(set(result)) != len(result):
++        raise ValueError(
++            "wires must be nonempty and distinct" if not allow_empty else "wires must be distinct"
++        )
++    return result
++
++
++def pauli_string(value, n_qubits=None):
++    if not isinstance(value, str) or not value or any(p not in "IXYZ" for p in value):
++        raise ValueError("Pauli operators must be nonempty strings containing only I, X, Y, Z")
++    if n_qubits is not None and len(value) != n_qubits:
++        raise ValueError(f"Pauli string must have {n_qubits} characters (q0 is rightmost)")
++    return value
++
++
++def vector(value, name="parameters"):
++    result = np.asarray(value, dtype=float)
++    if result.ndim != 1 or not np.isfinite(result).all():
++        raise ValueError(f"{name} must be a finite one-dimensional array")
++    return result.copy()
+diff --git a/src/openqml/algorithms.py b/src/openqml/algorithms.py
+new file mode 100644
+index 0000000..8a8f92c
+--- /dev/null
++++ b/src/openqml/algorithms.py
+@@ -0,0 +1,127 @@
++"""Small composable algorithm blocks and variational workflows."""
++
++import numpy as np
++
++from ._validation import integer, real, vector
++from .circuit import Circuit
++from .hamiltonian import Hamiltonian
++from .optimization import minimize
++
++
++def ghz(n_qubits=3):
++    circuit = Circuit(n_qubits).h(0)
++    for q in range(1, circuit.n_qubits):
++        circuit.cx(0, q)
++    return circuit
++
++
++def bell():
++    return ghz(2)
++
++
++def qft(n_qubits, *, inverse=False):
++    return Circuit(n_qubits).qft(inverse=inverse)
++
++
++def grover(n_qubits, marked, *, iterations=None):
++    """Search explicit marked basis indices, with a phase oracle and diffuser.
++
++    Classical oracle construction knows the marked states. This toy example is
++    a correctness exercise, not a black-box search speedup demonstration.
++    """
++    n_qubits = integer(n_qubits, "n_qubits", 1, 20)
++    marked = tuple(integer(m, "marked index", 0, (1 << n_qubits) - 1) for m in marked)
++    if not marked or len(set(marked)) != len(marked):
++        raise ValueError("marked indices must be nonempty and unique")
++    if iterations is None:
++        theta = np.arcsin(np.sqrt(len(marked) / (1 << n_qubits)))
++        iterations = max(0, int(np.round(np.pi / (4 * theta) - 0.5)))
++    iterations = integer(iterations, "iterations", 0, 10_000)
++    circuit = Circuit(n_qubits)
++    for q in range(n_qubits):
++        circuit.h(q)
++
++    def phase(index):
++        for q in range(n_qubits):
++            if not ((index >> q) & 1):
++                circuit.x(q)
++        circuit.unitary([[1, 0], [0, -1]], [n_qubits - 1], controls=range(n_qubits - 1))
++        for q in range(n_qubits):
++            if not ((index >> q) & 1):
++                circuit.x(q)
++
++    for _ in range(iterations):
++        for index in marked:
++            phase(index)
++        for q in range(n_qubits):
++            circuit.h(q)
++        phase(0)
++        for q in range(n_qubits):
++            circuit.h(q)
++        circuit.global_phase(np.pi)
++    return circuit
++
++
++def hardware_efficient_ansatz(parameters, n_qubits, *, layers=2):
++    n_qubits = integer(n_qubits, "n_qubits", 1, 40)
++    layers = integer(layers, "layers", 1)
++    parameters = vector(parameters)
++    if parameters.size != 2 * n_qubits * layers:
++        raise ValueError("ansatz needs 2 * n_qubits * layers angles")
++    circuit = Circuit(n_qubits)
++    for layer in range(layers):
++        for q in range(n_qubits):
++            i = 2 * (layer * n_qubits + q)
++            circuit.ry(parameters[i], q).rz(parameters[i + 1], q)
++        for q in range(n_qubits - 1):
++            circuit.cx(q, q + 1)
++    return circuit
++
++
++def vqe(hamiltonian, ansatz, initial, *, steps=100, learning_rate=0.05, gradient_fn=None):
++    """Optimize a user's ansatz; finite differences are the safe default gradient."""
++    if not isinstance(hamiltonian, Hamiltonian):
++        hamiltonian = Hamiltonian(hamiltonian)
++
++    def energy(parameters):
++        circuit = ansatz(parameters)
++        if not isinstance(circuit, Circuit) or circuit.n_qubits != hamiltonian.n_qubits:
++            raise ValueError("ansatz must return a Circuit matching the Hamiltonian")
++        return circuit.run().expectation(hamiltonian)
++
++    return minimize(
++        energy, initial, gradient_fn=gradient_fn, steps=steps, learning_rate=learning_rate
++    )
++
++
++def qaoa_maxcut(n_qubits, edges, gammas, betas):
++    """Return a QAOA circuit for C=sum_edges(1-Z_i Z_j)/2.
++
++    Each cost block is exp(-i gamma C), each mixer exp(-i beta sum X).
++    Edges can be (i, j) or (i, j, nonnegative_weight).
++    """
++    n_qubits = integer(n_qubits, "n_qubits", 1, 40)
++    gammas, betas = vector(gammas), vector(betas)
++    if gammas.size != betas.size or not gammas.size:
++        raise ValueError("gammas and betas must have the same nonzero length")
++    validated = []
++    for edge in edges:
++        if len(edge) not in (2, 3):
++            raise ValueError("edges must be (first, second) or (first, second, weight)")
++        first, second = [integer(q, "edge wire", 0, n_qubits - 1) for q in edge[:2]]
++        weight = real(edge[2], "edge weight") if len(edge) == 3 else 1.0
++        if first == second or weight < 0:
++            raise ValueError("edges need distinct wires and nonnegative weights")
++        validated.append((first, second, weight))
++    circuit = Circuit(n_qubits)
++    for q in range(n_qubits):
++        circuit.h(q)
++    for gamma, beta in zip(gammas, betas):
++        for first, second, weight in validated:
++            label = ["I"] * n_qubits
++            label[-1 - first] = label[-1 - second] = "Z"
++            circuit.pauli_rotation(-gamma * weight, "".join(label))
++            circuit.global_phase(-gamma * weight / 2)
++        for q in range(n_qubits):
++            circuit.rx(2 * beta, q)
++    return circuit
+diff --git a/src/openqml/benchmarks.py b/src/openqml/benchmarks.py
+new file mode 100644
+index 0000000..62ad50e
+--- /dev/null
++++ b/src/openqml/benchmarks.py
+@@ -0,0 +1,318 @@
++"""Local OpenML-style tasks/suites and traceable quantum/classical comparisons.
++
++These are SDK protocols, not a reproduction of the website's JavaScript duel.
++Splits, data hashes, configurations, versions, timings, and metrics travel with
++every result. No advantage or parameter matching is assumed.
++"""
++
++import json
++import platform
++import sys
++import time
++from dataclasses import asdict, dataclass
++from importlib.metadata import PackageNotFoundError, version
++from pathlib import Path
++
++import numpy as np
++
++from ._validation import integer
++from .datasets import Dataset, load_dataset
++from .models import (
++    FourierRegressor,
++    LogisticClassifier,
++    QuantumKernelClassifier,
++    RidgeRegressor,
++    VariationalQuantumClassifier,
++    VariationalQuantumRegressor,
++    _features,
++    _labels,
++    _targets,
++)
++
++
++@dataclass
++class Task:
++    id: str
++    dataset: Dataset
++    test_size: float = 0.25
++
++    @property
++    def task_type(self):
++        return self.dataset.task_type
++
++    def split(self, *, seed=1):
++        return self.dataset.split(test_size=self.test_size, seed=seed)
++
++
++def make_task(features, targets, *, task_type="classification", name="custom", test_size=0.25):
++    """Register an in-memory local task for the user's own data."""
++    if task_type not in ("classification", "regression"):
++        raise ValueError("task_type must be 'classification' or 'regression'")
++    features = _features(features)
++    targets = (
++        _labels(targets, len(features))
++        if task_type == "classification"
++        else _targets(targets, len(features))
++    )
++    return Task(
++        name, Dataset(features, targets, name, task_type, "User-provided local dataset"), test_size
++    )
++
++
++def get_task(name="moons", *, n_samples=96, seed=1, test_size=0.25, **dataset_options):
++    dataset = load_dataset(name, n_samples=n_samples, seed=seed, **dataset_options)
++    return Task(f"qml-{dataset.task_type}-{name}-v1", dataset, test_size)
++
++
++@dataclass(frozen=True)
++class Suite:
++    id: str
++    task_ids: tuple[str, ...]
++    description: str
++
++    def __iter__(self):
++        return iter(self.task_ids)
++
++    def __len__(self):
++        return len(self.task_ids)
++
++
++def get_suite(name="qml-cls-1"):
++    suites = {
++        "qml-cls-1": Suite(
++            "qml-cls-1",
++            ("xor", "circles", "moons"),
++            "Synthetic binary classification correctness suite",
++        ),
++        "qml-reg-1": Suite(
++            "qml-reg-1",
++            ("sine", "step", "linear"),
++            "Periodic, discontinuous, and linear regression toy suite",
++        ),
++    }
++    if name not in suites:
++        raise ValueError(f"unknown suite {name!r}; choose from {', '.join(suites)}")
++    return suites[name]
++
++
++MODELS = {
++    "quantum-kernel": (QuantumKernelClassifier, "classification", True),
++    "vqc": (VariationalQuantumClassifier, "classification", True),
++    "logistic": (LogisticClassifier, "classification", False),
++    "vqr": (VariationalQuantumRegressor, "regression", True),
++    "ridge": (RidgeRegressor, "regression", False),
++    "fourier": (FourierRegressor, "regression", False),
++}
++
++
++def list_models():
++    return [
++        {"id": name, "class": cls.__name__, "task_type": kind, "quantum": quantum}
++        for name, (cls, kind, quantum) in MODELS.items()
++    ]
++
++
++def get_model(name, **parameters):
++    if name not in MODELS:
++        raise ValueError(f"unknown model {name!r}; choose from {', '.join(MODELS)}")
++    return MODELS[name][0](**parameters)
++
++
++def _json_default(value):
++    if isinstance(value, np.ndarray):
++        return value.tolist()
++    if isinstance(value, np.generic):
++        return value.item()
++    raise TypeError(f"cannot serialize {type(value).__name__}")
++
++
++@dataclass
++class BenchmarkResult:
++    protocol: str
++    task_id: str
++    model: str
++    seed: int
++    metrics: dict
++    model_parameters: dict
++    resources: dict
++    provenance: dict
++
++    def to_dict(self):
++        return json.loads(json.dumps(asdict(self), default=_json_default, allow_nan=False))
++
++    def save(self, path):
++        path = Path(path)
++        path.write_text(
++            json.dumps(self.to_dict(), indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
++        )
++        return path
++
++
++def run_benchmark(model, task="moons", *, seed=1):
++    """Fit the supplied estimator on one seeded split; report held-out metrics."""
++    seed = integer(seed, "seed", 0)
++    task = get_task(task) if isinstance(task, str) else task
++    if not isinstance(task, Task):
++        raise ValueError("task must be a Task or built-in dataset id")
++    if isinstance(model, str):
++        if model not in MODELS or MODELS[model][1] != task.task_type:
++            raise ValueError("model id must be known and compatible with the task")
++        model = get_model(model, **({"seed": seed} if model in ("vqc", "vqr", "logistic") else {}))
++    if not callable(getattr(model, "fit", None)) or not callable(getattr(model, "predict", None)):
++        raise ValueError("model must provide fit() and predict()")
++    known = next((kind for cls, kind, _ in MODELS.values() if type(model) is cls), None)
++    quantum = any(type(model) is cls and is_quantum for cls, _, is_quantum in MODELS.values())
++    if known is not None and known != task.task_type:
++        raise ValueError("model task type does not match the benchmark")
++    X_train, X_test, y_train, y_test = task.split(seed=seed)
++    started = time.perf_counter()
++    model.fit(X_train, y_train)
++    fit_seconds = time.perf_counter() - started
++    started = time.perf_counter()
++    prediction = np.asarray(model.predict(X_test))
++    predict_seconds = time.perf_counter() - started
++    if prediction.shape != y_test.shape:
++        raise ValueError("model predictions must have one value per test item")
++    if task.task_type == "classification":
++        labels = np.unique(y_test)
++        metrics = {
++            "accuracy": float(np.mean(prediction == y_test)),
++            "balanced_accuracy": float(
++                np.mean([np.mean(prediction[y_test == label] == label) for label in labels])
++            ),
++        }
++    else:
++        prediction = _targets(prediction, len(y_test))
++        residual = prediction - y_test
++        denominator = np.sum((y_test - y_test.mean()) ** 2)
++        metrics = {
++            "mse": float(np.mean(residual**2)),
++            "mae": float(np.mean(np.abs(residual))),
++            "r2": float(1 - np.sum(residual**2) / denominator)
++            if denominator > 0
++            else (1.0 if np.allclose(prediction, y_test) else 0.0),
++        }
++    try:
++        package_version = version("openqml")
++    except PackageNotFoundError:
++        from . import __version__
++
++        package_version = __version__
++    parameters = model.get_params() if hasattr(model, "get_params") else {}
++    resources = {
++        "train_samples": len(X_train),
++        "test_samples": len(X_test),
++        "features": X_train.shape[1],
++        "fit_seconds": fit_seconds,
++        "predict_seconds": predict_seconds,
++        "parameter_count": getattr(model, "n_parameters_", None),
++        "circuit_evaluations": getattr(model, "n_circuit_evaluations_", 0),
++    }
++    provenance = {
++        "dataset": task.dataset.name,
++        "dataset_sha256": task.dataset.fingerprint,
++        "dataset_options": task.dataset.metadata,
++        "test_size": task.test_size,
++        "split_seed": seed,
++        "openqml": package_version,
++        "numpy": np.__version__,
++        "python": sys.version.split()[0],
++        "platform": platform.platform(),
++        "simulation": "exact NumPy statevector" if quantum else None,
++        "hardware_execution": False if known is not None else None,
++        "parameter_matched": False,
++    }
++    return BenchmarkResult(
++        "openqml-sdk-bench-v1",
++        task.id,
++        type(model).__name__,
++        seed,
++        metrics,
++        parameters,
++        resources,
++        provenance,
++    )
++
++
++@dataclass
++class ComparisonResult:
++    task_id: str
++    results: list[BenchmarkResult]
++
++    def summary(self):
++        groups = {}
++        for result in self.results:
++            groups.setdefault(result.model, []).append(result)
++        return {
++            name: {
++                "runs": len(items),
++                "seeds": [r.seed for r in items],
++                "median_metrics": {
++                    metric: float(np.median([r.metrics[metric] for r in items]))
++                    for metric in items[0].metrics
++                },
++            }
++            for name, items in groups.items()
++        }
++
++    def to_dict(self):
++        return {
++            "protocol": "openqml-sdk-bench-v1",
++            "task_id": self.task_id,
++            "summary": self.summary(),
++            "results": [r.to_dict() for r in self.results],
++        }
++
++    def save(self, path):
++        path = Path(path)
++        path.write_text(
++            json.dumps(self.to_dict(), indent=2, ensure_ascii=False, allow_nan=False) + "\n",
++            encoding="utf-8",
++        )
++        return path
++
++
++def compare_models(task="moons", *, models=None, seeds=(1, 2, 3), epochs=40):
++    """Compare freshly constructed models on identical splits for each seed.
++
++    models may map display names to zero-argument factories. Factories must return
++    independent unfitted estimators. Built-in defaults include classical baselines.
++    """
++    task = get_task(task) if isinstance(task, str) else task
++    if not isinstance(task, Task):
++        raise ValueError("task must be a Task or built-in dataset id")
++    seeds = tuple(integer(seed, "seed", 0) for seed in seeds)
++    epochs = integer(epochs, "epochs", 1)
++    if not seeds or len(set(seeds)) != len(seeds):
++        raise ValueError("seeds must be nonempty and distinct")
++    if models is not None and (
++        not models or any(not callable(factory) for factory in models.values())
++    ):
++        raise ValueError("models must map names to zero-argument estimator factories")
++    results, seen = [], []
++    for seed in seeds:
++        factories = models
++        if factories is None:
++            factories = (
++                {
++                    "quantum-kernel": lambda: QuantumKernelClassifier(),
++                    "vqc": lambda: VariationalQuantumClassifier(epochs=epochs, seed=seed),
++                    "logistic": lambda: LogisticClassifier(seed=seed),
++                }
++                if task.task_type == "classification"
++                else {
++                    "vqr": lambda: VariationalQuantumRegressor(epochs=epochs, seed=seed),
++                    "ridge": lambda: RidgeRegressor(),
++                    "fourier": lambda: FourierRegressor(),
++                }
++            )
++        for name, factory in factories.items():
++            estimator = factory()
++            if any(estimator is previous for previous in seen):
++                raise ValueError("each model factory must return a fresh estimator")
++            seen.append(estimator)
++            result = run_benchmark(estimator, task, seed=seed)
++            # Keep factory names so differently configured models can be distinguished.
++            result.model = str(name)
++            results.append(result)
++    return ComparisonResult(task.id, results)
+diff --git a/src/openqml/circuit.py b/src/openqml/circuit.py
+new file mode 100644
+index 0000000..755cb70
+--- /dev/null
++++ b/src/openqml/circuit.py
+@@ -0,0 +1,381 @@
++"""Composable quantum programs; angles come first in rotation methods."""
++
++from dataclasses import dataclass, replace
++
++import numpy as np
++
++from ._validation import integer, pauli_string, probability, real, wires
++from .exceptions import ResourceLimitError, UnsupportedOperationError
++from .simulation import H, SimulationBudget, State, X, Y, Z, validate_channel, validate_matrix
++
++
++def rotation(axis, theta):
++    theta = real(theta, "angle")
++    return np.cos(theta / 2) * np.eye(2) - 1j * np.sin(theta / 2) * {"x": X, "y": Y, "z": Z}[axis]
++
++
++@dataclass(frozen=True)
++class Operation:
++    name: str
++    wires: tuple[int, ...]
++    controls: tuple[int, ...] = ()
++    matrix: object = None
++    angle: float | None = None
++    key: str | None = None
++    basis: str = "Z"
++    condition: tuple[str, int] | None = None
++    kraus: tuple = ()
++    label: str | None = None
++
++
++class Circuit:
++    """Build unitary circuits, noise channels, and measurement feedback.
++
++    Every mutating builder returns self. Measurement conditions refer to earlier
++    keys and run in circuit order. Circuits can contain 64 wires; local simulation
++    has a smaller explicit SimulationBudget.
++    """
++
++    def __init__(self, n_qubits):
++        self.n_qubits = integer(n_qubits, "n_qubits", 1, 64)
++        self._operations = []
++
++    @property
++    def operations(self):
++        # Arrays are copied so callers cannot mutate a circuit through its readout.
++        return tuple(
++            replace(
++                op,
++                matrix=None if op.matrix is None else op.matrix.copy(),
++                kraus=tuple(k.copy() for k in op.kraus),
++            )
++            for op in self._operations
++        )
++
++    def __len__(self):
++        return len(self._operations)
++
++    def copy(self):
++        circuit = Circuit(self.n_qubits)
++        circuit._operations = list(self._operations)
++        return circuit
++
++    def _condition(self, condition):
++        if condition is None:
++            return None
++        if (
++            not isinstance(condition, tuple)
++            or len(condition) != 2
++            or not isinstance(condition[0], str)
++            or condition[1] not in (0, 1)
++        ):
++            raise ValueError("condition must be a (measurement_key, 0 or 1) tuple")
++        if condition[0] not in {op.key for op in self._operations if op.name == "measure"}:
++            raise ValueError("condition must refer to an earlier measurement key")
++        return condition
++
++    def _gate(self, name, matrix, targets, controls=(), angle=None, condition=None):
++        targets = wires(targets, self.n_qubits, allow_empty=True)
++        controls = wires(controls, self.n_qubits, allow_empty=True)
++        if len(targets) > 4 or set(targets) & set(controls):
++            raise ValueError("at most 4 target wires, disjoint from controls, are supported")
++        self._operations.append(
++            Operation(
++                name,
++                targets,
++                controls,
++                validate_matrix(matrix, 1 << len(targets)),
++                angle,
++                condition=self._condition(condition),
++            )
++        )
++        return self
++
++    def h(self, q, *, condition=None):
++        return self._gate("h", H, [q], condition=condition)
++
++    def x(self, q, *, condition=None):
++        return self._gate("x", X, [q], condition=condition)
++
++    def y(self, q, *, condition=None):
++        return self._gate("y", Y, [q], condition=condition)
++
++    def z(self, q, *, condition=None):
++        return self._gate("z", Z, [q], condition=condition)
++
++    def s(self, q):
++        return self._gate("s", np.diag([1, 1j]), [q])
++
++    def sdg(self, q):
++        return self._gate("sdg", np.diag([1, -1j]), [q])
++
++    def t(self, q):
++        return self._gate("t", np.diag([1, np.exp(1j * np.pi / 4)]), [q])
++
++    def tdg(self, q):
++        return self._gate("tdg", np.diag([1, np.exp(-1j * np.pi / 4)]), [q])
++
++    def rx(self, theta, q, *, condition=None):
++        return self._gate(
++            "rx", rotation("x", theta), [q], angle=real(theta, "angle"), condition=condition
++        )
++
++    def ry(self, theta, q, *, condition=None):
++        return self._gate(
++            "ry", rotation("y", theta), [q], angle=real(theta, "angle"), condition=condition
++        )
++
++    def rz(self, theta, q, *, condition=None):
++        return self._gate(
++            "rz", rotation("z", theta), [q], angle=real(theta, "angle"), condition=condition
++        )
++
++    def p(self, theta, q):
++        theta = real(theta, "angle")
++        return self._gate("p", np.diag([1, np.exp(1j * theta)]), [q], angle=theta)
++
++    def cx(self, control, target, *, condition=None):
++        return self._gate("x", X, [target], [control], condition=condition)
++
++    cnot = cx
++
++    def cy(self, control, target):
++        return self._gate("y", Y, [target], [control])
++
++    def cz(self, control, target):
++        return self._gate("z", Z, [target], [control])
++
++    def cp(self, theta, control, target):
++        theta = real(theta, "angle")
++        return self._gate("p", np.diag([1, np.exp(1j * theta)]), [target], [control], theta)
++
++    def ccx(self, first, second, target):
++        return self.mcx([first, second], target)
++
++    def mcx(self, controls, target):
++        return self._gate("x", X, [target], wires(controls, self.n_qubits))
++
++    def swap(self, first, second):
++        return self._gate(
++            "swap", [[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, 1]], [first, second]
++        )
++
++    def global_phase(self, theta):
++        theta = real(theta, "angle")
++        return self._gate("global_phase", [[np.exp(1j * theta)]], (), angle=theta)
++
++    def unitary(self, matrix, targets, *, controls=(), label="unitary"):
++        if not isinstance(label, str) or not label:
++            raise ValueError("label must be a nonempty string")
++        targets = wires(targets, self.n_qubits)
++        # Keep a reserved operation name; a label must not masquerade as a built-in gate.
++        self._gate("unitary", matrix, targets, controls)
++        self._operations[-1] = replace(self._operations[-1], label=label)
++        return self
++
++    def pauli_rotation(self, theta, pauli):
++        theta = real(theta, "angle")
++        pauli = pauli_string(pauli, self.n_qubits)
++        active = [(q, p) for q, p in enumerate(reversed(pauli)) if p != "I"]
++        if not active:
++            return self.global_phase(-theta / 2)
++        basis = Circuit(self.n_qubits)
++        for q, p in active:
++            if p == "X":
++                basis.h(q)
++            elif p == "Y":
++                basis.sdg(q).h(q)
++        for q, _ in active[:-1]:
++            basis.cx(q, active[-1][0])
++        return self.compose(basis).rz(theta, active[-1][0]).compose(basis.inverse())
++
++    def qft(self, selected_wires=None, *, inverse=False, swaps=True):
++        selected = (
++            tuple(range(self.n_qubits))
++            if selected_wires is None
++            else wires(selected_wires, self.n_qubits)
++        )
++        block = Circuit(self.n_qubits)
++        for j in reversed(range(len(selected))):
++            block.h(selected[j])
++            for k in reversed(range(j)):
++                block.cp(np.pi / (2 ** (j - k)), selected[k], selected[j])
++        if swaps:
++            for j in range(len(selected) // 2):
++                block.swap(selected[j], selected[-1 - j])
++        return self.compose(block.inverse() if inverse else block)
++
++    def iqft(self, selected_wires=None, *, swaps=True):
++        return self.qft(selected_wires, inverse=True, swaps=swaps)
++
++    def measure(self, q, key=None, *, basis="Z"):
++        q = wires([q], self.n_qubits)[0]
++        if basis not in ("X", "Y", "Z"):
++            raise ValueError("measurement basis must be X, Y, or Z")
++        key = f"m{sum(op.name == 'measure' for op in self._operations)}" if key is None else key
++        if not isinstance(key, str) or not key or key in {op.key for op in self._operations}:
++            raise ValueError("measurement keys must be unique nonempty strings")
++        self._operations.append(Operation("measure", (q,), key=key, basis=basis))
++        return self
++
++    def channel(self, kraus, targets):
++        targets = wires(targets, self.n_qubits)
++        if len(targets) > 4:
++            raise ValueError("channels support at most 4 target wires")
++        self._operations.append(
++            Operation("channel", targets, kraus=validate_channel(kraus, 1 << len(targets)))
++        )
++        return self
++
++    def amplitude_damping(self, p, q):
++        p = probability(p)
++        return self.channel([[[1, 0], [0, np.sqrt(1 - p)]], [[0, np.sqrt(p)], [0, 0]]], [q])
++
++    def dephasing(self, p, q):
++        p = probability(p)
++        return self.channel([np.sqrt(1 - p) * np.eye(2), np.sqrt(p) * Z], [q])
++
++    def depolarizing(self, p, q):
++        p = probability(p)
++        return self.channel(
++            [np.sqrt(1 - 3 * p / 4) * np.eye(2)] + [np.sqrt(p / 4) * g for g in (X, Y, Z)], [q]
++        )
++
++    def reset(self, q):
++        return self.channel([[[1, 0], [0, 0]], [[0, 1], [0, 0]]], [q])
++
++    def compose(self, block, mapping=None):
++        if not isinstance(block, Circuit):
++            raise ValueError("block must be a Circuit")
++        mapping = tuple(range(block.n_qubits)) if mapping is None else wires(mapping, self.n_qubits)
++        if len(mapping) != block.n_qubits or any(q >= self.n_qubits for q in mapping):
++            raise ValueError("mapping must provide one distinct destination per block wire")
++        existing_keys = {op.key for op in self._operations if op.key is not None}
++        incoming_keys = {op.key for op in block._operations if op.key is not None}
++        if existing_keys & incoming_keys:
++            raise ValueError("composed measurement keys must be unique")
++        # Take a snapshot: compose(self) must not grow the list while iterating.
++        incoming = [
++            replace(
++                op,
++                wires=tuple(mapping[q] for q in op.wires),
++                controls=tuple(mapping[q] for q in op.controls),
++            )
++            for op in block._operations
++        ]
++        self._operations.extend(incoming)
++        return self
++
++    def inverse(self):
++        if any(op.matrix is None or op.condition is not None for op in self._operations):
++            raise UnsupportedOperationError("only unconditional unitary circuits have an inverse")
++        inverse_names = {"s": "sdg", "sdg": "s", "t": "tdg", "tdg": "t"}
++        result = Circuit(self.n_qubits)
++        result._operations = [
++            replace(
++                op,
++                matrix=validate_matrix(op.matrix.conj().T, op.matrix.shape[0]),
++                angle=None if op.angle is None else -op.angle,
++                name=inverse_names.get(op.name, op.name),
++            )
++            for op in reversed(self._operations)
++        ]
++        return result
++
++    def repeat(self, count):
++        count = integer(count, "count", 0)
++        if count * len(self) > 100_000:
++            raise ResourceLimitError("repeat would create more than 100,000 operations")
++        if count > 1 and any(op.key is not None for op in self._operations):
++            raise UnsupportedOperationError("repeat requires a circuit without measurement keys")
++        result = Circuit(self.n_qubits)
++        result._operations = self._operations * count
++        return result
++
++    def run(self, *, seed=None, backend="auto", budget=None, initial_state=None):
++        budget = budget or (
++            initial_state.budget if isinstance(initial_state, State) else SimulationBudget()
++        )
++        if not isinstance(budget, SimulationBudget):
++            raise ValueError("budget must be a SimulationBudget")
++        if self.n_qubits > budget.max_qubits:
++            raise ResourceLimitError("Circuit width exceeds the simulation budget")
++        if len(self) > budget.max_operations:
++            raise ResourceLimitError("Circuit exceeds the operation budget")
++        if initial_state is None:
++            state = State(self.n_qubits, backend=backend, seed=seed, budget=budget)
++        else:
++            if not isinstance(initial_state, State) or initial_state.n_qubits != self.n_qubits:
++                raise ValueError("initial_state must be a State of the same width")
++            if initial_state.backend == "density":
++                if self.n_qubits > budget.max_density_qubits:
++                    raise ResourceLimitError("initial density state exceeds the new budget")
++                budget.allocation(1 << (2 * self.n_qubits), copies=6)
++            elif initial_state.backend == "dense":
++                if self.n_qubits > budget.max_dense_qubits:
++                    raise ResourceLimitError("initial dense state exceeds the new budget")
++                budget.allocation(1 << self.n_qubits, copies=6)
++            elif len(initial_state._sparse) > min(
++                budget.max_sparse_states, budget.max_memory_mb * 1024**2 // 384
++            ):
++                raise ResourceLimitError("initial sparse state exceeds the new budget")
++            state = initial_state.clone()
++            state.budget = budget
++            state._work = 0
++            state.classical = {}
++            if seed is not None:
++                state._rng = np.random.default_rng(seed)
++        for op in self._operations:
++            if op.condition is not None and state.classical[op.condition[0]] != op.condition[1]:
++                continue
++            if op.name == "measure":
++                state.classical[op.key] = state.measure(op.wires[0], op.basis)
++            elif op.name == "channel":
++                state.channel(op.kraus, op.wires)
++            else:
++                state._apply(op.matrix, op.wires, op.controls)
++        return state
++
++    def to_qasm(self):
++        from .interop import to_qasm
++
++        return to_qasm(self)
++
++    @classmethod
++    def from_qasm(cls, source):
++        from .interop import from_qasm
++
++        return from_qasm(source)
++
++    def to_qiskit(self):
++        from .interop import to_qiskit
++
++        return to_qiskit(self)
++
++    def resources(self):
++        depths = [0] * self.n_qubits
++        measurement_depths = {}
++        for op in self._operations:
++            occupied = op.wires + op.controls
++            if occupied:
++                level = 1 + max(depths[q] for q in occupied)
++                if op.condition is not None:
++                    level = max(level, measurement_depths[op.condition[0]] + 1)
++                for q in occupied:
++                    depths[q] = level
++                if op.name == "measure":
++                    measurement_depths[op.key] = level
++        return {
++            "n_qubits": self.n_qubits,
++            "operations": len(self),
++            "depth": max(depths),
++            "two_qubit_gates": sum(
++                op.matrix is not None and len(op.wires + op.controls) == 2
++                for op in self._operations
++            ),
++            "measurements": sum(op.name == "measure" for op in self._operations),
++            "noise_channels": sum(op.name == "channel" for op in self._operations),
++        }
++
++    def __repr__(self):
++        return f"Circuit(n_qubits={self.n_qubits}, operations={len(self)})"
+diff --git a/src/openqml/datasets.py b/src/openqml/datasets.py
+new file mode 100644
+index 0000000..9ae5f8f
+--- /dev/null
++++ b/src/openqml/datasets.py
+@@ -0,0 +1,151 @@
++"""Offline, seeded toy data and train/test splits; no network request on import."""
++
++import hashlib
++from dataclasses import dataclass, field
++
++import numpy as np
++
++from ._validation import integer, real
++from .models import _features, _labels, _targets
++
++
++@dataclass
++class Dataset:
++    X: np.ndarray
++    y: np.ndarray
++    name: str
++    task_type: str
++    description: str
++    metadata: dict = field(default_factory=dict)
++
++    @property
++    def fingerprint(self):
++        digest = hashlib.sha256()
++        for values in (self.X, self.y):
++            digest.update(str((values.shape, values.dtype.str)).encode())
++            digest.update(np.ascontiguousarray(values).tobytes())
++        return digest.hexdigest()
++
++    def split(self, *, test_size=0.25, seed=1):
++        return train_test_split(
++            self.X,
++            self.y,
++            test_size=test_size,
++            seed=seed,
++            stratify=self.task_type == "classification",
++        )
++
++
++DATASETS = {
++    "xor": ("classification", "Four noisy XOR clusters; a nonlinear toy correctness task."),
++    "circles": ("classification", "Concentric circles; radial separation is classically easy."),
++    "moons": ("classification", "Two noisy interleaving semicircles."),
++    "parity": ("classification", "Uniform bitstrings labeled by global parity; a promise toy."),
++    "sine": ("regression", "A seeded sin(frequency*x) target on [-pi, pi]."),
++    "step": ("regression", "A discontinuous +/-1 target on [-pi, pi]."),
++    "linear": ("regression", "A noisy linear target on [-pi, pi]."),
++}
++
++
++def list_datasets():
++    return [
++        {
++            "id": name,
++            "task_type": kind,
++            "description": description,
++            "source": "openqml synthetic v1",
++            "offline": True,
++        }
++        for name, (kind, description) in DATASETS.items()
++    ]
++
++
++def load_dataset(name="moons", *, n_samples=192, seed=1, noise=0.08, frequency=3, n_features=4):
++    if name not in DATASETS:
++        raise ValueError(f"unknown dataset {name!r}; choose from {', '.join(DATASETS)}")
++    n_samples = integer(n_samples, "n_samples", 8, 100_000)
++    noise = real(noise, "noise")
++    frequency = real(frequency, "frequency")
++    if noise < 0:
++        raise ValueError("noise must be nonnegative")
++    rng = np.random.default_rng(seed)
++    if name in ("xor", "circles", "moons"):
++        y = np.arange(n_samples) % 2
++        if name == "xor":
++            first = rng.integers(0, 2, size=n_samples)
++            second = first ^ y
++            features = np.column_stack([2 * first - 1, 2 * second - 1]).astype(float)
++        else:
++            angles = rng.uniform(0, 2 * np.pi if name == "circles" else np.pi, n_samples)
++            if name == "circles":
++                radius = np.where(y == 0, 1.0, 0.45)
++                features = np.c_[radius * np.cos(angles), radius * np.sin(angles)]
++            else:
++                features = np.c_[np.cos(angles), np.sin(angles)]
++                features[y == 1] = np.c_[1 - np.cos(angles[y == 1]), 0.5 - np.sin(angles[y == 1])]
++        features += rng.normal(0, noise, features.shape)
++    elif name == "parity":
++        n_features = integer(n_features, "n_features", 1, 8)
++        # Guaranteed coverage of both classes before the final shuffle.
++        bits = np.resize(np.arange(1 << n_features), n_samples)
++        rng.shuffle(bits)
++        features = ((bits[:, None] >> np.arange(n_features)) & 1).astype(float)
++        y = (features.sum(axis=1) % 2).astype(int)
++    else:
++        features = rng.uniform(-np.pi, np.pi, (n_samples, 1))
++        x = features[:, 0]
++        y = (
++            np.sin(frequency * x)
++            if name == "sine"
++            else (np.where(x >= 0, 1.0, -1.0) if name == "step" else x / np.pi)
++        )
++        y += rng.normal(0, noise, n_samples)
++    order = rng.permutation(n_samples)
++    kind, description = DATASETS[name]
++    metadata = {
++        "generator": "openqml-synthetic-v1",
++        "seed": seed,
++        "n_samples": n_samples,
++        "noise": noise,
++    }
++    if name == "sine":
++        metadata["frequency"] = frequency
++    if name == "parity":
++        metadata["n_features"] = n_features
++    return Dataset(features[order].copy(), y[order].copy(), name, kind, description, metadata)
++
++
++def train_test_split(features, targets, *, test_size=0.25, seed=1, stratify=False):
++    """Return X_train, X_test, y_train, y_test; inputs are never mutated.
++
++    Stratification allocates a rounded test fraction per class, keeping at least
++    one item on each side. Thus the total may differ slightly from n*test_size.
++    """
++    features = _features(features)
++    labels = (
++        _labels(targets, len(features)) if stratify else _targets_or_labels(targets, len(features))
++    )
++    test_size = real(test_size, "test_size")
++    if not 0 < test_size < 1 or len(features) < 2:
++        raise ValueError("split needs at least two samples and 0 < test_size < 1")
++    rng = np.random.default_rng(seed)
++    if stratify:
++        train, test = [], []
++        for label in np.unique(labels):
++            indices = rng.permutation(np.flatnonzero(labels == label))
++            if indices.size < 2:
++                raise ValueError("stratified splitting needs at least two samples per class")
++            count = max(1, min(len(indices) - 1, int(round(len(indices) * test_size))))
++            test.extend(indices[:count])
++            train.extend(indices[count:])
++        train, test = rng.permutation(train), rng.permutation(test)
++    else:
++        indices = rng.permutation(len(features))
++        count = max(1, min(len(indices) - 1, int(round(len(indices) * test_size))))
++        test, train = indices[:count], indices[count:]
++    return features[train].copy(), features[test].copy(), labels[train].copy(), labels[test].copy()
++
++
++def _targets_or_labels(values, count):
++    values = np.asarray(values)
++    return _labels(values, count) if values.dtype.kind in "US" else _targets(values, count)
+diff --git a/src/openqml/exceptions.py b/src/openqml/exceptions.py
+new file mode 100644
+index 0000000..0d91fc6
+--- /dev/null
++++ b/src/openqml/exceptions.py
+@@ -0,0 +1,17 @@
++"""Errors shared by the public API."""
++
++
++class OpenQMLError(Exception):
++    """Base error for OpenQML."""
++
++
++class ResourceLimitError(OpenQMLError, RuntimeError):
++    """A requested simulation or readout exceeds an explicit resource budget."""
++
++
++class NotFittedError(OpenQMLError, RuntimeError):
++    """Prediction was requested before fitting a model."""
++
++
++class UnsupportedOperationError(OpenQMLError, ValueError):
++    """An operation is outside an explicitly supported subset."""
+diff --git a/src/openqml/hamiltonian.py b/src/openqml/hamiltonian.py
+new file mode 100644
+index 0000000..6ab0b75
+--- /dev/null
++++ b/src/openqml/hamiltonian.py
+@@ -0,0 +1,64 @@
++"""Hermitian sums of Pauli strings with explicit little-endian wire semantics."""
++
++from collections.abc import Mapping
++from dataclasses import dataclass
++
++import numpy as np
++
++from ._validation import integer, pauli_string, real
++from .exceptions import ResourceLimitError
++from .simulation import X, Y, Z
++
++
++@dataclass(frozen=True, init=False)
++class Hamiltonian:
++    terms: tuple[tuple[str, float], ...]
++    n_qubits: int
++
++    def __init__(self, terms):
++        """Accept {'ZZ': -1, 'XI': -0.5} or [(pauli_string, coefficient), ...]."""
++        pairs = list(terms.items() if isinstance(terms, Mapping) else terms)
++        if not pairs:
++            raise ValueError("Hamiltonian needs at least one Pauli term")
++        combined = {}
++        width = None
++        for pauli, coefficient in pairs:
++            pauli = pauli_string(pauli, width)
++            width = len(pauli)
++            combined[pauli] = combined.get(pauli, 0) + real(coefficient, "coefficient")
++        object.__setattr__(self, "terms", tuple(combined.items()))
++        object.__setattr__(self, "n_qubits", width)
++
++    def matrix(self, *, max_qubits=10):
++        max_qubits = integer(max_qubits, "max_qubits", 1, 10)
++        if self.n_qubits > max_qubits:
++            raise ResourceLimitError("Exact Hamiltonian matrices are limited to max_qubits <= 10")
++        result = np.zeros((1 << self.n_qubits, 1 << self.n_qubits), complex)
++        for pauli, coefficient in self.terms:
++            term = np.array([[1]], complex)
++            for p in pauli:
++                term = np.kron(term, {"I": np.eye(2), "X": X, "Y": Y, "Z": Z}[p])
++            result += coefficient * term
++        return result
++
++    def ground_energy(self, *, max_qubits=10):
++        return float(np.linalg.eigvalsh(self.matrix(max_qubits=max_qubits))[0])
++
++
++def ising_hamiltonian(n_qubits, *, coupling=1.0, field=1.0, periodic=False):
++    """H = -coupling sum Z_i Z_j - field sum X_i on an open or periodic chain."""
++    n_qubits = integer(n_qubits, "n_qubits", 1, 64)
++    coupling, field = real(coupling, "coupling"), real(field, "field")
++    terms = []
++    edges = [(q, q + 1) for q in range(n_qubits - 1)]
++    if periodic and n_qubits > 2:
++        edges.append((n_qubits - 1, 0))
++    for first, second in edges:
++        label = ["I"] * n_qubits
++        label[-1 - first] = label[-1 - second] = "Z"
++        terms.append(("".join(label), -coupling))
++    for q in range(n_qubits):
++        label = ["I"] * n_qubits
++        label[-1 - q] = "X"
++        terms.append(("".join(label), -field))
++    return Hamiltonian(terms)
+diff --git a/src/openqml/interop.py b/src/openqml/interop.py
+new file mode 100644
+index 0000000..342c8bc
+--- /dev/null
++++ b/src/openqml/interop.py
+@@ -0,0 +1,229 @@
++"""Strict OpenQASM 2 subset and an optional Qiskit circuit adapter.
++
++Unknown constructs raise an error. Source text is never executed with eval/exec.
++"""
++
++import ast
++import re
++
++import numpy as np
++
++from ._validation import real
++from .circuit import Circuit
++from .exceptions import UnsupportedOperationError
++
++
++def _angle(source):
++    if len(source) > 128:
++        raise ValueError("angle expression is too long")
++    try:
++        tree = ast.parse(source, mode="eval")
++    except SyntaxError as error:
++        raise ValueError("invalid QASM angle expression") from error
++    if sum(1 for _ in ast.walk(tree)) > 32:
++        raise ValueError("angle expression is too complex")
++
++    def visit(node):
++        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
++            return real(node.value, "angle")
++        if isinstance(node, ast.Name) and node.id == "pi":
++            return np.pi
++        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
++            return visit(node.operand) * (-1 if isinstance(node.op, ast.USub) else 1)
++        if isinstance(node, ast.BinOp) and isinstance(
++            node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div)
++        ):
++            a, b = visit(node.left), visit(node.right)
++            if isinstance(node.op, ast.Add):
++                return real(a + b, "angle")
++            if isinstance(node.op, ast.Sub):
++                return real(a - b, "angle")
++            if isinstance(node.op, ast.Mult):
++                return real(a * b, "angle")
++            if b == 0:
++                raise ValueError("division by zero in angle expression")
++            return real(a / b, "angle")
++        raise UnsupportedOperationError("angles support numbers, pi, +, -, *, /, and parentheses")
++
++    return visit(tree.body)
++
++
++def to_qasm(circuit):
++    """OpenQASM 2 export. Reject noise, feedback, custom gates, and global phase."""
++    lines = ["OPENQASM 2.0;", 'include "qelib1.inc";', f"qreg q[{circuit.n_qubits}];"]
++    measurements = [op for op in circuit._operations if op.name == "measure"]
++    if measurements:
++        lines.append(f"creg c[{len(measurements)}];")
++    index = 0
++    for op in circuit._operations:
++        if op.condition is not None:
++            raise UnsupportedOperationError("QASM 2 subset cannot export classical feedback")
++        if op.name == "measure" and op.basis == "Z":
++            lines.append(f"measure q[{op.wires[0]}] -> c[{index}];")
++            index += 1
++            continue
++        name = op.name
++        if op.controls:
++            if len(op.controls) == 1 and name in ("x", "y", "z", "p"):
++                name = "c" + name
++            elif len(op.controls) == 2 and name == "x":
++                name = "ccx"
++            else:
++                raise UnsupportedOperationError("controlled gate is outside the QASM 2 subset")
++        if name not in {
++            "h",
++            "x",
++            "y",
++            "z",
++            "s",
++            "sdg",
++            "t",
++            "tdg",
++            "rx",
++            "ry",
++            "rz",
++            "p",
++            "cp",
++            "cx",
++            "cy",
++            "cz",
++            "ccx",
++            "swap",
++        }:
++            raise UnsupportedOperationError(f"QASM 2 cannot export operation {op.name!r}")
++        if name in {"p", "cp"}:
++            name = {"p": "u1", "cp": "cu1"}[name]
++        if op.angle is not None:
++            name += f"({op.angle:.17g})"
++        args = ",".join(f"q[{q}]" for q in op.controls + op.wires)
++        lines.append(f"{name} {args};")
++    return "\n".join(lines) + "\n"
++
++
++def from_qasm(source):
++    if not isinstance(source, str) or len(source) > 1_000_000:
++        raise ValueError("QASM source must be a string under one million characters")
++    source = re.sub(r"//[^\n]*", "", source)
++    source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
++    if source.rstrip() and not source.rstrip().endswith(";"):
++        raise ValueError("QASM statements must end in semicolons")
++    statements = [s.strip() for s in source.split(";") if s.strip()]
++    if not statements or statements[0] != "OPENQASM 2.0":
++        raise UnsupportedOperationError("only the documented OPENQASM 2.0 subset is supported")
++    circuit, register, creg, csize = None, None, None, 0
++    for statement in statements[1:]:
++        if statement == 'include "qelib1.inc"':
++            continue
++        match = re.fullmatch(r"qreg\s+([A-Za-z_]\w*)\[(\d+)\]", statement)
++        if match:
++            if circuit is not None:
++                raise UnsupportedOperationError("only one quantum register is supported")
++            register = match[1]
++            circuit = Circuit(int(match[2]))
++            continue
++        match = re.fullmatch(r"creg\s+([A-Za-z_]\w*)\[(\d+)\]", statement)
++        if match:
++            if creg is not None or int(match[2]) < 1:
++                raise UnsupportedOperationError("one nonempty classical register is supported")
++            creg, csize = match[1], int(match[2])
++            continue
++        if circuit is None:
++            raise ValueError("declare qreg before quantum operations")
++
++        def parse_wires(text):
++            result = []
++            for token in text.split(","):
++                m = re.fullmatch(r"\s*([A-Za-z_]\w*)\[(\d+)\]\s*", token)
++                if not m or m[1] != register or int(m[2]) >= circuit.n_qubits:
++                    raise ValueError(f"invalid wire reference {token!r}")
++                result.append(int(m[2]))
++            return result
++
++        match = re.fullmatch(r"measure\s+(.+?)\s*->\s*([A-Za-z_]\w*)\[(\d+)\]", statement)
++        if match:
++            targets = parse_wires(match[1])
++            if len(targets) != 1 or match[2] != creg or int(match[3]) >= csize:
++                raise ValueError("measurement needs one wire and a declared classical bit")
++            circuit.measure(targets[0], f"{creg}{match[3]}")
++            continue
++        match = re.fullmatch(r"([a-z][a-z0-9]*)\s*(?:\((.*)\))?\s+(.+)", statement)
++        if not match:
++            raise UnsupportedOperationError(f"unsupported QASM statement: {statement!r}")
++        name, angle, target_text = match.groups()
++        targets = parse_wires(target_text)
++        arity = {
++            "h": 1,
++            "x": 1,
++            "y": 1,
++            "z": 1,
++            "s": 1,
++            "sdg": 1,
++            "t": 1,
++            "tdg": 1,
++            "rx": 1,
++            "ry": 1,
++            "rz": 1,
++            "p": 1,
++            "u1": 1,
++            "cp": 2,
++            "cu1": 2,
++            "cx": 2,
++            "cy": 2,
++            "cz": 2,
++            "ccx": 3,
++            "swap": 2,
++        }
++        if name not in arity:
++            raise UnsupportedOperationError(f"unsupported QASM gate: {name!r}")
++        parameterized = name in {"rx", "ry", "rz", "p", "u1", "cp", "cu1"}
++        if len(targets) != arity[name] or (angle is not None) != parameterized:
++            raise ValueError(f"wrong argument count for {name}")
++        method = getattr(circuit, {"u1": "p", "cu1": "cp"}.get(name, name))
++        method(*([_angle(angle)] + targets if parameterized else targets))
++    if circuit is None:
++        raise ValueError("QASM source needs a qreg declaration")
++    return circuit
++
++
++def to_qiskit(circuit):
++    """Return a Qiskit circuit; no account connection or job submission occurs."""
++    try:
++        from qiskit import QuantumCircuit
++        from qiskit.circuit.library import UnitaryGate
++        from qiskit.quantum_info import Kraus
++    except ImportError as error:
++        raise ImportError('Install Qiskit with: python -m pip install "openqml[qiskit]"') from error
++    keys = {
++        op.key: i for i, op in enumerate(op for op in circuit._operations if op.name == "measure")
++    }
++    qc = QuantumCircuit(circuit.n_qubits, len(keys))
++
++    def append(op):
++        if op.name == "measure":
++            q = op.wires[0]
++            if op.basis == "Y":
++                qc.sdg(q)
++            if op.basis != "Z":
++                qc.h(q)
++            qc.measure(q, keys[op.key])
++            if op.basis != "Z":
++                qc.h(q)
++            if op.basis == "Y":
++                qc.s(q)
++        elif op.name == "channel":
++            qc.append(Kraus(list(op.kraus)).to_instruction(), list(op.wires))
++        elif not op.wires:
++            qc.global_phase += op.angle
++        else:
++            gate = UnitaryGate(op.matrix, label=op.label)
++            if op.controls:
++                gate = gate.control(len(op.controls))
++            qc.append(gate, list(op.controls + op.wires))
++
++    for op in circuit._operations:
++        if op.condition is None:
++            append(op)
++        else:
++            with qc.if_test((qc.clbits[keys[op.condition[0]]], op.condition[1])):
++                append(op)
++    return qc
+diff --git a/src/openqml/models.py b/src/openqml/models.py
+new file mode 100644
+index 0000000..9e5fa62
+--- /dev/null
++++ b/src/openqml/models.py
+@@ -0,0 +1,503 @@
++"""NumPy-native learning models with fit/predict APIs and exact quantum features.
++
++Training uses batched statevectors. Differentiation shifts individual quantum
++expectations, then applies the loss chain rule; it never shifts the loss itself.
++"""
++
++import numpy as np
++
++from ._validation import integer, real
++from .circuit import rotation
++from .exceptions import NotFittedError, ResourceLimitError
++from .optimization import minimize
++from .simulation import H, _apply_dense, _indices
++from .simulation import X as PAULI_X
++
++
++def _features(values, expected=None):
++    result = np.asarray(values, dtype=float)
++    if result.ndim == 1:
++        result = result.reshape(-1, 1)
++    if (
++        result.ndim != 2
++        or not result.shape[0]
++        or not result.shape[1]
++        or not np.isfinite(result).all()
++    ):
++        raise ValueError("X must be a nonempty finite (samples, features) array")
++    if expected is not None and result.shape[1] != expected:
++        raise ValueError(f"X must contain {expected} features")
++    return result.copy()
++
++
++def _labels(values, samples):
++    result = np.asarray(values)
++    if result.ndim != 1 or result.size != samples:
++        raise ValueError("y must have one label per sample")
++    if result.dtype.kind not in "biufUS" or (
++        result.dtype.kind in "iuf" and not np.isfinite(result).all()
++    ):
++        raise ValueError("labels must be finite numbers or strings")
++    return result.copy()
++
++
++def _targets(values, samples):
++    result = np.asarray(values, dtype=float)
++    if result.shape != (samples,) or not np.isfinite(result).all():
++        raise ValueError("y must be a finite one-dimensional array matching X")
++    return result.copy()
++
++
++def _fitted(model):
++    if not getattr(model, "is_fitted_", False):
++        raise NotFittedError("call fit(X, y) before prediction")
++
++
++def _sigmoid(values):
++    values = np.clip(values, -700, 700)
++    return np.exp(-np.logaddexp(0, -values))
++
++
++def _scale_fit(model, features, *, angle_scale=np.pi / 2):
++    model.n_features_in_ = features.shape[1]
++    model.feature_scale_ = np.maximum(np.max(np.abs(features), axis=0), 1e-12)
++    model.angle_scale_ = angle_scale
++    return features / model.feature_scale_ * model.angle_scale_
++
++
++def _scale_predict(model, features):
++    return _features(features, model.n_features_in_) / model.feature_scale_ * model.angle_scale_
++
++
++def _initial_batch(samples, n_qubits):
++    if (1 << n_qubits) * samples > 4_000_000:
++        raise ResourceLimitError(
++            "batch statevectors exceed 4 million amplitudes; use fewer samples"
++        )
++    states = np.zeros((1 << n_qubits, samples), complex)
++    states[0] = 1
++    return states
++
++
++def _encode(states, angles):
++    n_qubits = states.shape[0].bit_length() - 1
++    for q in range(angles.shape[1]):
++        indices = _indices(n_qubits, (q,))
++        first, second = states[indices[0]].copy(), states[indices[1]].copy()
++        c, s = np.cos(angles[:, q] / 2), np.sin(angles[:, q] / 2)
++        states[indices[0]] = c * first - s * second
++        states[indices[1]] = s * first + c * second
++    return states
++
++
++def _encode_phase(states, angles):
++    indices = np.arange(states.shape[0])
++    for q in range(angles.shape[1]):
++        signs = 1 - 2 * ((indices >> q) & 1)
++        states *= np.exp(-0.5j * signs[:, None] * angles[:, q])
++    return states
++
++
++def _entangle(states, n_qubits, *, ring=False):
++    for q in range(n_qubits - 1):
++        states = _apply_dense(states, PAULI_X, (q + 1,), (q,))
++    if ring and n_qubits > 1:
++        states = _apply_dense(states, PAULI_X, (0,), (n_qubits - 1,))
++    return states
++
++
++class QuantumKernel:
++    """Fidelity kernel |<phi(x)|phi(y)>|² of a data re-uploading feature map.
++
++    Inputs are angles in radians. Model wrappers learn feature scaling from the
++    training set only. Exact Gram matrices are PSD up to floating-point error.
++    """
++
++    def __init__(self, *, layers=2, n_qubits=None):
++        self.layers = integer(layers, "layers", 1, 32)
++        self.n_qubits = None if n_qubits is None else integer(n_qubits, "n_qubits", 1, 8)
++
++    def statevectors(self, features):
++        features = _features(features)
++        n_qubits = self.n_qubits or features.shape[1]
++        if not 1 <= features.shape[1] <= n_qubits <= 8:
++            raise ValueError(
++                "feature map needs features <= n_qubits <= 8; reduce feature dimensions"
++            )
++        states = _initial_batch(features.shape[0], n_qubits)
++        for layer in range(self.layers):
++            states = _encode(states, features)
++            for q in range(n_qubits):
++                states = _apply_dense(states, rotation("z", (layer + 1) * (q + 1) * 0.37), (q,))
++            states = _entangle(states, n_qubits)
++        return states.T.copy()
++
++    def pairwise(self, features, other=None):
++        features = _features(features)
++        other = features if other is None else _features(other, features.shape[1])
++        if features.shape[0] * other.shape[0] > 4_000_000:
++            raise ResourceLimitError("kernel matrix exceeds 4 million entries; use fewer samples")
++        first = self.statevectors(features)
++        second = first if other is features else self.statevectors(other)
++        return np.abs(first.conj() @ second.T) ** 2
++
++    __call__ = pairwise
++
++
++class QuantumKernelClassifier:
++    """Multiclass kernel ridge classifier using an exact quantum fidelity kernel.
++
++    This is kernel ridge classification, not an SVM. predict_proba returns a
++    softmax of ridge scores; these scores are not calibrated probabilities.
++    """
++
++    def __init__(self, *, layers=2, regularization=0.01, n_qubits=None):
++        self.layers, self.n_qubits = layers, n_qubits
++        self.regularization = real(regularization, "regularization")
++        if self.regularization <= 0:
++            raise ValueError("regularization must be positive")
++        self.kernel = QuantumKernel(layers=layers, n_qubits=n_qubits)
++
++    def fit(self, features, labels):
++        self.is_fitted_ = False
++        features = _features(features)
++        labels = _labels(labels, features.shape[0])
++        self.classes_, indices = np.unique(labels, return_inverse=True)
++        if self.classes_.size < 2:
++            raise ValueError("classification requires at least two classes")
++        self.X_train_ = _scale_fit(self, features)
++        gram = self.kernel.pairwise(self.X_train_)
++        self.coefficients_ = np.linalg.solve(
++            gram + self.regularization * np.eye(len(labels)), np.eye(self.classes_.size)[indices]
++        )
++        self.n_circuit_evaluations_ = len(labels)
++        self.n_parameters_ = int(self.coefficients_.size)
++        self.is_fitted_ = True
++        return self
++
++    def decision_function(self, features):
++        _fitted(self)
++        angles = _scale_predict(self, features)
++        self.n_circuit_evaluations_ += len(angles) + len(self.X_train_)
++        return self.kernel.pairwise(angles, self.X_train_) @ self.coefficients_
++
++    def predict(self, features):
++        _fitted(self)
++        return self.classes_[np.argmax(self.decision_function(features), axis=1)]
++
++    def predict_proba(self, features):
++        scores = self.decision_function(features)
++        scores -= scores.max(axis=1, keepdims=True)
++        values = np.exp(scores)
++        return values / values.sum(axis=1, keepdims=True)
++
++    def score(self, features, labels):
++        prediction = self.predict(features)
++        return float(np.mean(prediction == _labels(labels, len(prediction))))
++
++    def get_params(self):
++        return {
++            "layers": self.layers,
++            "regularization": self.regularization,
++            "n_qubits": self.n_qubits,
++        }
++
++
++class _VariationalBase:
++    encoding_scale = np.pi / 2
++
++    def __init__(self, *, n_qubits=None, layers=2, epochs=60, learning_rate=0.08, seed=1):
++        self.n_qubits = None if n_qubits is None else integer(n_qubits, "n_qubits", 1, 8)
++        self.layers = integer(layers, "layers", 1, 16)
++        self.epochs = integer(epochs, "epochs", 1)
++        self.learning_rate = real(learning_rate, "learning_rate")
++        if self.learning_rate <= 0:
++            raise ValueError("learning_rate must be positive")
++        self.seed = seed
++
++    def get_params(self):
++        return {
++            "n_qubits": self.n_qubits,
++            "layers": self.layers,
++            "epochs": self.epochs,
++            "learning_rate": self.learning_rate,
++            "seed": self.seed,
++        }
++
++    def _prepare(self, features):
++        self.n_qubits_ = self.n_qubits or features.shape[1]
++        if not 1 <= features.shape[1] <= self.n_qubits_ <= 8:
++            raise ValueError("variational models require features <= n_qubits <= 8")
++        self.n_angles_ = 2 * self.layers * self.n_qubits_
++        self.n_circuit_evaluations_ = 0
++        return _scale_fit(self, features, angle_scale=self.encoding_scale)
++
++    def _expectations(self, angles, parameters):
++        self.n_circuit_evaluations_ += len(angles)
++        states = _initial_batch(len(angles), self.n_qubits_)
++        for q in range(self.n_qubits_):
++            states = _apply_dense(states, H, (q,))
++        for layer in range(self.layers):
++            # Learn a phase offset before each data phase. Without this offset,
++            # a one-qubit first harmonic can be constrained to cos(x), not sin(x).
++            for q in range(self.n_qubits_):
++                index = 2 * (layer * self.n_qubits_ + q)
++                states = _apply_dense(states, rotation("z", parameters[index]), (q,))
++            states = _encode_phase(states, angles)
++            for q in range(self.n_qubits_):
++                index = 2 * (layer * self.n_qubits_ + q)
++                states = _apply_dense(states, rotation("y", parameters[index + 1]), (q,))
++            states = _entangle(states, self.n_qubits_, ring=True)
++        signs = 1 - 2 * (np.arange(1 << self.n_qubits_) & 1)
++        return np.sum(signs[:, None] * np.abs(states) ** 2, axis=0)
++
++    def _jacobian(self, angles, parameters):
++        result = np.empty((len(angles), self.n_angles_))
++        for i in range(self.n_angles_):
++            offset = np.zeros(self.n_angles_)
++            offset[i] = np.pi / 2
++            result[:, i] = (
++                self._expectations(angles, parameters + offset)
++                - self._expectations(angles, parameters - offset)
++            ) / 2
++        return result
++
++    def _fit_objective(self, objective, derivative, initial):
++        fit = minimize(
++            objective,
++            initial,
++            gradient_fn=derivative,
++            steps=self.epochs,
++            learning_rate=self.learning_rate,
++        )
++        self.parameters_ = fit.parameters.copy()
++        self.n_parameters_ = int(fit.parameters.size)
++        self.history_ = fit.history
++        self.optimization_result_ = fit
++        self.is_fitted_ = True
++
++
++class VariationalQuantumClassifier(_VariationalBase):
++    """Binary data re-uploading classifier trained with exact gate-wise gradients."""
++
++    def fit(self, features, labels):
++        self.is_fitted_ = False
++        features = _features(features)
++        labels = _labels(labels, len(features))
++        self.classes_, targets = np.unique(labels, return_inverse=True)
++        if self.classes_.size != 2:
++            raise ValueError("VariationalQuantumClassifier supports exactly two classes")
++        angles = self._prepare(features)
++        initial = np.random.default_rng(self.seed).normal(0, 0.3, self.n_angles_)
++
++        def probabilities(parameters):
++            return np.clip((1 - self._expectations(angles, parameters)) / 2, 1e-7, 1 - 1e-7)
++
++        def objective(parameters):
++            p = probabilities(parameters)
++            return float(-np.mean(targets * np.log(p) + (1 - targets) * np.log1p(-p)))
++
++        def derivative(parameters):
++            p = probabilities(parameters)
++            sensitivity = (p - targets) / (p * (1 - p))
++            return np.mean(
++                sensitivity[:, None] * (-0.5) * self._jacobian(angles, parameters), axis=0
++            )
++
++        self._fit_objective(objective, derivative, initial)
++        return self
++
++    def predict_proba(self, features):
++        _fitted(self)
++        p = np.clip(
++            (1 - self._expectations(_scale_predict(self, features), self.parameters_)) / 2, 0, 1
++        )
++        return np.column_stack([1 - p, p])
++
++    def predict(self, features):
++        _fitted(self)
++        return self.classes_[np.argmax(self.predict_proba(features), axis=1)]
++
++    def score(self, features, labels):
++        prediction = self.predict(features)
++        return float(np.mean(prediction == _labels(labels, len(prediction))))
++
++
++class VariationalQuantumRegressor(_VariationalBase):
++    """Data re-uploading expectation model with a trainable affine classical head."""
++
++    encoding_scale = np.pi
++
++    def fit(self, features, targets):
++        self.is_fitted_ = False
++        features = _features(features)
++        targets = _targets(targets, len(features))
++        angles = self._prepare(features)
++        initial = np.r_[
++            np.random.default_rng(self.seed).uniform(-np.pi, np.pi, self.n_angles_),
++            max(float(np.std(targets)), 0.1),
++            float(np.mean(targets)),
++        ]
++
++        def objective(parameters):
++            prediction = (
++                parameters[-2] * self._expectations(angles, parameters[:-2]) + parameters[-1]
++            )
++            return float(np.mean((prediction - targets) ** 2))
++
++        def derivative(parameters):
++            expectations = self._expectations(angles, parameters[:-2])
++            residual = parameters[-2] * expectations + parameters[-1] - targets
++            quantum = np.mean(
++                2 * residual[:, None] * parameters[-2] * self._jacobian(angles, parameters[:-2]),
++                axis=0,
++            )
++            return np.r_[quantum, np.mean(2 * residual * expectations), np.mean(2 * residual)]
++
++        self._fit_objective(objective, derivative, initial)
++        return self
++
++    def predict(self, features):
++        _fitted(self)
++        expectations = self._expectations(_scale_predict(self, features), self.parameters_[:-2])
++        return self.parameters_[-2] * expectations + self.parameters_[-1]
++
++    def score(self, features, targets):
++        prediction = self.predict(features)
++        targets = _targets(targets, len(prediction))
++        denominator = np.sum((targets - targets.mean()) ** 2)
++        if denominator == 0:
++            return 1.0 if np.allclose(prediction, targets) else 0.0
++        return float(1 - np.sum((prediction - targets) ** 2) / denominator)
++
++
++class LogisticClassifier:
++    """Binary linear classical comparator; feature normalization is fit on training data."""
++
++    def __init__(self, *, epochs=150, learning_rate=0.08, regularization=0.001, seed=1):
++        self.epochs = integer(epochs, "epochs", 1)
++        self.learning_rate = real(learning_rate, "learning_rate")
++        self.regularization = real(regularization, "regularization")
++        if self.learning_rate <= 0 or self.regularization < 0:
++            raise ValueError("positive learning_rate and nonnegative regularization required")
++        self.seed = seed
++
++    def fit(self, features, labels):
++        self.is_fitted_ = False
++        features = _features(features)
++        self.classes_, targets = np.unique(_labels(labels, len(features)), return_inverse=True)
++        if self.classes_.size != 2:
++            raise ValueError("LogisticClassifier supports exactly two classes")
++        self.n_features_in_ = features.shape[1]
++        self.mean_, self.scale_ = features.mean(axis=0), np.maximum(features.std(axis=0), 1e-12)
++        design = np.c_[(features - self.mean_) / self.scale_, np.ones(len(features))]
++
++        def objective(parameters):
++            logits = design @ parameters
++            return float(
++                np.mean(np.logaddexp(0, logits) - targets * logits)
++                + self.regularization * np.sum(parameters[:-1] ** 2) / 2
++            )
++
++        def derivative(parameters):
++            return (
++                design.T @ (_sigmoid(design @ parameters) - targets) / len(features)
++                + np.r_[self.regularization * parameters[:-1], 0]
++            )
++
++        fit = minimize(
++            objective,
++            np.zeros(design.shape[1]),
++            gradient_fn=derivative,
++            steps=self.epochs,
++            learning_rate=self.learning_rate,
++        )
++        self.parameters_, self.history_ = fit.parameters, fit.history
++        self.n_parameters_ = int(fit.parameters.size)
++        self.is_fitted_ = True
++        return self
++
++    def predict_proba(self, features):
++        _fitted(self)
++        features = _features(features, self.n_features_in_)
++        p = _sigmoid(
++            ((features - self.mean_) / self.scale_) @ self.parameters_[:-1] + self.parameters_[-1]
++        )
++        return np.c_[1 - p, p]
++
++    def predict(self, features):
++        _fitted(self)
++        return self.classes_[np.argmax(self.predict_proba(features), axis=1)]
++
++    def score(self, features, labels):
++        prediction = self.predict(features)
++        return float(np.mean(prediction == _labels(labels, len(prediction))))
++
++    def get_params(self):
++        return {
++            "epochs": self.epochs,
++            "learning_rate": self.learning_rate,
++            "regularization": self.regularization,
++            "seed": self.seed,
++        }
++
++
++class RidgeRegressor:
++    """Linear ridge baseline (with an unpenalized intercept)."""
++
++    def __init__(self, *, regularization=0.01):
++        self.regularization = real(regularization, "regularization")
++        if self.regularization <= 0:
++            raise ValueError("regularization must be positive")
++
++    def _design(self, features):
++        return np.c_[(features - self.mean_) / self.scale_, np.ones(len(features))]
++
++    def fit(self, features, targets):
++        self.is_fitted_ = False
++        features = _features(features)
++        targets = _targets(targets, len(features))
++        self.n_features_in_ = features.shape[1]
++        self.mean_, self.scale_ = features.mean(axis=0), np.maximum(features.std(axis=0), 1e-12)
++        design = self._design(features)
++        penalty = np.diag([self.regularization] * (design.shape[1] - 1) + [0])
++        self.parameters_ = np.linalg.solve(design.T @ design + penalty, design.T @ targets)
++        self.n_parameters_ = int(self.parameters_.size)
++        self.is_fitted_ = True
++        return self
++
++    def predict(self, features):
++        _fitted(self)
++        return self._design(_features(features, self.n_features_in_)) @ self.parameters_
++
++    def score(self, features, targets):
++        prediction = self.predict(features)
++        targets = _targets(targets, len(prediction))
++        denominator = np.sum((targets - targets.mean()) ** 2)
++        if denominator == 0:
++            return 1.0 if np.allclose(prediction, targets) else 0.0
++        return float(1 - np.sum((prediction - targets) ** 2) / denominator)
++
++    def get_params(self):
++        return {"regularization": self.regularization}
++
++
++class FourierRegressor(RidgeRegressor):
++    """Strong classical baseline for periodic targets; frequencies are fixed in radians."""
++
++    def __init__(self, *, harmonics=6, regularization=0.01):
++        super().__init__(regularization=regularization)
++        self.harmonics = integer(harmonics, "harmonics", 1, 100)
++
++    def _design(self, features):
++        columns = [np.ones(len(features))]
++        for q in range(features.shape[1]):
++            for frequency in range(1, self.harmonics + 1):
++                columns.extend(
++                    [np.sin(frequency * features[:, q]), np.cos(frequency * features[:, q])]
++                )
++        # Intercept last, matching RidgeRegressor's unpenalized final coefficient.
++        return np.column_stack(columns[1:] + columns[:1])
++
++    def get_params(self):
++        return {"harmonics": self.harmonics, "regularization": self.regularization}
+diff --git a/src/openqml/optimization.py b/src/openqml/optimization.py
+new file mode 100644
+index 0000000..0de90d8
+--- /dev/null
++++ b/src/openqml/optimization.py
+@@ -0,0 +1,127 @@
++"""Hybrid optimization without framework or service dependencies."""
++
++from dataclasses import dataclass
++
++import numpy as np
++
++from ._validation import integer, real, vector
++
++
++def _value(function, parameters):
++    return real(function(parameters.copy()), "objective value")
++
++
++def gradient(function, parameters, *, epsilon=1e-6):
++    """Central finite differences; valid for nonlinear losses and shared angles."""
++    parameters = vector(parameters)
++    epsilon = real(epsilon, "epsilon")
++    if epsilon <= 0:
++        raise ValueError("epsilon must be positive")
++    result = np.zeros_like(parameters)
++    for index in range(parameters.size):
++        offset = np.zeros_like(parameters)
++        offset[index] = epsilon
++        result[index] = (
++            _value(function, parameters + offset) - _value(function, parameters - offset)
++        ) / (2 * epsilon)
++    return result
++
++
++def parameter_shift(function, parameters):
++    """±pi/2 shift of an expectation, assuming one unscaled Pauli rotation per angle.
++
++    Do NOT directly shift nonlinear losses, repeated/shared angles, or controlled
++    rotations. Differentiate their gate expectations and apply the chain rule,
++    or call gradient() on the full objective instead.
++    """
++    parameters = vector(parameters)
++    result = np.zeros_like(parameters)
++    for index in range(parameters.size):
++        offset = np.zeros_like(parameters)
++        offset[index] = np.pi / 2
++        result[index] = (
++            _value(function, parameters + offset) - _value(function, parameters - offset)
++        ) / 2
++    return result
++
++
++@dataclass
++class OptimizeResult:
++    parameters: np.ndarray
++    value: float
++    history: list[float]
++    n_steps: int
++    n_evaluations: int
++    converged: bool
++
++
++def minimize(
++    function,
++    initial,
++    *,
++    gradient_fn=None,
++    steps=100,
++    learning_rate=0.05,
++    method="adam",
++    tolerance=1e-8,
++):
++    """Minimize a scalar objective with Adam or gradient descent with backtracking.
++
++    The returned parameters/value are the best evaluated iterate. History holds
++    the actual initial value and each accepted iterate. n_evaluations includes
++    finite differences; user-supplied gradient function calls are not counted.
++    """
++    parameters = vector(initial)
++    steps = integer(steps, "steps", 0)
++    learning_rate, tolerance = real(learning_rate, "learning_rate"), real(tolerance, "tolerance")
++    if learning_rate <= 0 or tolerance < 0 or method not in ("adam", "gd"):
++        raise ValueError(
++            "positive learning_rate, nonnegative tolerance, method 'adam'/'gd' required"
++        )
++    evaluations = 0
++
++    def objective(p):
++        nonlocal evaluations
++        evaluations += 1
++        return _value(function, p)
++
++    value = objective(parameters)
++    best_parameters, best_value = parameters.copy(), value
++    history, first, second = [value], np.zeros_like(parameters), np.zeros_like(parameters)
++    converged = False
++    for step in range(1, steps + 1):
++        grad = vector(
++            gradient_fn(parameters.copy())
++            if gradient_fn is not None
++            else gradient(objective, parameters),
++            "gradient",
++        )
++        if grad.shape != parameters.shape:
++            raise ValueError("gradient must have the same shape as parameters")
++        if np.linalg.norm(grad) <= tolerance:
++            converged = True
++            break
++        if method == "adam":
++            first = 0.9 * first + 0.1 * grad
++            second = 0.999 * second + 0.001 * grad**2
++            candidate = parameters - learning_rate * (first / (1 - 0.9**step)) / (
++                np.sqrt(second / (1 - 0.999**step)) + 1e-8
++            )
++            next_value = objective(candidate)
++        else:
++            rate = learning_rate
++            for _ in range(30):
++                candidate = parameters - rate * grad
++                next_value = objective(candidate)
++                if next_value <= value - 1e-4 * rate * np.dot(grad, grad):
++                    break
++                rate *= 0.5
++            else:
++                break
++        parameters, value = candidate, next_value
++        history.append(value)
++        if value < best_value:
++            best_parameters, best_value = parameters.copy(), value
++    return OptimizeResult(
++        best_parameters, best_value, history, len(history) - 1, evaluations, converged
++    )
+diff --git a/src/openqml/py.typed b/src/openqml/py.typed
+new file mode 100644
+index 0000000..e69de29
+diff --git a/src/openqml/simulation.py b/src/openqml/simulation.py
+new file mode 100644
+index 0000000..9aeaa4d
+--- /dev/null
++++ b/src/openqml/simulation.py
+@@ -0,0 +1,474 @@
++"""Exact dense/sparse pure states and small-register density matrices.
++
++q0 is the least significant bit. Matrix wire lists are ordered least significant
++local bit first; printed count strings use the conventional q[n-1]...q0 order.
++"""
++
++from copy import deepcopy
++from dataclasses import dataclass
++
++import numpy as np
++
++from ._validation import integer, pauli_string, probability, wires
++from .exceptions import ResourceLimitError
++
++
++@dataclass(frozen=True)
++class SimulationBudget:
++    """Conservative allocation and arithmetic limits, checked before dense reads.
++
++    Sparse simulation can reach 40 qubits only when support and work stay small.
++    This is a capacity limit, not a claim that arbitrary 40-qubit states fit.
++    """
++
++    max_qubits: int = 40
++    max_dense_qubits: int = 18
++    max_sparse_states: int = 262_144
++    max_density_qubits: int = 8
++    max_memory_mb: int = 256
++    max_work: int = 20_000_000
++    max_operations: int = 10_000
++
++    def __post_init__(self):
++        for name in self.__dataclass_fields__:
++            integer(getattr(self, name), name, 1)
++        if self.max_qubits > 40 or self.max_density_qubits > 10:
++            raise ValueError("max_qubits is capped at 40; max_density_qubits is capped at 10")
++        if self.max_dense_qubits > self.max_qubits:
++            raise ValueError("max_dense_qubits must not exceed max_qubits")
++
++    def allocation(self, elements, *, complex_values=True, copies=1):
++        size = elements * (16 if complex_values else 8) * copies
++        if size > self.max_memory_mb * 1024**2:
++            raise ResourceLimitError(
++                f"Readout/allocation needs about {size / 1024**2:.1f} MiB; "
++                f"budget is {self.max_memory_mb} MiB. Request fewer wires."
++            )
++
++
++H = np.array([[1, 1], [1, -1]], dtype=complex) / np.sqrt(2)
++X = np.array([[0, 1], [1, 0]], dtype=complex)
++Y = np.array([[0, -1j], [1j, 0]], dtype=complex)
++Z = np.diag([1, -1]).astype(complex)
++
++
++def validate_matrix(matrix, size, *, unitary=True):
++    matrix = np.asarray(matrix, dtype=complex)
++    if matrix.shape != (size, size) or not np.isfinite(matrix).all():
++        raise ValueError(f"matrix must be a finite {size} by {size} array")
++    if unitary and not np.allclose(matrix.conj().T @ matrix, np.eye(size), atol=1e-10, rtol=1e-10):
++        raise ValueError("matrix must be unitary (U†U = I)")
++    result = matrix.copy()
++    result.flags.writeable = False
++    return result
++
++
++def validate_channel(kraus, size):
++    operators = tuple(validate_matrix(k, size, unitary=False) for k in kraus)
++    if not operators or not np.allclose(
++        sum((k.conj().T @ k for k in operators), np.zeros((size, size), complex)),
++        np.eye(size),
++        atol=1e-10,
++        rtol=1e-10,
++    ):
++        raise ValueError("Kraus operators must satisfy sum(K†K) = I")
++    return operators
++
++
++def _indices(n_qubits, targets, controls=()):
++    mask = sum(1 << q for q in targets)
++    control_mask = sum(1 << q for q in controls)
++    base = np.arange(1 << n_qubits)
++    base = base[((base & mask) == 0) & ((base & control_mask) == control_mask)]
++    local = np.array(
++        [sum(((j >> i) & 1) << q for i, q in enumerate(targets)) for j in range(1 << len(targets))]
++    )
++    return local[:, None] | base[None, :]
++
++
++def _apply_dense(array, matrix, targets, controls=()):
++    n_qubits = array.shape[0].bit_length() - 1
++    indices = _indices(n_qubits, targets, controls)
++    result = array.copy()
++    result[indices] = np.einsum("ij,j...->i...", matrix, array[indices])
++    return result
++
++
++def _pauli_action(index, pauli):
++    target, phase = index, 1.0 + 0j
++    for q, p in enumerate(reversed(pauli)):
++        bit = (index >> q) & 1
++        if p in "XY":
++            target ^= 1 << q
++        if p == "Y":
++            phase *= -1j if bit else 1j
++        elif p == "Z" and bit:
++            phase *= -1
++    return target, phase
++
++
++class State:
++    """A mutable quantum state. Circuit.run() always returns a fresh instance."""
++
++    def __init__(self, n_qubits, *, backend="auto", seed=None, budget=None):
++        self.budget = budget or SimulationBudget()
++        if not isinstance(self.budget, SimulationBudget):
++            raise ValueError("budget must be a SimulationBudget")
++        self.n_qubits = integer(n_qubits, "n_qubits", 1, self.budget.max_qubits)
++        if backend not in ("auto", "dense", "sparse"):
++            raise ValueError("backend must be 'auto', 'dense', or 'sparse'")
++        if backend == "auto":
++            backend = "dense" if n_qubits <= self.budget.max_dense_qubits else "sparse"
++        if backend == "dense":
++            self._check_vector(n_qubits)
++            self._dense = np.zeros(1 << n_qubits, complex)
++            self._dense[0] = 1
++            self._sparse = None
++        else:
++            self._dense = None
++            self._sparse = {0: 1.0 + 0j}
++        self._rho = None
++        self._rng = np.random.default_rng(seed)
++        self._work = 0
++        self.classical = {}
++
++    @classmethod
++    def from_vector(cls, amplitudes, *, seed=None, budget=None):
++        values = np.asarray(amplitudes, dtype=complex)
++        if values.ndim != 1 or values.size < 2 or values.size & (values.size - 1):
++            raise ValueError("amplitudes must have a power-of-two length of at least 2")
++        if not np.isfinite(values).all() or not np.isclose(
++            np.vdot(values, values), 1, atol=1e-10, rtol=1e-10
++        ):
++            raise ValueError("amplitudes must be finite and normalized")
++        state = cls(values.size.bit_length() - 1, backend="dense", seed=seed, budget=budget)
++        state._dense = values.copy()
++        return state
++
++    @property
++    def backend(self):
++        return (
++            "density"
++            if self._rho is not None
++            else ("dense" if self._dense is not None else "sparse")
++        )
++
++    @property
++    def work(self):
++        """Estimated scalar gate work consumed by this state."""
++        return self._work
++
++    def clone(self):
++        return deepcopy(self)
++
++    def _check_vector(self, count):
++        if count > self.budget.max_dense_qubits:
++            raise ResourceLimitError(
++                f"Complete vectors/probability arrays are limited to "
++                f"{self.budget.max_dense_qubits} wires; request a marginal readout."
++            )
++        self.budget.allocation(1 << count, copies=6)
++
++    def _consume(self, work):
++        if self._work + work > self.budget.max_work:
++            raise ResourceLimitError("Simulation work budget exceeded; use a smaller circuit")
++        self._work += work
++
++    def _density(self):
++        if self._rho is None:
++            if self.n_qubits > self.budget.max_density_qubits:
++                raise ResourceLimitError(
++                    f"Exact noise/reset needs a density matrix; limited to "
++                    f"{self.budget.max_density_qubits} qubits."
++                )
++            self.budget.allocation(1 << (2 * self.n_qubits), copies=6)
++            amplitudes = self.statevector()
++            self._rho = np.outer(amplitudes, amplitudes.conj())
++            self._dense = self._sparse = None
++        return self._rho
++
++    def _apply(self, matrix, targets, controls=()):
++        if self._rho is not None:
++            self._consume(self._rho.size * (1 << len(targets)) * 2)
++            left = _apply_dense(self._rho, matrix, targets, controls)
++            self._rho = _apply_dense(left.T, matrix.conj(), targets, controls).T
++        elif self._dense is not None:
++            self._consume(self._dense.size * (1 << len(targets)))
++            self._dense = _apply_dense(self._dense, matrix, targets, controls)
++        else:
++            self._consume(len(self._sparse) * (1 << len(targets)))
++            target_mask = sum(1 << q for q in targets)
++            control_mask = sum(1 << q for q in controls)
++            result = {}
++            support_limit = min(
++                self.budget.max_sparse_states, self.budget.max_memory_mb * 1024**2 // 384
++            )
++            for index, amplitude in self._sparse.items():
++                if index & control_mask != control_mask:
++                    result[index] = result.get(index, 0j) + amplitude
++                    if len(result) > support_limit:
++                        raise ResourceLimitError("Sparse support/memory budget exceeded")
++                    continue
++                local = sum(((index >> q) & 1) << j for j, q in enumerate(targets))
++                base = index & ~target_mask
++                for row in np.flatnonzero(matrix[:, local]):
++                    output = base | sum(((int(row) >> j) & 1) << q for j, q in enumerate(targets))
++                    result[output] = result.get(output, 0j) + matrix[row, local] * amplitude
++                    if len(result) > support_limit:
++                        raise ResourceLimitError(
++                            "Sparse support budget exceeded; fewer qubits or gates are needed. "
++                            "No amplitudes were truncated."
++                        )
++            self._sparse = {k: v for k, v in result.items() if v != 0}
++        return self
++
++    def unitary(self, matrix, targets, *, controls=()):
++        targets = wires(targets, self.n_qubits, allow_empty=True)
++        controls = wires(controls, self.n_qubits, allow_empty=True)
++        if len(targets) > 4 or set(targets) & set(controls):
++            raise ValueError("custom gates support at most 4 targets, disjoint from controls")
++        return self._apply(validate_matrix(matrix, 1 << len(targets)), targets, controls)
++
++    def h(self, q):
++        return self.unitary(H, [q])
++
++    def x(self, q):
++        return self.unitary(X, [q])
++
++    def y(self, q):
++        return self.unitary(Y, [q])
++
++    def z(self, q):
++        return self.unitary(Z, [q])
++
++    def rx(self, theta, q):
++        from .circuit import rotation
++
++        return self.unitary(rotation("x", theta), [q])
++
++    def ry(self, theta, q):
++        from .circuit import rotation
++
++        return self.unitary(rotation("y", theta), [q])
++
++    def rz(self, theta, q):
++        from .circuit import rotation
++
++        return self.unitary(rotation("z", theta), [q])
++
++    def cx(self, control, target):
++        return self.unitary(X, [target], controls=[control])
++
++    def cz(self, control, target):
++        return self.unitary(Z, [target], controls=[control])
++
++    def statevector(self):
++        if self._rho is not None:
++            raise ValueError("a mixed state has no unique statevector; use reduced_density()")
++        self._check_vector(self.n_qubits)
++        if self._dense is not None:
++            return self._dense.copy()
++        result = np.zeros(1 << self.n_qubits, complex)
++        for index, amplitude in self._sparse.items():
++            result[index] = amplitude
++        return result
++
++    def sparse_amplitudes(self):
++        """Return a copy of occupied amplitudes without a dense allocation."""
++        if self._rho is not None:
++            raise ValueError("mixed states have no unique amplitudes")
++        if self._sparse is not None:
++            return self._sparse.copy()
++        if np.count_nonzero(self._dense) * 192 > self.budget.max_memory_mb * 1024**2:
++            raise ResourceLimitError("Sparse amplitude readout exceeds the memory budget")
++        return {int(i): complex(self._dense[i]) for i in np.flatnonzero(self._dense)}
++
++    def probabilities(self, selected_wires=None):
++        selected = (
++            tuple(range(self.n_qubits))
++            if selected_wires is None
++            else wires(selected_wires, self.n_qubits)
++        )
++        self._check_vector(len(selected))
++        result = np.zeros(1 << len(selected))
++        if self._rho is not None:
++            values = np.real(np.diag(self._rho))
++        elif self._dense is not None:
++            values = np.abs(self._dense) ** 2
++        else:
++            for index, amplitude in self._sparse.items():
++                local = sum(((index >> q) & 1) << j for j, q in enumerate(selected))
++                result[local] += abs(amplitude) ** 2
++            return result
++        indices = np.arange(values.size)
++        local = sum(((indices >> q) & 1) << j for j, q in enumerate(selected))
++        np.add.at(result, local, values)
++        return np.maximum(result, 0)
++
++    def sample(self, shots=1024, *, seed=None, selected_wires=None):
++        """Born-rule counts; does not collapse the state or create a full 2**n array."""
++        shots = integer(shots, "shots", 1)
++        self.budget.allocation(shots, complex_values=False, copies=4)
++        selected = (
++            tuple(range(self.n_qubits))
++            if selected_wires is None
++            else wires(selected_wires, self.n_qubits)
++        )
++        rng = self._rng if seed is None else np.random.default_rng(seed)
++        if self._sparse is not None:
++            labels = np.array(list(self._sparse), dtype=np.int64)
++            weights = np.array([abs(a) ** 2 for a in self._sparse.values()])
++            sampled = rng.choice(labels, size=shots, p=weights / weights.sum())
++            local = sum(((sampled >> q) & 1) << j for j, q in enumerate(selected))
++        else:
++            values = self.probabilities(selected)
++            local = rng.choice(values.size, size=shots, p=values / values.sum())
++        labels, counts = np.unique(local, return_counts=True)
++        return {format(int(k), f"0{len(selected)}b"): int(v) for k, v in zip(labels, counts)}
++
++    def expectation(self, observable):
++        """Exact Pauli or Hamiltonian expectation; strings put q0 at the right."""
++        from .hamiltonian import Hamiltonian
++
++        if isinstance(observable, Hamiltonian):
++            if observable.n_qubits != self.n_qubits:
++                raise ValueError("Hamiltonian width does not match the state")
++            return float(sum(c * self.expectation(p) for p, c in observable.terms))
++        pauli = pauli_string(observable, self.n_qubits)
++        if self._sparse is not None:
++            self._consume(len(self._sparse) * self.n_qubits)
++            value = 0j
++            for index, amplitude in self._sparse.items():
++                output, phase = _pauli_action(index, pauli)
++                value += np.conj(self._sparse.get(output, 0j)) * phase * amplitude
++        else:
++            size = 1 << self.n_qubits
++            self._consume(size * self.n_qubits)
++            indices = np.arange(size)
++            outputs = indices.copy()
++            phases = np.ones(size, complex)
++            for q, p in enumerate(reversed(pauli)):
++                bits = (indices >> q) & 1
++                if p in "XY":
++                    outputs ^= 1 << q
++                if p == "Y":
++                    phases *= 1j * (1 - 2 * bits)
++                elif p == "Z":
++                    phases *= 1 - 2 * bits
++            value = (
++                np.sum(phases * self._rho[indices, outputs])
++                if self._rho is not None
++                else (np.vdot(self._dense[outputs], phases * self._dense))
++            )
++        return float(np.real(value))
++
++    def reduced_density(self, selected_wires=None):
++        selected = (
++            tuple(range(self.n_qubits))
++            if selected_wires is None
++            else wires(selected_wires, self.n_qubits)
++        )
++        if len(selected) > self.budget.max_density_qubits:
++            raise ResourceLimitError("Density readout exceeds max_density_qubits")
++        size = 1 << len(selected)
++        self.budget.allocation(size * size, copies=3)
++        self._consume(
++            size * size * (len(self._sparse) if self._sparse is not None else (1 << self.n_qubits))
++        )
++        rest = tuple(q for q in range(self.n_qubits) if q not in selected)
++        if self._sparse is not None:
++            groups = {}
++            for index, amplitude in self._sparse.items():
++                local = sum(((index >> q) & 1) << j for j, q in enumerate(selected))
++                env = sum(((index >> q) & 1) << j for j, q in enumerate(rest))
++                groups.setdefault(env, {})[local] = amplitude
++            result = np.zeros((size, size), complex)
++            for group in groups.values():
++                labels = list(group)
++                values = np.array(list(group.values()))
++                result[np.ix_(labels, labels)] += np.outer(values, values.conj())
++            return result
++        axes = [self.n_qubits - 1 - q for q in reversed(selected + rest)]
++        if self._rho is None:
++            # Rest bits first in tensor axes: transpose to a local-by-environment matrix.
++            data = self._dense.reshape((2,) * self.n_qubits).transpose(axes)
++            data = data.reshape(1 << len(rest), size).T
++            return data @ data.conj().T
++        result = np.zeros((size, size), complex)
++        for env in range(1 << len(rest)):
++            base = sum(((env >> j) & 1) << q for j, q in enumerate(rest))
++            labels = [
++                base | sum(((k >> j) & 1) << q for j, q in enumerate(selected)) for k in range(size)
++            ]
++            result += self._rho[np.ix_(labels, labels)]
++        return result
++
++    def bloch_vector(self, q):
++        rho = self.reduced_density([q])
++        return np.array([np.trace(rho @ p).real for p in (X, Y, Z)])
++
++    def entropy(self, selected_wires=None):
++        values = np.linalg.eigvalsh(self.reduced_density(selected_wires))
++        values = values[values > 1e-15]
++        return float(-np.sum(values * np.log2(values)))
++
++    def measure(self, q, basis="Z"):
++        q = wires([q], self.n_qubits)[0]
++        if basis not in ("X", "Y", "Z"):
++            raise ValueError("measurement basis must be X, Y, or Z")
++        change = H if basis == "X" else (np.diag([1, 1j]) @ H if basis == "Y" else None)
++        if change is not None:
++            self._apply(change.conj().T, (q,))
++        probs = self.probabilities([q])
++        bit = int(self._rng.random() < probs[1] / probs.sum())
++        norm = probs[bit]
++        if self._sparse is not None:
++            self._sparse = {
++                k: a / np.sqrt(norm) for k, a in self._sparse.items() if (k >> q) & 1 == bit
++            }
++        else:
++            mask = ((np.arange(1 << self.n_qubits) >> q) & 1) == bit
++            if self._rho is not None:
++                self._rho *= mask[:, None] * mask[None, :]
++                self._rho /= norm
++            else:
++                self._dense *= mask
++                self._dense /= np.sqrt(norm)
++        if change is not None:
++            self._apply(change, (q,))
++        return bit
++
++    def channel(self, kraus, targets):
++        targets = wires(targets, self.n_qubits)
++        if len(targets) > 4:
++            raise ValueError("channels support at most 4 target wires")
++        operators = validate_channel(kraus, 1 << len(targets))
++        self._consume((1 << (2 * self.n_qubits)) * len(operators) * (1 << len(targets)) * 2)
++        rho = self._density()
++        result = np.zeros_like(rho)
++        for k in operators:
++            left = _apply_dense(rho, k, targets)
++            result += _apply_dense(left.T, k.conj(), targets).T
++        self._rho = result
++        return self
++
++    def amplitude_damping(self, p, q):
++        p = probability(p)
++        return self.channel([[[1, 0], [0, np.sqrt(1 - p)]], [[0, np.sqrt(p)], [0, 0]]], [q])
++
++    def dephasing(self, p, q):
++        """Phase-flip channel (1-p)rho + p Z rho Z; p is the flip probability."""
++        p = probability(p)
++        return self.channel([np.sqrt(1 - p) * np.eye(2), np.sqrt(p) * Z], [q])
++
++    def depolarizing(self, p, q):
++        """With probability p replace the selected qubit by I/2."""
++        p = probability(p)
++        return self.channel(
++            [np.sqrt(1 - 3 * p / 4) * np.eye(2)] + [np.sqrt(p / 4) * gate for gate in (X, Y, Z)],
++            [q],
++        )
++
++    def reset(self, q):
++        """Exact unconditional reset channel; other qubits may become mixed."""
++        return self.channel([[[1, 0], [0, 0]], [[0, 1], [0, 0]]], [q])
+diff --git a/tests/test_learning.py b/tests/test_learning.py
+new file mode 100644
+index 0000000..27d23a9
+--- /dev/null
++++ b/tests/test_learning.py
+@@ -0,0 +1,226 @@
++import json
++
++import numpy as np
++import pytest
++
++import openqml as q
++
++
++def test_batched_feature_states_match_independent_circuits():
++    inputs = np.array([[0.1, 0.3], [-0.7, 1.2], [0.0, -0.2]])
++    kernel = q.QuantumKernel(layers=2)
++    actual = kernel.statevectors(inputs)
++    for sample, values in enumerate(inputs):
++        circuit = q.Circuit(2)
++        for layer in range(2):
++            for wire, value in enumerate(values):
++                circuit.ry(value, wire)
++            for wire in range(2):
++                circuit.rz((layer + 1) * (wire + 1) * 0.37, wire)
++            circuit.cx(0, 1)
++        np.testing.assert_allclose(actual[sample], circuit.run().statevector(), atol=1e-12)
++
++
++def test_kernel_is_psd_normalized_symmetric_and_cross_consistent():
++    features = np.random.default_rng(3).normal(size=(20, 3))
++    kernel = q.QuantumKernel(layers=3)
++    gram = kernel(features)
++    np.testing.assert_allclose(gram, gram.T, atol=1e-12)
++    np.testing.assert_allclose(gram.diagonal(), 1, atol=1e-12)
++    assert np.linalg.eigvalsh(gram).min() > -1e-10
++    np.testing.assert_allclose(kernel(features[:4], features[4:]), gram[:4, 4:])
++
++
++def test_batched_variational_expectations_and_parameter_derivatives():
++    model = q.VariationalQuantumClassifier(n_qubits=3, layers=2, epochs=2)
++    features = np.array([[0.21, -0.3], [-0.5, 1.2], [0.0, 0.0]])
++    model._prepare(features)
++    parameters = np.random.default_rng(12).normal(size=model.n_angles_)
++    values = model._expectations(features, parameters)
++    for sample, angles in enumerate(features):
++        circuit = q.Circuit(3)
++        for wire in range(3):
++            circuit.h(wire)
++        for layer in range(2):
++            for wire in range(3):
++                circuit.rz(parameters[2 * (layer * 3 + wire)], wire)
++            for wire, angle in enumerate(angles):
++                circuit.rz(angle, wire)
++            for wire in range(3):
++                i = 2 * (layer * 3 + wire)
++                circuit.ry(parameters[i + 1], wire)
++            circuit.cx(0, 1).cx(1, 2).cx(2, 0)
++        assert values[sample] == pytest.approx(circuit.run().expectation("IIZ"), abs=1e-12)
++    jacobian = model._jacobian(features, parameters)
++    for sample in range(len(features)):
++        expected = q.gradient(lambda p: model._expectations(features, p)[sample], parameters)
++        np.testing.assert_allclose(jacobian[sample], expected, atol=1e-8)
++
++
++@pytest.mark.parametrize(
++    "model_class", [q.VariationalQuantumClassifier, q.VariationalQuantumRegressor]
++)
++def test_loss_chain_rule_matches_finite_differences(model_class, monkeypatch):
++    features = np.array([[0.3, 0.7], [-0.7, 1.3], [0.9, -0.1], [-0.2, -0.7]])
++    labels = (
++        np.array([0, 1, 1, 0])
++        if model_class is q.VariationalQuantumClassifier
++        else np.array([0.3, -0.5, 0.8, 0.4])
++    )
++
++    def check(self, objective, derivative, initial):
++        for parameters in (initial, initial + 0.33):
++            np.testing.assert_allclose(
++                derivative(parameters), q.gradient(objective, parameters), atol=1e-6, rtol=1e-5
++            )
++        self.parameters_ = initial
++        self.is_fitted_ = True
++
++    monkeypatch.setattr(model_class, "_fit_objective", check)
++    model_class(layers=2).fit(features, labels)
++
++
++def test_kernel_classifier_learns_xor_and_preserves_label_types():
++    data = q.load_dataset("xor", n_samples=80, noise=0.03, seed=7)
++    a, b, c, d = data.split(seed=9)
++    model = q.QuantumKernelClassifier().fit(a, np.where(c == 1, "odd", "even"))
++    assert model.score(b, np.where(d == 1, "odd", "even")) >= 0.9
++    probabilities = model.predict_proba(b)
++    np.testing.assert_allclose(probabilities.sum(axis=1), 1)
++    assert (probabilities >= 0).all()
++    expected_scale = np.max(np.abs(a), axis=0)
++    np.testing.assert_allclose(model.feature_scale_, expected_scale)
++    model.predict(np.array([[100, 100]]))
++    np.testing.assert_array_equal(model.feature_scale_, expected_scale)
++
++
++@pytest.mark.parametrize("kind", ["classification", "regression"])
++def test_variational_fit_is_reproducible_and_reduces_loss(kind):
++    name = "moons" if kind == "classification" else "sine"
++    data = q.load_dataset(name, n_samples=32, noise=0, frequency=1)
++    cls = (
++        q.VariationalQuantumClassifier
++        if kind == "classification"
++        else q.VariationalQuantumRegressor
++    )
++    first = cls(epochs=20, seed=2).fit(data.X, data.y)
++    second = cls(epochs=20, seed=2).fit(data.X, data.y)
++    np.testing.assert_allclose(first.parameters_, second.parameters_)
++    np.testing.assert_allclose(first.predict(data.X), second.predict(data.X))
++    assert min(first.history_) < first.history_[0] - 0.01
++    assert first.n_circuit_evaluations_ > 0
++
++
++def test_multiclass_kernel_and_binary_rejection():
++    features = np.array([[-0.8], [-0.7], [0], [0.1], [0.8], [0.9]])
++    labels = np.array([0, 0, 1, 1, 2, 2])
++    model = q.QuantumKernelClassifier().fit(features, labels)
++    assert model.score(features, labels) == 1
++    with pytest.raises(ValueError, match="two classes"):
++        q.VariationalQuantumClassifier().fit(features, labels)
++
++
++def test_regressor_learns_a_phase_shifted_held_out_target():
++    # Protect the trainable encoding phase: a cosine-only model cannot fit sin(x).
++    data = q.load_dataset("sine", n_samples=64, frequency=1, noise=0, seed=7)
++    a, b, c, d = data.split(seed=7)
++    model = q.VariationalQuantumRegressor(epochs=100, seed=7).fit(a, c)
++    assert model.score(b, d) > 0.95
++
++
++@pytest.mark.parametrize(
++    "model",
++    [
++        q.QuantumKernelClassifier(),
++        q.VariationalQuantumClassifier(),
++        q.VariationalQuantumRegressor(),
++        q.LogisticClassifier(),
++        q.RidgeRegressor(),
++        q.FourierRegressor(),
++    ],
++)
++def test_models_fail_clearly_before_fit(model):
++    with pytest.raises(q.NotFittedError):
++        model.predict([[1.0]])
++
++
++def test_classical_baselines_and_parameter_count():
++    features = np.linspace(-np.pi, np.pi, 40)[:, None]
++    targets = np.sin(3 * features[:, 0])
++    model = q.FourierRegressor(harmonics=3, regularization=1e-8).fit(features, targets)
++    assert model.n_parameters_ == 7
++    assert model.score(features, targets) > 0.99999
++    linear = q.RidgeRegressor(regularization=1e-8).fit(features, features[:, 0] * 0.3 + 0.7)
++    assert linear.score(features, features[:, 0] * 0.3 + 0.7) > 0.99999
++    classifier = q.LogisticClassifier().fit(features, features[:, 0] > 0)
++    assert classifier.score(features, features[:, 0] > 0) > 0.95
++
++
++@pytest.mark.parametrize("name", [d["id"] for d in q.list_datasets()])
++def test_offline_datasets_reproducible_split_and_fingerprint(name):
++    first = q.load_dataset(name, n_samples=32, seed=2)
++    second = q.load_dataset(name, n_samples=32, seed=2)
++    np.testing.assert_array_equal(first.X, second.X)
++    np.testing.assert_array_equal(first.y, second.y)
++    assert first.fingerprint == second.fingerprint
++    a, b, c, d = first.split(seed=3)
++    assert len(a) + len(b) == 32
++    assert len(c) == len(a) and len(d) == len(b)
++    changed = q.load_dataset(name, n_samples=32, seed=3)
++    assert changed.fingerprint != first.fingerprint
++    if first.task_type == "classification":
++        np.testing.assert_array_equal(np.unique(c), np.unique(first.y))
++        np.testing.assert_array_equal(np.unique(d), np.unique(first.y))
++
++
++def test_custom_task_and_benchmark_json(tmp_path):
++    features = np.arange(20, dtype=float)[:, None]
++    task = q.make_task(
++        features, 0.3 * features[:, 0] + 1, name="linear-user", task_type="regression"
++    )
++    result = q.run_benchmark(q.RidgeRegressor(regularization=1e-7), task, seed=13)
++    assert result.metrics["r2"] > 0.999
++    payload = json.loads(result.save(tmp_path / "result.json").read_text())
++    assert payload["provenance"]["split_seed"] == 13
++    assert payload["provenance"]["dataset_sha256"] == task.dataset.fingerprint
++    assert payload["resources"]["train_samples"] == 15
++    assert payload["provenance"]["parameter_matched"] is False
++    assert payload["provenance"]["simulation"] is None
++
++
++def test_comparison_has_identical_splits_and_all_seeds(tmp_path):
++    comparison = q.compare_models("moons", seeds=(2, 5), epochs=2)
++    assert len(comparison.results) == 6
++    assert len({r.provenance["dataset_sha256"] for r in comparison.results}) == 1
++    assert set(comparison.summary()) == {"quantum-kernel", "vqc", "logistic"}
++    assert comparison.summary()["vqc"]["seeds"] == [2, 5]
++    payload = json.loads(comparison.save(tmp_path / "comparison.json").read_text())
++    assert payload["summary"] == comparison.summary()
++    for seed in (2, 5):
++        items = [r for r in comparison.results if r.seed == seed]
++        assert (
++            len({(r.resources["train_samples"], r.resources["test_samples"]) for r in items}) == 1
++        )
++
++
++def test_catalog_suites_and_input_failures():
++    assert tuple(q.get_suite("qml-cls-1")) == ("xor", "circles", "moons")
++    assert len(q.get_suite("qml-reg-1")) == 3
++    assert q.get_model("vqc", epochs=3).epochs == 3
++    for action in (
++        lambda: q.get_task("missing"),
++        lambda: q.get_suite("missing"),
++        lambda: q.load_dataset("xor", noise=-1),
++        lambda: q.get_model("missing"),
++        lambda: q.run_benchmark("vqr", "xor"),
++        lambda: q.compare_models(seeds=[]),
++        lambda: q.compare_models(seeds=[1, 1]),
++        lambda: q.QuantumKernel().pairwise(np.zeros((2001, 1))),
++        lambda: q.QuantumKernel().pairwise(np.ones((3, 9))),
++        lambda: q.RidgeRegressor().fit([[1], [2]], [float("nan"), 1]),
++    ):
++        with pytest.raises((ValueError, q.ResourceLimitError)):
++            action()
++    estimator = q.LogisticClassifier()
++    with pytest.raises(ValueError, match="fresh"):
++        q.compare_models("moons", models={"same": lambda: estimator}, seeds=(1, 2))
+diff --git a/tests/test_optimization_interop.py b/tests/test_optimization_interop.py
+new file mode 100644
+index 0000000..d2621c3
+--- /dev/null
++++ b/tests/test_optimization_interop.py
+@@ -0,0 +1,166 @@
++import json
++import subprocess
++import sys
++
++import numpy as np
++import pytest
++
++import openqml as q
++
++
++def test_gradient_matches_analytic_nonlinear_shared_parameter_loss():
++    def function(p):
++        return (np.cos(2 * p[0]) - 0.3) ** 2 + p[1] ** 3
++
++    parameters = np.array([0.21, 0.7])
++    expected = [
++        -4 * np.sin(2 * parameters[0]) * (np.cos(2 * parameters[0]) - 0.3),
++        3 * parameters[1] ** 2,
++    ]
++    np.testing.assert_allclose(q.gradient(function, parameters), expected, atol=1e-8)
++
++
++def test_parameter_shift_matches_expectation_derivative():
++    def function(p):
++        return q.Circuit(2).rx(p[0], 0).ry(p[1], 1).cx(0, 1).run().expectation("ZZ")
++
++    parameters = [0.3, 0.7]
++    np.testing.assert_allclose(
++        q.parameter_shift(function, parameters), q.gradient(function, parameters), atol=1e-8
++    )
++
++
++@pytest.mark.parametrize("method", ["adam", "gd"])
++def test_optimizer_returns_consistent_best_parameters(method):
++    def objective(p):
++        return float(np.sum((p - np.array([0.3, -0.7])) ** 2))
++
++    result = q.minimize(objective, [1, 0], steps=150, learning_rate=0.1, method=method)
++    assert result.value < 1e-7
++    assert result.value == pytest.approx(objective(result.parameters))
++    assert result.value == pytest.approx(min(result.history))
++    assert result.n_evaluations >= result.n_steps + 1
++    assert q.minimize(objective, [0.3, -0.7]).converged
++
++
++def test_nonfinite_objective_or_gradient_is_rejected():
++    for action in (
++        lambda: q.gradient(lambda p: np.nan, [0]),
++        lambda: q.minimize(lambda p: np.inf, [0]),
++        lambda: q.minimize(lambda p: p[0] ** 2, [1], gradient_fn=lambda p: [1, 2]),
++        lambda: q.gradient(lambda p: p[0], [1], epsilon=0),
++    ):
++        with pytest.raises(ValueError):
++            action()
++
++
++def test_qasm_roundtrip_preserves_full_state_and_rotation_precision():
++    circuit = q.Circuit(3).h(0).rx(0.13, 1).ry(-0.7, 2).rz(0.9, 0).cx(0, 1).cy(1, 2)
++    circuit.cz(2, 0).cp(np.pi / 7, 0, 2).ccx(0, 1, 2).swap(2, 0).s(1).tdg(2)
++    text = circuit.to_qasm()
++    restored = q.from_qasm(text)
++    np.testing.assert_allclose(
++        restored.run().statevector(), circuit.run().statevector(), atol=1e-12
++    )
++    np.testing.assert_allclose(
++        q.from_qasm(circuit.inverse().to_qasm()).run().statevector(),
++        circuit.inverse().run().statevector(),
++        atol=1e-12,
++    )
++
++
++def test_qasm_expressions_comments_and_measurements():
++    text = """OPENQASM 2.0;
++    include "qelib1.inc"; // external includes are not fetched
++    qreg reg[2]; creg out[2];
++    /* a block comment */ ry(-(pi/2)+0.1, reg[0]);
++    """
++    # Multiple comma-separated angles are deliberately outside this subset.
++    with pytest.raises(ValueError):
++        q.from_qasm(text)
++    text = text.replace("ry(-(pi/2)+0.1, reg[0])", "ry(-(pi/2)+0.1) reg[0]")
++    np.testing.assert_allclose(
++        q.from_qasm(text).run().statevector(),
++        q.Circuit(2).ry(-np.pi / 2 + 0.1, 0).run().statevector(),
++    )
++    circuit = q.bell().measure(0, "a").measure(1, "b")
++    state = q.from_qasm(circuit.to_qasm()).run(seed=4)
++    assert state.classical["c0"] == state.classical["c1"]
++
++
++@pytest.mark.parametrize(
++    "statement",
++    [
++        "foo q[0]",
++        'include "remote.inc"',
++        "reset q[0]",
++        "rx(__import__('os').system('true')) q[0]",
++        "rx(1/0) q[0]",
++        "h q[3]",
++        "rx(pi, 0.1) q[0]",
++        "qreg extra[2]",
++        "if(c==1) x q[0]",
++    ],
++)
++def test_qasm_rejects_unsupported_and_unsafe_source(statement):
++    with pytest.raises(ValueError):
++        q.from_qasm(f"OPENQASM 2.0; qreg q[1]; {statement};")
++
++
++@pytest.mark.parametrize(
++    "circuit",
++    [
++        q.Circuit(1).depolarizing(0.1, 0),
++        q.Circuit(1).measure(0, basis="X"),
++        q.Circuit(1).global_phase(0.3),
++        q.Circuit(1).unitary(np.eye(2), [0], label="h"),
++        q.Circuit(1).measure(0, "a").x(0, condition=("a", 1)),
++    ],
++)
++def test_qasm_export_never_silently_drops_an_operation(circuit):
++    with pytest.raises(q.UnsupportedOperationError):
++        circuit.to_qasm()
++
++
++def test_optional_qiskit_adapter_matches_statevector_and_density():
++    pytest.importorskip("qiskit")
++    from qiskit.quantum_info import DensityMatrix, Statevector
++
++    circuit = q.Circuit(3).h(0).rx(0.3, 2).cx(0, 2).qft([2, 1]).global_phase(0.13)
++    np.testing.assert_allclose(
++        Statevector.from_instruction(circuit.to_qiskit()).data,
++        circuit.run().statevector(),
++        atol=1e-12,
++    )
++    circuit.amplitude_damping(0.1, 1)
++    np.testing.assert_allclose(
++        DensityMatrix.from_instruction(circuit.to_qiskit()).data,
++        circuit.run().reduced_density(),
++        atol=1e-12,
++    )
++    feedback = q.bell().measure(0, "bit").x(1, condition=("bit", 1)).to_qiskit()
++    assert feedback.num_clbits == 1
++
++
++def test_cli_runs_as_installed_module():
++    output = subprocess.check_output(
++        [sys.executable, "-m", "openqml", "demo", "--seed", "3"], text=True
++    )
++    payload = json.loads(output)
++    assert sum(payload["counts"].values()) == 1024
++    assert set(payload["counts"]) == {"000", "111"}
++
++
++def test_import_never_requires_optional_frameworks_or_network():
++    code = """
++import socket, sys
++def blocked(*args, **kwargs):
++    raise AssertionError("import must not access the network")
++socket.socket = blocked
++import openqml
++assert "qiskit" not in sys.modules
++assert "torch" not in sys.modules
++assert "pennylane" not in sys.modules
++assert openqml.Circuit(1).x(0).run().sample(1) == {"1": 1}
++"""
++    subprocess.run([sys.executable, "-c", code], check=True)
+diff --git a/tests/test_quantum.py b/tests/test_quantum.py
+new file mode 100644
+index 0000000..671c0e0
+--- /dev/null
++++ b/tests/test_quantum.py
+@@ -0,0 +1,271 @@
++import itertools
++
++import numpy as np
++import pytest
++
++import openqml as q
++
++
++def reference_operator(matrix, targets, n_qubits, controls=()):
++    """Independent bit-index definition, used only for small reference matrices."""
++    result = np.zeros((1 << n_qubits, 1 << n_qubits), complex)
++    for column in range(1 << n_qubits):
++        if any(not (column >> control) & 1 for control in controls):
++            result[column, column] = 1
++            continue
++        local = sum(((column >> wire) & 1) << i for i, wire in enumerate(targets))
++        base = column
++        for wire in targets:
++            base &= ~(1 << wire)
++        for row in range(1 << len(targets)):
++            global_row = base | sum(((row >> i) & 1) << wire for i, wire in enumerate(targets))
++            result[global_row, column] = matrix[row, local]
++    return result
++
++
++@pytest.mark.parametrize("backend", ["dense", "sparse"])
++def test_random_unitaries_and_wire_order(backend):
++    rng = np.random.default_rng(13)
++    vector = rng.normal(size=16) + 1j * rng.normal(size=16)
++    vector /= np.linalg.norm(vector)
++    initial = q.State.from_vector(vector)
++    if backend == "sparse":
++        initial = q.State(4, backend="sparse")
++        initial._sparse = {i: a for i, a in enumerate(vector)}
++    reference = vector.copy()
++    circuit = q.Circuit(4)
++    for targets, controls in [([2, 0], []), ([3], [0, 2]), ([1, 3], [2]), ([0, 1, 2, 3], [])]:
++        size = 1 << len(targets)
++        unitary, _ = np.linalg.qr(
++            rng.normal(size=(size, size)) + 1j * rng.normal(size=(size, size))
++        )
++        circuit.unitary(unitary, targets, controls=controls)
++        reference = reference_operator(unitary, targets, 4, controls) @ reference
++    state = circuit.run(initial_state=initial)
++    np.testing.assert_allclose(state.statevector(), reference, atol=1e-12)
++    assert np.isclose(np.sum(state.probabilities()), 1)
++    np.testing.assert_allclose(
++        circuit.inverse().run(initial_state=state).statevector(), vector, atol=1e-12
++    )
++
++
++@pytest.mark.parametrize("backend", ["dense", "sparse"])
++def test_all_pauli_expectations(backend):
++    circuit = q.Circuit(3).h(0).ry(0.71, 1).rx(-0.13, 2).cx(0, 2).cz(1, 2)
++    state = circuit.run(backend=backend)
++    vector = state.statevector()
++    for letters in itertools.product("IXYZ", repeat=3):
++        label = "".join(letters)
++        operator = q.Hamiltonian({label: 1}).matrix()
++        np.testing.assert_allclose(
++            state.expectation(label), np.vdot(vector, operator @ vector).real, atol=1e-12
++        )
++
++
++@pytest.mark.parametrize("label", ["III", "XIZ", "YXY", "ZZZ", "IXY"])
++def test_pauli_rotations(label):
++    theta = 0.67
++    initial = q.Circuit(3).h(0).ry(0.7, 1).rx(1.1, 2).run()
++    operator = q.Hamiltonian({label: 1}).matrix()
++    expected = (
++        np.cos(theta / 2) * np.eye(8) - 1j * np.sin(theta / 2) * operator
++    ) @ initial.statevector()
++    actual = q.Circuit(3).pauli_rotation(theta, label).run(initial_state=initial)
++    np.testing.assert_allclose(actual.statevector(), expected, atol=1e-12)
++
++
++@pytest.mark.parametrize("n_qubits", [1, 2, 3, 4])
++def test_qft_matches_positive_dft_and_inverse(n_qubits):
++    size = 1 << n_qubits
++    indices = np.arange(size)
++    dft = np.exp(2j * np.pi * indices[:, None] * indices[None, :] / size) / np.sqrt(size)
++    for index in range(size):
++        initial = q.State.from_vector(np.eye(size, dtype=complex)[:, index])
++        output = q.qft(n_qubits).run(initial_state=initial)
++        np.testing.assert_allclose(output.statevector(), dft[:, index], atol=1e-12)
++        np.testing.assert_allclose(
++            q.qft(n_qubits, inverse=True).run(initial_state=output).statevector(),
++            initial.statevector(),
++            atol=1e-12,
++        )
++
++
++def test_qft_on_reordered_subset():
++    vector = q.Circuit(3).h(0).ry(0.6, 1).rx(0.3, 2).run().statevector()
++    local = np.exp(2j * np.pi * np.arange(4)[:, None] * np.arange(4)[None, :] / 4) / 2
++    actual = q.Circuit(3).qft([2, 0]).run(initial_state=q.State.from_vector(vector))
++    np.testing.assert_allclose(
++        actual.statevector(), reference_operator(local, [2, 0], 3) @ vector, atol=1e-12
++    )
++
++
++@pytest.mark.parametrize("backend", ["dense", "sparse"])
++@pytest.mark.parametrize("selected", [[0], [2], [0, 2], [2, 0], [1, 0, 2]])
++def test_partial_trace_matches_definition(backend, selected):
++    state = q.Circuit(3).h(0).ry(0.7, 1).rx(0.3, 2).cx(0, 2).run(backend=backend)
++    rho = np.outer(state.statevector(), state.statevector().conj())
++    reference = np.zeros((1 << len(selected), 1 << len(selected)), complex)
++    rest = [wire for wire in range(3) if wire not in selected]
++    for i, j in itertools.product(range(8), repeat=2):
++        if all((i >> wire) & 1 == (j >> wire) & 1 for wire in rest):
++            a = sum(((i >> wire) & 1) << k for k, wire in enumerate(selected))
++            b = sum(((j >> wire) & 1) << k for k, wire in enumerate(selected))
++            reference[a, b] += rho[i, j]
++    np.testing.assert_allclose(state.reduced_density(selected), reference, atol=1e-12)
++    np.testing.assert_allclose(state.probabilities(selected), reference.diagonal().real)
++
++
++@pytest.mark.parametrize("p", [0.0, 0.2, 1.0])
++@pytest.mark.parametrize("channel", ["amplitude_damping", "dephasing", "depolarizing"])
++def test_noise_is_physical_and_matches_kraus(p, channel):
++    circuit = q.Circuit(2).h(0).ry(0.3, 1).cx(0, 1)
++    pure = circuit.run().statevector()
++    rho = np.outer(pure, pure.conj())
++    getattr(circuit, channel)(p, 0)
++    operation = circuit.operations[-1]
++    reference = sum(
++        reference_operator(k, [0], 2) @ rho @ reference_operator(k, [0], 2).conj().T
++        for k in operation.kraus
++    )
++    state = circuit.run()
++    np.testing.assert_allclose(state.reduced_density(), reference, atol=1e-12)
++    assert np.isclose(np.trace(reference), 1)
++    assert np.linalg.eigvalsh(reference).min() >= -1e-12
++    for label in ("IX", "IY", "IZ", "XX", "YZ"):
++        expected = np.trace(reference @ q.Hamiltonian({label: 1}).matrix()).real
++        np.testing.assert_allclose(state.expectation(label), expected, atol=1e-12)
++    rotated = q.Circuit(2).rx(0.73, 0).cx(1, 0).run(initial_state=state)
++    unitary = reference_operator(q.Circuit(1).rx(0.73, 0).operations[0].matrix, [0], 2)
++    unitary = reference_operator(np.array([[0, 1], [1, 0]]), [0], 2, [1]) @ unitary
++    np.testing.assert_allclose(
++        rotated.reduced_density(), unitary @ reference @ unitary.conj().T, atol=1e-12
++    )
++
++
++def test_reset_entangled_qubit_is_an_exact_channel():
++    state = q.bell().reset(0).run()
++    np.testing.assert_allclose(state.reduced_density(), np.diag([0.5, 0, 0.5, 0]))
++    assert np.isclose(state.entropy([1]), 1)
++    np.testing.assert_allclose(state.bloch_vector(0), [0, 0, 1])
++    with pytest.raises(ValueError, match="mixed"):
++        state.statevector()
++
++
++@pytest.mark.parametrize("basis", ["X", "Y", "Z"])
++def test_projective_measurement_keeps_measured_eigenstate(basis):
++    state = q.Circuit(1).ry(0.6, 0).rz(0.9, 0).run(seed=2)
++    bit = state.measure(0, basis)
++    np.testing.assert_allclose(state.expectation(basis), 1 - 2 * bit, atol=1e-12)
++    assert state.measure(0, basis) == bit
++
++
++@pytest.mark.parametrize("seed", range(8))
++def test_teleportation_with_feedback(seed):
++    circuit = q.Circuit(3).ry(0.713, 0).rz(0.441, 0).h(1).cx(1, 2)
++    circuit.cx(0, 1).h(0).measure(0, "phase").measure(1, "flip")
++    circuit.x(2, condition=("flip", 1)).z(2, condition=("phase", 1))
++    state = circuit.run(seed=seed)
++    expected = q.Circuit(1).ry(0.713, 0).rz(0.441, 0).run().reduced_density()
++    np.testing.assert_allclose(state.reduced_density([2]), expected, atol=1e-12)
++
++
++def test_sampling_does_not_collapse_and_seed_is_local():
++    state = q.bell().run()
++    before = state.statevector()
++    assert state.sample(100, seed=13) == state.sample(100, seed=13)
++    assert set(state.sample(100, seed=5)) == {"00", "11"}
++    np.testing.assert_array_equal(before, state.statevector())
++
++
++def test_sparse_40_qubit_readouts_and_guards():
++    state = q.ghz(40).run()
++    assert state.backend == "sparse"
++    assert len(state.sparse_amplitudes()) == 2
++    assert sum(state.sample(257, seed=1).values()) == 257
++    np.testing.assert_allclose(state.probabilities([0, 39]), [0.5, 0, 0, 0.5])
++    np.testing.assert_allclose(state.reduced_density([0, 39]), np.diag([0.5, 0, 0, 0.5]))
++    assert np.isclose(state.expectation("X" * 40), 1)
++    with pytest.raises(q.ResourceLimitError):
++        state.probabilities()
++    with pytest.raises(q.ResourceLimitError):
++        state.statevector()
++    with pytest.raises(q.ResourceLimitError):
++        state.depolarizing(0.1, 0)
++    budget = q.SimulationBudget(max_sparse_states=2)
++    with pytest.raises(q.ResourceLimitError, match="Sparse"):
++        q.Circuit(3).h(0).h(1).run(backend="sparse", budget=budget)
++    with pytest.raises(q.ResourceLimitError):
++        q.Circuit(18).run(budget=q.SimulationBudget(max_memory_mb=1))
++    with pytest.raises(q.ResourceLimitError):
++        q.Circuit(1).h(0).repeat(3).run(budget=q.SimulationBudget(max_operations=2))
++    with pytest.raises(q.ResourceLimitError, match="width"):
++        q.Circuit(64).run()
++
++
++def test_resource_depth_respects_measurement_dependencies():
++    circuit = q.Circuit(3).h(0).cx(0, 1).measure(0, "m").x(2, condition=("m", 1))
++    assert circuit.resources()["depth"] == 4
++
++
++def test_composition_clone_and_operation_readout_are_independent():
++    block = q.bell()
++    circuit = q.Circuit(3).compose(block, [2, 0])
++    block.x(1)
++    assert len(circuit) == 2
++    np.testing.assert_allclose(circuit.run().probabilities(), [0.5, 0, 0, 0, 0, 0.5, 0, 0])
++    op = circuit.operations[0]
++    op.matrix[:] = 0
++    assert np.isclose(circuit.run().probabilities().sum(), 1)
++    state = circuit.run()
++    copy = state.clone().x(1)
++    assert not np.allclose(state.statevector(), copy.statevector())
++    assert len(q.Circuit(1).h(0).compose(q.Circuit(1).x(0))) == 2
++    block = q.Circuit(1).h(0)
++    block.compose(block)
++    assert len(block) == 2
++
++
++def test_invalid_inputs_and_nonunitary_inverse():
++    for count in (0, -1, 1.5, True, 65):
++        with pytest.raises(ValueError):
++            q.Circuit(count)
++    for build in (
++        lambda: q.Circuit(2).cx(0, 0),
++        lambda: q.Circuit(1).rx(np.nan, 0),
++        lambda: q.Circuit(1).x(1),
++        lambda: q.Circuit(1).unitary([[1, 1], [0, 1]], [0]),
++        lambda: q.Circuit(1).depolarizing(1.1, 0),
++        lambda: q.Circuit(1).channel([np.zeros((2, 2))], [0]),
++        lambda: q.Circuit(1).x(0, condition=("missing", 1)),
++    ):
++        with pytest.raises(ValueError):
++            build()
++    with pytest.raises(q.UnsupportedOperationError):
++        q.Circuit(1).measure(0).inverse()
++    with pytest.raises(ValueError):
++        q.State.from_vector([1, 1])
++    with pytest.raises(ValueError):
++        q.Circuit(1).run(budget="bad")
++
++
++def test_grover_and_qaoa_against_reference():
++    assert q.grover(3, [5]).run().probabilities()[5] == pytest.approx(0.9453125)
++    gamma, beta = 0.61, -0.3
++    circuit = q.qaoa_maxcut(2, [(0, 1)], [gamma], [beta])
++    cost = (np.eye(4) - q.Hamiltonian({"ZZ": 1}).matrix()) / 2
++    cost_unitary = np.diag(np.exp(-1j * gamma * np.diag(cost)))
++    rx = np.cos(beta) * np.eye(2) - 1j * np.sin(beta) * np.array([[0, 1], [1, 0]])
++    expected = np.kron(rx, rx) @ cost_unitary @ np.ones(4) / 2
++    np.testing.assert_allclose(circuit.run().statevector(), expected, atol=1e-12)
++
++
++def test_vqe_reaches_certified_ground_energy():
++    hamiltonian = q.Hamiltonian({"ZZ": -1, "XI": -0.5, "IX": -0.5})
++
++    def ansatz(p):
++        return q.Circuit(2).ry(p[0], 0).ry(p[1], 1).cx(0, 1)
++
++    fit = q.vqe(hamiltonian, ansatz, [0.4, 0.3], steps=100, learning_rate=0.08)
++    assert hamiltonian.ground_energy() == pytest.approx(-np.sqrt(2))
++    assert fit.value - hamiltonian.ground_energy() < 1e-4
++    assert fit.value == pytest.approx(ansatz(fit.parameters).run().expectation(hamiltonian))
