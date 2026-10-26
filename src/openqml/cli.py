@@ -9,7 +9,6 @@ from pathlib import Path
 
 from . import (
     OpenQMLError,
-    __version__,
     circuit_stats,
     convert,
     decompose,
@@ -21,7 +20,6 @@ from . import (
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="openqml")
-    parser.add_argument("--version", action="version", version=__version__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("doctor", help="Report installed extras without importing them")
     command = commands.add_parser(
@@ -72,7 +70,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "doctor":
-            packages = {"openqml": __version__}
+            packages = {"openqml": "installed"}
             for package in (
                 "numpy",
                 "torch",
@@ -85,9 +83,10 @@ def main(argv=None):
                 "optax",
             ):
                 try:
-                    packages[package] = version(package)
+                    version(package)
+                    packages[package] = "installed"
                 except PackageNotFoundError:
-                    packages[package] = None
+                    packages[package] = "missing"
             packages["registered_backends"] = list_backends()
             print(json.dumps(packages, indent=2))
         else:

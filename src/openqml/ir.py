@@ -531,7 +531,28 @@ class Circuit:
         return json.dumps(self.to_dict(), indent=indent, allow_nan=False)
 
     @classmethod
-    def from_dict(cls, payload: dict) -> Circuit:
+    def from_dict(
+        cls,
+        payload: dict,
+        *,
+        max_operations=100_000,
+        max_depth=64,
+        max_matrix_qubits=10,
+        max_matrix_entries=1_048_576,
+    ) -> Circuit:
+        from ._serialization import check_ir_payload
+
+        check_ir_payload(
+            payload,
+            max_operations=max_operations,
+            max_depth=max_depth,
+            max_matrix_qubits=max_matrix_qubits,
+            max_matrix_entries=max_matrix_entries,
+        )
+        return cls._from_dict(payload)
+
+    @classmethod
+    def _from_dict(cls, payload):
         try:
             required = {
                 "schema",
@@ -555,7 +576,7 @@ class Circuit:
             def decode(p):
                 value = Expression.from_dict(p)
                 if payload["version"] < 3 and not value.is_affine:
-                    raise ValidationError("Nonlinear expressions require IR version 3.")
+                    raise ValidationError("This IR schema does not support nonlinear expressions.")
                 return value
 
             ops = []
@@ -570,13 +591,13 @@ class Circuit:
                 if not isinstance(op, dict) or set(op) != fields:
                     raise ValidationError("Invalid operation fields.")
                 if payload["version"] == 1 and op["name"] not in GATES_V1:
-                    raise ValidationError("This operation requires IR version 2.")
+                    raise ValidationError("This IR schema does not support this operation.")
                 if payload["version"] < 4 and op["name"] not in GATES_V3:
                     raise ValidationError(
-                        "Quantum effects and control blocks require IR version 4."
+                        "This IR schema does not support quantum effects and control blocks."
                     )
                 if payload["version"] < 3 and op["name"] == "unitary":
-                    raise ValidationError("Matrix payloads require IR version 3.")
+                    raise ValidationError("This IR schema does not support matrix payloads.")
                 if any(not isinstance(op[key], list) for key in ("qubits", "clbits", "params")):
                     raise ValidationError("Operation operands and parameters must be JSON arrays.")
                 condition = op.get("condition")
@@ -606,7 +627,7 @@ class Circuit:
                         None
                         if condition is None
                         else ClassicalCondition(tuple(condition["bits"]), condition["value"]),
-                        tuple(cls.from_dict(block) for block in op.get("blocks", [])),
+                        tuple(cls._from_dict(block) for block in op.get("blocks", [])),
                     )
                 )
             return cls(
@@ -621,16 +642,22 @@ class Circuit:
             raise ValidationError("Malformed OpenQML IR.") from exc
 
     @classmethod
-    def from_json(cls, text: str) -> Circuit:
-        def unique_object(pairs):
-            result = {}
-            for key, value in pairs:
-                if key in result:
-                    raise ValidationError(f"Duplicate JSON field {key!r}.")
-                result[key] = value
-            return result
+    def from_json(
+        cls,
+        text: str,
+        *,
+        max_bytes=8_000_000,
+        max_operations=100_000,
+        max_depth=64,
+        max_matrix_qubits=10,
+        max_matrix_entries=1_048_576,
+    ) -> Circuit:
+        from ._serialization import load_json
 
-        try:
-            return cls.from_dict(json.loads(text, object_pairs_hook=unique_object))
-        except (json.JSONDecodeError, RecursionError) as exc:
-            raise ValidationError("Invalid IR JSON.") from exc
+        return cls.from_dict(
+            load_json(text, max_bytes),
+            max_operations=max_operations,
+            max_depth=max_depth,
+            max_matrix_qubits=max_matrix_qubits,
+            max_matrix_entries=max_matrix_entries,
+        )
