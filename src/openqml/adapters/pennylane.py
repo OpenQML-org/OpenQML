@@ -203,12 +203,15 @@ def from_pennylane(
     return Circuit(len(wire_order), tuple(operations), global_phase=phase)
 
 
-def to_pennylane(circuit: Circuit, bindings=None):
+def to_pennylane(circuit: Circuit, bindings=None, *, max_operations=100_000, max_depth=64):
+    from ..compiler import _check_circuit_limits
+
+    _check_circuit_limits(circuit, max_operations=max_operations, max_depth=max_depth)
     qml = dependency("pennylane", "pennylane")
     circuit = bound_for_export(circuit, bindings)
     from ..conversion import diagnose
 
-    diagnostics = diagnose(circuit, "pennylane")
+    diagnostics = diagnose(circuit, "pennylane", max_operations=max_operations, max_depth=max_depth)
     if diagnostics:
         raise ConversionError(diagnostics)
     operations = []
