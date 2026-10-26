@@ -59,8 +59,10 @@ def _rule(op):
             phase = np.angle(matrix[0, 0])
             phi, lam = 0.0, np.angle(matrix[1, 1]) - phase
         elif cosine == 0:
-            phase = np.angle(matrix[1, 0])
-            phi, lam = 0.0, np.angle(-matrix[0, 1]) - phase
+            # With zero diagonal entries both off-diagonal phases fit directly
+            # in U's free angles; do not invent an unnecessary global phase.
+            phase = 0.0
+            phi, lam = np.angle(matrix[1, 0]), np.angle(-matrix[0, 1])
         else:
             phase = np.angle(matrix[0, 0])
             phi = np.angle(matrix[1, 0]) - phase
