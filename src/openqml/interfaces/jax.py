@@ -13,11 +13,14 @@ except ImportError as exc:
 from ..errors import ValidationError
 from ..parameters import real
 from ..simulator import _resource_check, expectations
-from ._spec import LayerSpecMixin, prepare_layer
+from ._spec import LayerSpecMixin, broadcast_batch_shape, prepare_layer
 
 
 class QuantumLayer(LayerSpecMixin):
     """Functional layer: init(key) returns weights; layer(weights, inputs) evaluates.
+
+    Weights (..., n_weights) and inputs (..., n_inputs) broadcast over leading
+    dimensions, including weights produced by a classical network.
 
     optimize=True preserves source ownership and returns zero gradients for
     eliminated symbols. circuit is executable IR; optimization holds the report.
@@ -141,8 +144,8 @@ class QuantumLayer(LayerSpecMixin):
 
     def __call__(self, weights, inputs):
         weights, inputs = jnp.asarray(weights), jnp.asarray(inputs)
-        if weights.shape != (len(self.weight_parameters),):
-            raise ValidationError(f"Expected {len(self.weight_parameters)} weights.")
+        if weights.ndim < 1 or weights.shape[-1] != len(self.weight_parameters):
+            raise ValidationError(f"Expected weight shape (..., {len(self.weight_parameters)}).")
         if inputs.ndim < 1 or inputs.shape[-1] != len(self.input_parameters):
             raise ValidationError(f"Expected input shape (..., {len(self.input_parameters)}).")
         if inputs.dtype != weights.dtype or inputs.dtype not in {
@@ -150,22 +153,38 @@ class QuantumLayer(LayerSpecMixin):
             jnp.dtype("float64"),
         }:
             raise ValidationError("Inputs and weights must share float32 or float64 dtype.")
-        if self.batch_chunk_size is not None:
-            import math
+        import math
 
-            shape = inputs.shape[:-1]
-            count = math.prod(shape)
+        shape = broadcast_batch_shape(weights, inputs)
+        count = math.prod(shape)
+        if count == 0:
+            return (
+                jnp.zeros(shape + (len(self.observables),), dtype=inputs.dtype)
+                + jnp.square(inputs * 0).sum()
+                + jnp.square(weights * 0).sum()
+            )
+        if self.batch_chunk_size is not None:
             if count > self.batch_chunk_size:
-                flat = inputs.reshape(count, len(self.input_parameters))
+                flat = jnp.broadcast_to(inputs, shape + (len(self.input_parameters),)).reshape(
+                    count, len(self.input_parameters)
+                )
+                flat_weights = jnp.broadcast_to(
+                    weights, shape + (len(self.weight_parameters),)
+                ).reshape(count, len(self.weight_parameters))
                 # Mapping whole chunks avoids tracing one copy of the circuit
                 # per row and retains JIT, reverse mode and higher derivatives.
                 size = self.batch_chunk_size
                 full = count // size * size
                 chunks = flat[:full].reshape(full // size, size, len(self.input_parameters))
-                result = jax.lax.map(lambda chunk: self(weights, chunk), chunks)
+                weight_chunks = flat_weights[:full].reshape(
+                    full // size, size, len(self.weight_parameters)
+                )
+                result = jax.lax.map(lambda pair: self(*pair), (weight_chunks, chunks))
                 result = result.reshape(full, len(self.observables))
                 if full < count:
-                    result = jnp.concatenate((result, self(weights, flat[full:])), axis=0)
+                    result = jnp.concatenate(
+                        (result, self(flat_weights[full:], flat[full:])), axis=0
+                    )
                 return result.reshape(shape + (len(self.observables),))
         if self.execution_backend != "jax":
             return _external_layer(self, weights, inputs)
@@ -175,8 +194,8 @@ class QuantumLayer(LayerSpecMixin):
             if name in self._active_parameters
         }
         bindings.update(
-            (name, value)
-            for name, value in zip(self.weight_parameters, weights, strict=True)
+            (name, weights[..., i])
+            for i, name in enumerate(self.weight_parameters)
             if name in self._active_parameters
         )
         result = expectations(
@@ -185,12 +204,12 @@ class QuantumLayer(LayerSpecMixin):
             bindings,
             backend="jax",
             like=weights,
-            batch_shape=inputs.shape[:-1],
+            batch_shape=shape,
             **self.limits,
         )
         if self.optimization is not None and self.optimization.removed_parameters:
             result = result + jnp.square(inputs * 0).sum(-1, keepdims=True)
-            result = result + jnp.square(weights * 0).sum()
+            result = result + jnp.square(weights * 0).sum(-1, keepdims=True)
         return result
 
 
@@ -254,13 +273,15 @@ def _external_layer(layer, weights, inputs):
             backend=layer.execution_backend,
             **layer.limits,
         )
-        return np.asarray(result, dtype=x.dtype).reshape(x.shape[:-1] + (len(layer.observables),))
+        shape = broadcast_batch_shape(w, x)
+        return np.asarray(result, dtype=x.dtype).reshape(shape + (len(layer.observables),))
 
     def backward_numpy(w, x, g):
         return numeric_vjp(layer, w, x, g)
 
     def primal(w, x):
-        spec = jax.ShapeDtypeStruct(x.shape[:-1] + (len(layer.observables),), x.dtype)
+        shape = broadcast_batch_shape(w, x)
+        spec = jax.ShapeDtypeStruct(shape + (len(layer.observables),), x.dtype)
         return jax.pure_callback(forward_numpy, spec, w, x, vmap_method="sequential")
 
     @jax.custom_vjp

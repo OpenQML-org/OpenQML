@@ -5,6 +5,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from .compiler import _check_circuit_limits, _operation_location
 from .errors import (
     ConversionError,
     Diagnostic,
@@ -13,7 +14,7 @@ from .errors import (
     conversion_error,
 )
 from .frontends import BUILTIN_FORMATS, get_adapter, import_native, list_formats
-from .ir import CHANNEL_GATES, UNITARY_GATES, Circuit
+from .ir import CHANNEL_GATES, UNITARY_GATES, Circuit, integer
 
 FORMATS = BUILTIN_FORMATS
 _ALIASES = {"qasm2": "openqasm2", "qasm3": "openqasm3"}
@@ -38,18 +39,61 @@ def _format(value):
     return value
 
 
-def _operation_location(path):
-    return f"operations[{path[0]}]" + "".join(
-        f".blocks[{block}].operations[{index}]"
-        for block, index in zip(path[1::2], path[2::2], strict=True)
-    )
+def _qasm_statement_count(circuit, version, cap):
+    """Count emitted lines without expanding repeated false branches into strings."""
+
+    def count(body):
+        size = int(
+            version == 3 and bool(body.global_phase.parameters or body.global_phase.constant)
+        )
+        for op in body.operations:
+            if op.name == "if_else":
+                size += count(op.blocks[0]) + len(op.condition.bits) * (count(op.blocks[1]) + 3)
+            else:
+                size += 1
+            if size > cap:
+                return cap + 1
+        return size
+
+    headers = 3 + int(bool(circuit.num_clbits))
+    if version == 3:
+        headers += len(circuit.parameters)
+    return min(headers + count(circuit), cap + 1)
 
 
-def diagnose(circuit: Circuit, target: str) -> tuple[Diagnostic, ...]:
+def _qasm_output_diagnostics(circuit, target, max_output_statements):
+    if (
+        target.startswith("openqasm")
+        and _qasm_statement_count(circuit, int(target[-1]), max_output_statements)
+        > max_output_statements
+    ):
+        return (
+            Diagnostic(
+                "QASM_EXPORT_LIMIT",
+                "Expanded OpenQASM exceeds max_output_statements.",
+                hint="Increase max_output_statements or simplify classical branches.",
+            ),
+        )
+    return ()
+
+
+def diagnose(
+    circuit: Circuit,
+    target: str,
+    *,
+    max_operations=100_000,
+    max_depth=64,
+    max_output_statements=100_000,
+) -> tuple[Diagnostic, ...]:
     """Check representability without importing any optional framework."""
     if not isinstance(circuit, Circuit):
         raise ValidationError("diagnose requires an OpenQML Circuit.")
     target = _format(target)
+    integer(max_output_statements, "max_output_statements", 1)
+    try:
+        _check_circuit_limits(circuit, max_operations=max_operations, max_depth=max_depth)
+    except ConversionError as exc:
+        return exc.diagnostics
     if target not in BUILTIN_FORMATS:
         adapter = get_adapter(target)
         diagnostics = () if adapter.diagnose is None else tuple(adapter.diagnose(circuit))
@@ -134,6 +178,15 @@ def diagnose(circuit: Circuit, target: str) -> tuple[Diagnostic, ...]:
                     location,
                 )
             )
+        if target == "openqasm3" and op.name == "if_else" and len(op.condition.bits) > 64:
+            diagnostics.append(
+                Diagnostic(
+                    "QASM_EXPORT_LIMIT",
+                    "A conditional OpenQASM guard is limited to 64 bits.",
+                    location,
+                    hint="Split the classical condition into smaller nested conditions.",
+                )
+            )
         if target in {"cirq", "pennylane"} and op.name == "barrier":
             diagnostics.append(
                 Diagnostic(
@@ -168,7 +221,7 @@ def diagnose(circuit: Circuit, target: str) -> tuple[Diagnostic, ...]:
                 "Cirq cannot preserve unused trailing classical register bits.",
             )
         )
-    return tuple(diagnostics)
+    return tuple(diagnostics) + _qasm_output_diagnostics(circuit, target, max_output_statements)
 
 
 @dataclass(frozen=True)
@@ -197,6 +250,26 @@ class ConversionPlan:
     parameter_map: dict[str, str] = field(default_factory=dict)
     optimization: Any = None
     prepared_circuit: Circuit | None = field(default=None, repr=False)
+    max_operations: int = 100_000
+    max_depth: int = 64
+    max_output_statements: int = 100_000
+
+    @property
+    def preparation_complete(self):
+        """False when an error or deferred SDK synthesis prevents final resource estimates."""
+        return self.compatible and not any(
+            d.code == "MATRIX_SYNTHESIS_REQUIRED" for d in self.diagnostics
+        )
+
+    @property
+    def required_extras(self):
+        """Built-in package extras needed at export; installed packages are not probed."""
+        extras = (
+            {self.target_format} if self.target_format in {"qiskit", "cirq", "pennylane"} else set()
+        )
+        if any(d.code == "MATRIX_SYNTHESIS_REQUIRED" for d in self.diagnostics):
+            extras.add("qiskit")
+        return tuple(sorted(extras))
 
     @property
     def compatible(self):
@@ -215,9 +288,21 @@ class ConversionPlan:
             "source_format": self.source_format,
             "target_format": self.target_format,
             "compatible": self.compatible,
+            "preparation_complete": self.preparation_complete,
+            "required_extras": list(self.required_extras),
             "parameters": list(self.circuit.parameters),
             "parameter_map": dict(self.parameter_map),
             "resources": asdict(circuit_stats(self.circuit)),
+            "prepared_resources": (
+                asdict(circuit_stats(self.prepared_circuit or self.circuit))
+                if self.preparation_complete
+                else None
+            ),
+            "limits": {
+                "max_operations": self.max_operations,
+                "max_depth": self.max_depth,
+                "max_output_statements": self.max_output_statements,
+            },
             "diagnostics": [asdict(d) for d in self.diagnostics],
         }
 
@@ -235,7 +320,17 @@ class ConversionPlan:
         elif self.target_format.startswith("openqasm"):
             from .adapters.openqasm import to_openqasm
 
-            value = to_openqasm(circuit, version=int(self.target_format[-1]))
+            value = to_openqasm(
+                circuit,
+                version=int(self.target_format[-1]),
+                max_operations=self.max_operations,
+                max_depth=self.max_depth,
+                max_output_statements=self.max_output_statements,
+            )
+        elif self.target_format in {"cirq", "pennylane"}:
+            value = get_adapter(self.target_format).exporter(
+                circuit, max_operations=self.max_operations, max_depth=self.max_depth
+            )
         else:
             value = get_adapter(self.target_format).exporter(circuit)
         return ConversionResult(
@@ -258,10 +353,16 @@ def plan_conversion(
     source_options=None,
     optimize=False,
     optimization_options=None,
+    max_operations=100_000,
+    max_depth=64,
+    max_output_statements=100_000,
 ) -> ConversionPlan:
     """Import and prepare a conversion; report all known target incompatibilities."""
     from .program import QuantumProgram, detect_framework
 
+    integer(max_operations, "max_operations", 1)
+    integer(max_depth, "max_depth")
+    integer(max_output_statements, "max_output_statements", 1)
     if type(optimize) is not bool:
         raise ValidationError("optimize must be a boolean.")
     try:
@@ -315,16 +416,10 @@ def plan_conversion(
                 "QASM_FRONTEND", "Custom includes require the qiskit or auto frontend."
             )
         if "max_depth" in source_options:
-            from .ir import integer
-
             integer(source_options["max_depth"], "max_depth")
         if "max_matrix_qubits" in source_options:
-            from .ir import integer
-
             integer(source_options["max_matrix_qubits"], "max_matrix_qubits", 1)
         if "max_include_depth" in source_options:
-            from .ir import integer
-
             integer(source_options["max_include_depth"], "max_include_depth")
         if parser == "qiskit" or native_only:
             program = QuantumProgram.from_qasm(value, version=int(source[-1]), **source_options)
@@ -380,6 +475,7 @@ def plan_conversion(
                 )
     else:
         circuit = import_native(value, source, **source_options)
+    _check_circuit_limits(circuit, max_operations=max_operations, max_depth=max_depth)
     if source == "qiskit" or (program is not None and program.framework == "qiskit"):
         from .adapters.qiskit import static_loop_notes
 
@@ -418,13 +514,19 @@ def plan_conversion(
                 parameter_map[name] = alias
         if parameter_map:
             circuit = rename_parameters(circuit, parameter_map)
-    diagnostics = diagnose(circuit, target)
-    from .compiler import PORTABLE_BASIS, QASM_BASIS
+    diagnostics = diagnose(
+        circuit,
+        target,
+        max_operations=max_operations,
+        max_depth=max_depth,
+        max_output_statements=max_output_statements,
+    )
+    from .compiler import PORTABLE_BASIS, _qasm_basis, decompose
 
     basis = (
         PORTABLE_BASIS
         if target == "cirq"
-        else QASM_BASIS
+        else _qasm_basis(circuit)
         if target.startswith("openqasm")
         else None
     )
@@ -451,6 +553,45 @@ def plan_conversion(
         )
         for name, alias in parameter_map.items()
     )
+    if target.startswith("openqasm"):
+        notes += tuple(
+            Diagnostic(
+                "MATRIX_SYNTHESIS_REQUIRED",
+                "Matrix synthesis uses Qiskit at export; final gate count and phase are deferred.",
+                _operation_location(path),
+                severity="info",
+                hint="Install openqml[qiskit].",
+            )
+            for path, op in circuit.walk_operations()
+            if op.name == "unitary" and op.name in basis
+        )
+    if basis is not None:
+        try:
+            lowered = decompose(
+                circuit, basis=basis, max_operations=max_operations, max_depth=max_depth
+            )
+        except ConversionError as exc:
+            diagnostics += exc.diagnostics
+            notes = tuple(d for d in notes if d.code != "EXACT_GATE_DECOMPOSITION")
+        else:
+            circuit = lowered
+            # Source diagnostics retain their original operation locations.
+            # Lowering may expose a phase or a larger emitted statement count.
+            if (
+                target == "openqasm2"
+                and (circuit.global_phase.parameters or circuit.global_phase.constant)
+                and not any(d.code == "GLOBAL_PHASE_UNSUPPORTED" for d in diagnostics)
+            ):
+                diagnostics += (
+                    Diagnostic(
+                        "GLOBAL_PHASE_UNSUPPORTED",
+                        "Lowering introduces a phase OpenQASM 2 cannot preserve.",
+                        "global_phase",
+                        hint="Use OpenQASM 3 or a framework export.",
+                    ),
+                )
+            if not any(d.code == "QASM_EXPORT_LIMIT" for d in diagnostics):
+                diagnostics += _qasm_output_diagnostics(circuit, target, max_output_statements)
     return ConversionPlan(
         original_circuit,
         source,
@@ -459,6 +600,9 @@ def plan_conversion(
         parameter_map,
         optimization,
         circuit,
+        max_operations,
+        max_depth,
+        max_output_statements,
     )
 
 
@@ -471,6 +615,9 @@ def convert(
     source_options=None,
     optimize=False,
     optimization_options=None,
+    max_operations=100_000,
+    max_depth=64,
+    max_output_statements=100_000,
 ) -> ConversionResult:
     """Import -> prepare -> export, rejecting unsupported semantics explicitly."""
     return plan_conversion(
@@ -481,4 +628,7 @@ def convert(
         source_options=source_options,
         optimize=optimize,
         optimization_options=optimization_options,
+        max_operations=max_operations,
+        max_depth=max_depth,
+        max_output_statements=max_output_statements,
     ).export()
