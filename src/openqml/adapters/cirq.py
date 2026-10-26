@@ -294,17 +294,18 @@ def from_cirq(
     return Circuit(len(order), tuple(operations), num_clbits, phase)
 
 
-def to_cirq(circuit: Circuit, bindings=None):
+def to_cirq(circuit: Circuit, bindings=None, *, max_operations=100_000, max_depth=64):
+    from ..compiler import _check_circuit_limits, decompose
+
+    _check_circuit_limits(circuit, max_operations=max_operations, max_depth=max_depth)
     cirq = dependency("cirq", "cirq")
     circuit = bound_for_export(circuit, bindings)
     from ..conversion import diagnose
 
-    diagnostics = diagnose(circuit, "cirq")
+    diagnostics = diagnose(circuit, "cirq", max_operations=max_operations, max_depth=max_depth)
     if diagnostics:
         raise ConversionError(diagnostics)
-    from ..compiler import decompose
-
-    circuit = decompose(circuit)
+    circuit = decompose(circuit, max_operations=max_operations, max_depth=max_depth)
     qubits = cirq.LineQubit.range(circuit.num_qubits)
     fixed = {
         "id": cirq.I,
