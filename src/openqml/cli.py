@@ -7,7 +7,16 @@ from dataclasses import asdict, replace
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-from . import OpenQMLError, __version__, circuit_stats, convert, decompose, list_backends, optimize
+from . import (
+    OpenQMLError,
+    __version__,
+    circuit_stats,
+    convert,
+    decompose,
+    list_backends,
+    optimize,
+    plan_conversion,
+)
 
 
 def main(argv=None):
@@ -29,6 +38,9 @@ def main(argv=None):
     command.add_argument("--force", action="store_true", help="Replace an existing output file")
     command.add_argument(
         "--diagnostics", action="store_true", help="Write JSON diagnostics to stderr"
+    )
+    command.add_argument(
+        "--check", action="store_true", help="Print a JSON conversion plan without exporting"
     )
     inspection = commands.add_parser(
         "inspect", help="Report circuit width, dependencies and gate counts"
@@ -79,6 +91,12 @@ def main(argv=None):
             if args.input.stat().st_size > 8_000_000:
                 raise ValueError("Input file exceeds 8 MB.")
             text = args.input.read_text(encoding="utf-8")
+            if args.command == "convert" and args.check:
+                if args.output or args.force:
+                    raise ValueError("--check cannot be combined with --output or --force.")
+                plan = plan_conversion(text, source=args.source, target=args.target)
+                print(plan.to_json())
+                return 0 if plan.compatible else 2
             if args.command == "inspect":
                 circuit = convert(text, source=args.source, target="ir").circuit
                 print(json.dumps(asdict(circuit_stats(circuit)), indent=2))

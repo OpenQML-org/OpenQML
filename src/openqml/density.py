@@ -133,6 +133,27 @@ def _map_states(states, function, ops):
 
 
 def _evolve(circuit, states, bindings, ops, records):
+    """Trampoline nested blocks so parent call stacks cannot retain density buffers."""
+    stack = [_evolve_steps(circuit, states, bindings, ops, records)]
+    del states
+    value = None
+    while stack:
+        try:
+            task = stack[-1].send(value)
+        except StopIteration as completed:
+            value = completed.value
+            stack.pop()
+        else:
+            value = None
+            body, branch, plan = task
+            stack.append(_evolve_steps(body, branch, bindings, ops, plan))
+            # CPython 3.10 retains evaluated call arguments until the callee
+            # returns. Yielding tasks avoids one retained input per nesting level.
+            del task, branch
+    return value
+
+
+def _evolve_steps(circuit, states, bindings, ops, records):
     from .simulator import _apply_matrix, _gate_matrix
 
     n = circuit.num_qubits
@@ -153,7 +174,7 @@ def _evolve(circuit, states, bindings, ops, records):
             del key, rho
             for i in range(2):
                 if groups[0]:
-                    branch = _evolve(op.blocks[i], groups.pop(0), bindings, ops, step.blocks[i])
+                    branch = yield op.blocks[i], groups.pop(0), step.blocks[i]
                     for key, rho in branch.items():
                         output[key] = output[key] + rho if key in output else rho
                     del branch, key, rho
