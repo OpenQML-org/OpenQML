@@ -12,7 +12,7 @@ except ImportError as exc:
 
 from ..errors import ValidationError
 from ..parameters import real
-from ..simulator import _resource_check, expectations
+from ..simulator import _checkpoint_interval, _resource_check, expectations
 from ._spec import LayerSpecMixin, broadcast_batch_shape, prepare_layer
 
 
@@ -37,6 +37,7 @@ class QuantumLayer(LayerSpecMixin):
         max_memory_mb=256,
         backend="jax",
         batch_chunk_size=None,
+        checkpoint_interval=None,
         gradient_chunk_size=64,
         max_branches=256,
         optimize=False,
@@ -60,6 +61,7 @@ class QuantumLayer(LayerSpecMixin):
             optimize=optimize,
             optimization_options=optimization_options,
         )
+        self.checkpoint_interval = _checkpoint_interval(circuit, backend, checkpoint_interval)
         if backend == "jax":
             if circuit.has_effects:
                 from ..density import _planning_limit
@@ -92,6 +94,8 @@ class QuantumLayer(LayerSpecMixin):
             "max_memory_mb": max_memory_mb,
             "max_branches": max_branches,
         }
+        if self.checkpoint_interval is not None:
+            self.limits["checkpoint_interval"] = self.checkpoint_interval
 
     def init(self, key, *, scale=0.1, dtype=jnp.float32):
         scale = real(scale)

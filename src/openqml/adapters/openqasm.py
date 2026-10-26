@@ -415,7 +415,7 @@ def from_openqasm(
     if unused:
         raise conversion_error(
             "UNUSED_INPUT_DECLARATION",
-            f"IR v2 cannot retain unused input declarations: {sorted(unused)}.",
+            f"IR cannot retain unused input declarations: {sorted(unused)}.",
             "parameters",
             "Remove unused inputs before conversion.",
         )

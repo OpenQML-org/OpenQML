@@ -13,24 +13,9 @@ from .parameters import parameter_name, real
 
 
 def _load_json(text, max_bytes):
-    integer(max_bytes, "max_bytes", 1)
-    if not isinstance(text, str):
-        raise ValidationError("Layer JSON must be text.")
-    try:
-        if len(text) > max_bytes or len(text.encode("utf-8")) > max_bytes:
-            raise ValidationError("Layer JSON exceeds max_bytes.")
+    from ._serialization import load_json
 
-        def unique_object(pairs):
-            result = {}
-            for key, value in pairs:
-                if key in result:
-                    raise ValidationError(f"Duplicate JSON field {key!r}.")
-                result[key] = value
-            return result
-
-        return json.loads(text, object_pairs_hook=unique_object)
-    except (json.JSONDecodeError, RecursionError, UnicodeError) as exc:
-        raise ValidationError("Invalid layer JSON.") from exc
+    return load_json(text, max_bytes, label="Layer")
 
 
 def _parameter_names(values):
@@ -136,7 +121,15 @@ class LayerSpec:
         return json.dumps(self.to_dict(), indent=indent, allow_nan=False)
 
     @classmethod
-    def from_dict(cls, payload, *, max_operations=100_000, max_depth=64):
+    def from_dict(
+        cls,
+        payload,
+        *,
+        max_operations=100_000,
+        max_depth=64,
+        max_matrix_qubits=10,
+        max_matrix_entries=1_048_576,
+    ):
         integer(max_operations, "max_operations")
         integer(max_depth, "max_depth")
         fields = {
@@ -195,16 +188,35 @@ class LayerSpec:
             else:
                 raise ValidationError("Unsupported observable specification.")
         return cls(
-            Circuit.from_dict(payload["circuit"]),
+            Circuit.from_dict(
+                payload["circuit"],
+                max_operations=max_operations,
+                max_depth=max_depth,
+                max_matrix_qubits=max_matrix_qubits,
+                max_matrix_entries=max_matrix_entries,
+            ),
             payload["input_parameters"],
             payload["weight_parameters"],
             tuple(observables),
         )
 
     @classmethod
-    def from_json(cls, text, *, max_bytes=2_000_000, max_operations=100_000, max_depth=64):
+    def from_json(
+        cls,
+        text,
+        *,
+        max_bytes=2_000_000,
+        max_operations=100_000,
+        max_depth=64,
+        max_matrix_qubits=10,
+        max_matrix_entries=1_048_576,
+    ):
         return cls.from_dict(
-            _load_json(text, max_bytes), max_operations=max_operations, max_depth=max_depth
+            _load_json(text, max_bytes),
+            max_operations=max_operations,
+            max_depth=max_depth,
+            max_matrix_qubits=max_matrix_qubits,
+            max_matrix_entries=max_matrix_entries,
         )
 
 
@@ -264,7 +276,15 @@ class LayerCheckpoint:
         return json.dumps(self.to_dict(), indent=indent, allow_nan=False)
 
     @classmethod
-    def from_dict(cls, payload, *, max_operations=100_000, max_depth=64):
+    def from_dict(
+        cls,
+        payload,
+        *,
+        max_operations=100_000,
+        max_depth=64,
+        max_matrix_qubits=10,
+        max_matrix_entries=1_048_576,
+    ):
         fields = {"schema", "version", "spec", "weights", "dtype"}
         if not isinstance(payload, dict) or set(payload) != fields:
             raise ValidationError("Invalid layer checkpoint fields.")
@@ -278,14 +298,31 @@ class LayerCheckpoint:
             raise ValidationError("Checkpoint weights must be a JSON name mapping.")
         return cls(
             LayerSpec.from_dict(
-                payload["spec"], max_operations=max_operations, max_depth=max_depth
+                payload["spec"],
+                max_operations=max_operations,
+                max_depth=max_depth,
+                max_matrix_qubits=max_matrix_qubits,
+                max_matrix_entries=max_matrix_entries,
             ),
             payload["weights"],
             payload["dtype"],
         )
 
     @classmethod
-    def from_json(cls, text, *, max_bytes=2_000_000, max_operations=100_000, max_depth=64):
+    def from_json(
+        cls,
+        text,
+        *,
+        max_bytes=2_000_000,
+        max_operations=100_000,
+        max_depth=64,
+        max_matrix_qubits=10,
+        max_matrix_entries=1_048_576,
+    ):
         return cls.from_dict(
-            _load_json(text, max_bytes), max_operations=max_operations, max_depth=max_depth
+            _load_json(text, max_bytes),
+            max_operations=max_operations,
+            max_depth=max_depth,
+            max_matrix_qubits=max_matrix_qubits,
+            max_matrix_entries=max_matrix_entries,
         )
