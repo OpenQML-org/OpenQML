@@ -6,6 +6,13 @@ from ..layers import LayerCheckpoint, LayerSpec, validate_layer
 
 class LayerSpecMixin:
     @classmethod
+    def data_reuploading(cls, num_qubits, depth=2, *, entanglement="linear", **kwargs):
+        from ..templates import data_reuploading
+
+        spec = data_reuploading(num_qubits, depth, entanglement=entanglement)
+        return cls.from_spec(spec, **kwargs)
+
+    @classmethod
     def hardware_efficient(cls, num_qubits, depth=2, **kwargs):
         from ..templates import hardware_efficient
 

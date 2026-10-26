@@ -33,6 +33,7 @@ class QuantumLayer(LayerSpecMixin):
         max_qubits=20,
         max_memory_mb=256,
         backend="jax",
+        batch_chunk_size=None,
         gradient_chunk_size=64,
         max_branches=256,
         optimize=False,
@@ -76,6 +77,9 @@ class QuantumLayer(LayerSpecMixin):
             else:
                 _resource_check(circuit, max_qubits, max_memory_mb)
         self.execution_backend = backend
+        self.batch_chunk_size = (
+            None if batch_chunk_size is None else integer(batch_chunk_size, "batch_chunk_size", 1)
+        )
 
         self.gradient_chunk_size = integer(gradient_chunk_size, "gradient_chunk_size", 2)
         self.circuit = circuit
@@ -146,6 +150,23 @@ class QuantumLayer(LayerSpecMixin):
             jnp.dtype("float64"),
         }:
             raise ValidationError("Inputs and weights must share float32 or float64 dtype.")
+        if self.batch_chunk_size is not None:
+            import math
+
+            shape = inputs.shape[:-1]
+            count = math.prod(shape)
+            if count > self.batch_chunk_size:
+                flat = inputs.reshape(count, len(self.input_parameters))
+                # Mapping whole chunks avoids tracing one copy of the circuit
+                # per row and retains JIT, reverse mode and higher derivatives.
+                size = self.batch_chunk_size
+                full = count // size * size
+                chunks = flat[:full].reshape(full // size, size, len(self.input_parameters))
+                result = jax.lax.map(lambda chunk: self(weights, chunk), chunks)
+                result = result.reshape(full, len(self.observables))
+                if full < count:
+                    result = jnp.concatenate((result, self(weights, flat[full:])), axis=0)
+                return result.reshape(shape + (len(self.observables),))
         if self.execution_backend != "jax":
             return _external_layer(self, weights, inputs)
         bindings = {

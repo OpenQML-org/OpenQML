@@ -1,7 +1,8 @@
 """Explicit import -> IR -> export with diagnostics and no silent lossy mode."""
 
+import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .errors import (
@@ -37,15 +38,22 @@ def _format(value):
     return value
 
 
+def _operation_location(path):
+    return f"operations[{path[0]}]" + "".join(
+        f".blocks[{block}].operations[{index}]"
+        for block, index in zip(path[1::2], path[2::2], strict=True)
+    )
+
+
 def diagnose(circuit: Circuit, target: str) -> tuple[Diagnostic, ...]:
     """Check representability without importing any optional framework."""
+    if not isinstance(circuit, Circuit):
+        raise ValidationError("diagnose requires an OpenQML Circuit.")
     target = _format(target)
     if target not in BUILTIN_FORMATS:
         adapter = get_adapter(target)
         diagnostics = () if adapter.diagnose is None else tuple(adapter.diagnose(circuit))
         if any(not isinstance(item, Diagnostic) for item in diagnostics):
-            from .errors import ValidationError
-
             raise ValidationError("Adapter diagnostics must contain Diagnostic objects.")
         return diagnostics
     diagnostics = []
@@ -96,10 +104,7 @@ def diagnose(circuit: Circuit, target: str) -> tuple[Diagnostic, ...]:
             )
     written = []
     for path, op in circuit.walk_operations():
-        location = f"operations[{path[0]}]" + "".join(
-            f".blocks[{block}].operations[{index}]"
-            for block, index in zip(path[1::2], path[2::2], strict=True)
-        )
+        location = _operation_location(path)
         if op.name in CHANNEL_GATES:
             if target.startswith("openqasm"):
                 diagnostics.append(
@@ -177,7 +182,74 @@ class ConversionResult:
     optimization: Any = None
 
 
-def convert(
+@dataclass(frozen=True)
+class ConversionPlan:
+    """Prepared IR and representability report without loading the target SDK.
+
+    Import, binding and optimization errors still raise immediately. Target
+    incompatibilities remain in diagnostics until export() is requested.
+    """
+
+    circuit: Circuit
+    source_format: str
+    target_format: str
+    diagnostics: tuple[Diagnostic, ...] = ()
+    parameter_map: dict[str, str] = field(default_factory=dict)
+    optimization: Any = None
+    prepared_circuit: Circuit | None = field(default=None, repr=False)
+
+    @property
+    def compatible(self):
+        return not any(d.severity == "error" for d in self.diagnostics)
+
+    def raise_for_errors(self):
+        if not self.compatible:
+            raise ConversionError(self.diagnostics)
+
+    def to_dict(self):
+        from .compiler import circuit_stats
+
+        return {
+            "schema": "openqml.conversion_plan",
+            "version": 1,
+            "source_format": self.source_format,
+            "target_format": self.target_format,
+            "compatible": self.compatible,
+            "parameters": list(self.circuit.parameters),
+            "parameter_map": dict(self.parameter_map),
+            "resources": asdict(circuit_stats(self.circuit)),
+            "diagnostics": [asdict(d) for d in self.diagnostics],
+        }
+
+    def to_json(self, *, indent=2):
+        return json.dumps(self.to_dict(), indent=indent, allow_nan=False)
+
+    def export(self):
+        """Export exactly this plan, refusing every reported incompatibility."""
+        self.raise_for_errors()
+        circuit = self.prepared_circuit if self.prepared_circuit is not None else self.circuit
+        if self.target_format == "ir":
+            value = circuit
+        elif self.target_format == "json":
+            value = circuit.to_json()
+        elif self.target_format.startswith("openqasm"):
+            from .adapters.openqasm import to_openqasm
+
+            value = to_openqasm(circuit, version=int(self.target_format[-1]))
+        else:
+            value = get_adapter(self.target_format).exporter(circuit)
+        return ConversionResult(
+            value,
+            self.circuit,
+            self.source_format,
+            self.target_format,
+            self.diagnostics,
+            dict(self.parameter_map),
+            self.optimization,
+        )
+
+
+def plan_conversion(
     value,
     *,
     source: str | None = None,
@@ -186,7 +258,8 @@ def convert(
     source_options=None,
     optimize=False,
     optimization_options=None,
-) -> ConversionResult:
+) -> ConversionPlan:
+    """Import and prepare a conversion; report all known target incompatibilities."""
     from .program import QuantumProgram, detect_framework
 
     if type(optimize) is not bool:
@@ -346,8 +419,6 @@ def convert(
         if parameter_map:
             circuit = rename_parameters(circuit, parameter_map)
     diagnostics = diagnose(circuit, target)
-    if any(item.severity == "error" for item in diagnostics):
-        raise ConversionError(diagnostics)
     from .compiler import PORTABLE_BASIS, QASM_BASIS
 
     basis = (
@@ -364,23 +435,13 @@ def convert(
             Diagnostic(
                 "EXACT_GATE_DECOMPOSITION",
                 f"{op.name} is lowered to the target basis with full phase.",
-                f"operations[{index}]",
+                _operation_location(path),
                 severity="info",
             )
-            for index, op in enumerate(circuit.operations)
+            for path, op in circuit.walk_operations()
             if op.name not in basis and op.name in UNITARY_GATES
         )
     )
-    if target == "ir":
-        result = circuit
-    elif target == "json":
-        result = circuit.to_json()
-    elif target.startswith("openqasm"):
-        from .adapters.openqasm import to_openqasm
-
-        result = to_openqasm(circuit, version=int(target[-1]))
-    else:
-        result = get_adapter(target).exporter(circuit)
     notes += tuple(
         Diagnostic(
             "PARAMETER_RENAMED",
@@ -390,12 +451,34 @@ def convert(
         )
         for name, alias in parameter_map.items()
     )
-    return ConversionResult(
-        result,
+    return ConversionPlan(
         original_circuit,
         source,
         target,
         frontend_notes + diagnostics + notes,
         parameter_map,
         optimization,
+        circuit,
     )
+
+
+def convert(
+    value,
+    *,
+    source: str | None = None,
+    target: str,
+    bindings=None,
+    source_options=None,
+    optimize=False,
+    optimization_options=None,
+) -> ConversionResult:
+    """Import -> prepare -> export, rejecting unsupported semantics explicitly."""
+    return plan_conversion(
+        value,
+        source=source,
+        target=target,
+        bindings=bindings,
+        source_options=source_options,
+        optimize=optimize,
+        optimization_options=optimization_options,
+    ).export()
