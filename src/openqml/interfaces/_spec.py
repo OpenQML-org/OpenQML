@@ -253,10 +253,28 @@ def numeric_expectations(layer, weights, inputs):
         )
     from ..batch import expectations_batch
 
+    rows = numeric_rows(layer, weights, inputs)
+    size = layer.batch_chunk_size
+    if size is not None and len(rows) > size:
+        import numpy as np
+
+        return np.concatenate(
+            [
+                expectations_batch(
+                    layer.circuit,
+                    layer.observables,
+                    rows[start : start + size],
+                    backend=layer.execution_backend,
+                    **layer.limits,
+                )
+                for start in range(0, len(rows), size)
+            ],
+            axis=0,
+        )
     return expectations_batch(
         layer.circuit,
         layer.observables,
-        numeric_rows(layer, weights, inputs),
+        rows,
         backend=layer.execution_backend,
         **layer.limits,
     )
