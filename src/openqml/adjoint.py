@@ -6,15 +6,15 @@ recurrence. Plans retain symbolic metadata, never bindings or quantum states.
 """
 
 import math
-from collections.abc import Mapping, Set
 from dataclasses import dataclass, field
 
 import numpy as np
 
+from ._gradient_common import _binding_columns, _names, _observables, _real_array
 from .errors import ResourceError, ValidationError
 from .ir import Circuit, integer
-from .observables import Hamiltonian, PauliString
-from .parameters import parameter_name, real
+from .observables import Hamiltonian
+from .parameters import real
 from .simulator import _X, _Y, _Z, _apply_matrix, _gate_matrix, _TensorOps
 
 
@@ -43,49 +43,6 @@ def _check_adjoint(circuit, max_qubits, max_memory_mb):
     if required > budget:
         raise ResourceError("Adjoint state and local matrices exceed max_memory_mb.")
     return required
-
-
-def _names(values, available):
-    if isinstance(values, (str, bytes, Mapping, Set)):
-        raise ValidationError("Gradient parameters require ordered circuit parameter names.")
-    try:
-        names = tuple(available) if values is None else tuple(parameter_name(n) for n in values)
-    except TypeError as exc:
-        raise ValidationError(
-            "Gradient parameters require ordered circuit parameter names."
-        ) from exc
-    if len(set(names)) != len(names) or set(names) - set(available):
-        raise ValidationError("Gradient parameters must be unique circuit parameter names.")
-    return names
-
-
-def _observables(values, width):
-    if isinstance(values, (str, bytes, Mapping, Set)):
-        raise ValidationError("Adjoint observables require an ordered iterable.")
-    try:
-        obs = tuple(values)
-    except TypeError as exc:
-        raise ValidationError("Adjoint observables require an ordered iterable.") from exc
-    if not obs:
-        raise ValidationError("Adjoint gradients require observables.")
-    for observable in obs:
-        terms = observable.terms if isinstance(observable, Hamiltonian) else (observable,)
-        if any(not isinstance(t, PauliString) or len(t.paulis) != width for t in terms):
-            raise ValidationError("Gradient observable width must match the circuit.")
-    return obs
-
-
-def _real_array(value, shape, label):
-    try:
-        array = np.asarray(value)
-        if array.dtype.kind not in "iuf":
-            raise ValueError("Expected real entries.")
-        array = array.astype(float)
-        if array.shape != shape or not np.isfinite(array).all():
-            raise ValueError("Invalid shape or entries.")
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise ValidationError(f"{label} must be a finite real array with shape {shape}.") from exc
-    return array
 
 
 def _derivative_matrix(name, params, index, matrix):
@@ -289,64 +246,22 @@ class AdjointPlan:
             object.__setattr__(self, name, value)
 
     def _bindings(self, bindings_batch, batch_size):
-        if batch_size is not None:
-            batch_size = integer(batch_size, "batch_size")
-        if isinstance(bindings_batch, Mapping):
-            if set(bindings_batch) != set(self._symbols):
-                raise ValidationError(
-                    "Adjoint bindings must match the circuit parameter names exactly."
-                )
-            arrays = {}
-            try:
-                for name, value in bindings_batch.items():
-                    array = np.asarray(value)
-                    if array.ndim > 1 or array.dtype.kind not in "iuf":
-                        raise ValueError("Binding columns require real scalars or vectors.")
-                    arrays[name] = array
-                shape = np.broadcast_shapes(*(value.shape for value in arrays.values()))
-                count = (shape[0] if shape else 1) if batch_size is None else batch_size
-                columns = {
-                    name: np.array(np.broadcast_to(value, (count,)), dtype=float, copy=True)
-                    for name, value in arrays.items()
-                }
-                if any(not np.isfinite(value).all() for value in columns.values()):
-                    raise ValueError("Binding columns must be finite.")
-            except (TypeError, ValueError, OverflowError) as exc:
-                raise ValidationError(
-                    "Adjoint binding columns require broadcastable finite real vectors."
-                ) from exc
-        else:
-            columns, count = self._binding_rows(bindings_batch)
-            if batch_size is not None and batch_size != count:
-                raise ValidationError("batch_size differs from the binding row count.")
-        # Preflight every angle, including phase, before allocating any quantum state.
+        columns, count = _binding_columns(
+            bindings_batch, self._symbols, batch_size, label="Adjoint"
+        )
+        # Validate every angle before allocating a quantum state.
         self.circuit.global_phase.evaluate(columns)
         for op in self.circuit.operations:
             for angle in op.params:
                 angle.evaluate(columns)
         return columns, count
 
-    def _binding_rows(self, bindings_batch):
-        try:
-            rows = list(bindings_batch)
-        except TypeError as exc:
-            raise ValidationError("Adjoint bindings require an iterable of name mappings.") from exc
-        columns = {name: np.empty(len(rows)) for name in self._symbols}
-        expected = set(self._symbols)
-        for i, row in enumerate(rows):
-            if not isinstance(row, Mapping) or set(row) != expected:
-                raise ValidationError(
-                    "Adjoint bindings must match the circuit parameter names exactly."
-                )
-            for name in self._symbols:
-                columns[name][i] = real(row[name])
-        return columns, len(rows)
-
     def _selection(self, parameters):
         names = _names(parameters, self.parameters)
         if names == self.parameters:
             return names, self._derivatives
-        positions = {self.parameters.index(name): i for i, name in enumerate(names)}
+        source_positions = {name: i for i, name in enumerate(self.parameters)}
+        positions = {source_positions[name]: i for i, name in enumerate(names)}
         derivatives = tuple(
             tuple(
                 (index, tuple((positions[p], expr) for p, expr in coefficients if p in positions))

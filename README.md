@@ -49,6 +49,8 @@ optimizer.step()
 
 One optimizer updates the classical and quantum parameters. For JAX, construct `oq.jax.QuantumLayer`, initialize weights with `layer.init(key)`, then call `layer(weights, inputs)`. Native tensor backends support higher derivatives; numerical bridges provide first-order JVPs and VJPs.
 
+`oq.ShiftPlan` compiles sparse shift rules and backend lowering once, streams numerical products, and shares repeated points only for backends declaring deterministic expectations. Reuse windows and submitted circuit batches are bounded.
+
 ## Circuit interoperability
 
 Import SDK program objects with `oq.convert(program, target="ir")`. Use `oq.plan_conversion(...)` to inspect compatibility and resource limits before exporting. Plans diagnose unsupported features and conversions that cannot preserve semantics. Layers retain source ownership and support portable checkpoints.
@@ -57,4 +59,4 @@ Import SDK program objects with `oq.convert(program, target="ir")`. Use `oq.plan
 
 ![OpenQML project architecture](https://raw.githubusercontent.com/OpenQML-org/OpenQML/main/docs/architecture.svg)
 
-[Apache license](LICENSE)
+[Apache license](https://github.com/OpenQML-org/OpenQML/blob/main/LICENSE)
