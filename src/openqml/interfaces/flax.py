@@ -15,7 +15,10 @@ from .jax import QuantumLayer as FunctionalLayer
 
 
 class QuantumLayer(LayerSpecMixin, nn.Module):
-    """Linen quantum layer; NumPy unitary simulations can opt into adjoint gradients."""
+    """Linen layer with optional adjoint gradients and unitary readout reduction.
+
+    reduce_readout=True keeps source parameter shapes and checkpoint semantics.
+    """
 
     circuit: object
     input_parameters: tuple
@@ -33,6 +36,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
     optimize: bool = False
     optimization_options: object = None
     gradient_method: str = "auto"
+    reduce_readout: bool = False
 
     @classmethod
     def from_checkpoint(cls, checkpoint, **kwargs):
@@ -86,6 +90,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
             max_branches=self.max_branches,
             optimize=self.optimize,
             optimization_options=self.optimization_options,
+            reduce_readout=self.reduce_readout,
         )
         return layer(weights, jnp.asarray(inputs, dtype=self.dtype))
 

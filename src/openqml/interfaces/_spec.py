@@ -55,7 +55,7 @@ class LayerSpecMixin:
             getattr(self, "source_circuit", self.circuit),
             self.input_parameters,
             self.weight_parameters,
-            self.observables,
+            getattr(self, "source_observables", self.observables),
         )
 
     def checkpoint(self, weights=None):
@@ -126,6 +126,20 @@ def broadcast_batch_shape(weights, inputs):
         return np.broadcast_shapes(weights.shape[:-1], inputs.shape[:-1])
     except ValueError as exc:
         raise ValidationError("Input and weight batch dimensions must be broadcastable.") from exc
+
+
+def prepare_readout(circuit, observables, *, enabled, backend):
+    """Limit causal pruning to explicit, exact simulator execution."""
+    if type(enabled) is not bool:
+        raise ValidationError("reduce_readout must be a boolean.")
+    if not enabled:
+        return circuit, observables, None
+    if not isinstance(backend, str) or backend not in {"torch", "jax", "numpy"}:
+        raise ValidationError("Readout reduction requires backend='torch', 'jax' or 'numpy'.")
+    from ..readout import plan_readout
+
+    plan = plan_readout(circuit, observables)
+    return plan.circuit, plan.observables, plan
 
 
 def resolve_gradient_method(circuit, backend, method, limits):
