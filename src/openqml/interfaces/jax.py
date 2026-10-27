@@ -1,4 +1,4 @@
-"""Pure functional JAX layer supporting jit, grad, vmap and higher derivatives."""
+"""Functional JAX layers with composable transforms and native higher derivatives."""
 
 from __future__ import annotations
 
@@ -34,6 +34,8 @@ class QuantumLayer(LayerSpecMixin):
     eliminated symbols. circuit is executable IR; optimization holds the report.
     gradient_method='auto' retains native autodiff or numerical parameter shifts.
     NumPy unitary simulation also supports explicit first-order adjoint gradients.
+    External backends support standard jvp/vjp, jacfwd/jacrev, vmap and fixed-point
+    linearize/linear_transpose. Nonlinear higher derivatives require native JAX.
     reduce_readout=True compacts the declared unitary readout cone; readout_plan
     records provenance, while to_spec()/checkpoint() retain the full source.
     execution_method='pauli' compiles exact real expectation arithmetic with
@@ -168,8 +170,8 @@ class QuantumLayer(LayerSpecMixin):
     def jvp(self, weights, inputs, weight_tangent, input_tangent):
         """Return (primal, directional derivative), including external backends.
 
-        Native JAX retains higher derivatives. External callbacks support jit/vmap
-        and first-order products; use ordinary calls for streamed reverse mode.
+        Delegates to standard jax.jvp. External products stream without a full
+        Jacobian; native JAX also retains nonlinear higher derivatives.
         """
         weights, inputs = jnp.asarray(weights), jnp.asarray(inputs)
         dw, dx = jnp.asarray(weight_tangent), jnp.asarray(input_tangent)
@@ -180,19 +182,7 @@ class QuantumLayer(LayerSpecMixin):
             inputs.dtype,
         ):
             raise ValidationError("JVP tangent shapes and dtypes must match weights/inputs.")
-        if self.execution_backend == "jax":
-            return jax.jvp(self, (weights, inputs), (dw, dx))
-        from ._spec import numeric_jvp
-
-        primal = self(weights, inputs)
-        spec = jax.ShapeDtypeStruct(primal.shape, primal.dtype)
-
-        def callback(w, x, tw, tx):
-            return numeric_jvp(self, w, x, tw, tx)
-
-        return primal, jax.pure_callback(
-            callback, spec, weights, inputs, dw, dx, vmap_method="sequential"
-        )
+        return jax.jvp(self, (weights, inputs), (dw, dx))
 
     def __call__(self, weights, inputs):
         weights, inputs = jnp.asarray(weights), jnp.asarray(inputs)
@@ -313,34 +303,6 @@ class NativePennyLaneLayer:
 
 
 def _external_layer(layer, weights, inputs):
-    import numpy as np
+    from ._jax_ad import external_call
 
-    from ._spec import numeric_expectations, numeric_vjp
-
-    def forward_numpy(w, x):
-        result = numeric_expectations(layer, w, x)
-        shape = broadcast_batch_shape(w, x)
-        return np.asarray(result, dtype=x.dtype).reshape(shape + (len(layer.observables),))
-
-    def backward_numpy(w, x, g):
-        return numeric_vjp(layer, w, x, g)
-
-    def primal(w, x):
-        shape = broadcast_batch_shape(w, x)
-        spec = jax.ShapeDtypeStruct(shape + (len(layer.observables),), x.dtype)
-        return jax.pure_callback(forward_numpy, spec, w, x, vmap_method="sequential")
-
-    @jax.custom_vjp
-    def call(w, x):
-        return primal(w, x)
-
-    def forward(w, x):
-        return primal(w, x), (w, x)
-
-    def backward(res, g):
-        w, x = res
-        specs = (jax.ShapeDtypeStruct(w.shape, w.dtype), jax.ShapeDtypeStruct(x.shape, x.dtype))
-        return jax.pure_callback(backward_numpy, specs, w, x, g, vmap_method="sequential")
-
-    call.defvjp(forward, backward)
-    return call(weights, inputs)
+    return external_call(layer, weights, inputs)
