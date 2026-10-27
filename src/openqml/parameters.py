@@ -101,7 +101,17 @@ class Expression:
     def parameters(self):
         if self.op is None:
             return frozenset(k for k, _ in self.terms)
-        return frozenset().union(*(v.parameters for v in self.args))
+        names, seen, pending = set(), set(), [self]
+        while pending:
+            value = pending.pop()
+            if id(value) in seen:
+                continue
+            seen.add(id(value))
+            if value.op is None:
+                names.update(k for k, _ in value.terms)
+            else:
+                pending.extend(value.args)
+        return frozenset(names)
 
     @property
     def is_affine(self):
