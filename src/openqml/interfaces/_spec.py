@@ -214,29 +214,45 @@ def _sum_to_shape(values, shape):
     return values.sum(axis=axes, keepdims=True).reshape(shape)
 
 
-def prepare_adjoint(layer):
-    if layer.gradient_method != "adjoint":
-        return None
-    from ..adjoint import AdjointPlan
-
+def prepare_gradients(layer):
+    """Compile one numerical engine while preserving source parameter ownership."""
     active = set(layer.circuit.parameters)
-    return AdjointPlan(
-        layer.circuit,
-        layer.observables,
-        tuple(name for name in layer.input_parameters + layer.weight_parameters if name in active),
-        layer.limits["max_qubits"],
-        layer.limits["max_memory_mb"],
+    names = tuple(
+        name for name in layer.input_parameters + layer.weight_parameters if name in active
     )
+    if layer.gradient_method == "adjoint":
+        from ..adjoint import AdjointPlan
+
+        return AdjointPlan(
+            layer.circuit,
+            layer.observables,
+            names,
+            layer.limits["max_qubits"],
+            layer.limits["max_memory_mb"],
+        ), None
+    if layer.gradient_method == "parameter-shift":
+        from ..gradients import ShiftPlan
+
+        return None, ShiftPlan(
+            layer.circuit,
+            layer.observables,
+            names,
+            layer.execution_backend,
+            max_qubits=layer.limits["max_qubits"],
+            max_memory_mb=layer.limits["max_memory_mb"],
+            max_branches=layer.limits["max_branches"],
+        )
+    return None, None
 
 
-def _adjoint_columns(layer, weights, inputs):
+def numeric_columns(layer, weights, inputs):
     import math
 
     import numpy as np
 
     shape = broadcast_batch_shape(weights, inputs)
     count = math.prod(shape)
-    active = set(layer.adjoint_plan.parameters)
+    active = set(layer.circuit.parameters)
     columns = {}
     for names, values in ((layer.input_parameters, inputs), (layer.weight_parameters, weights)):
         for i, name in enumerate(names):
@@ -247,12 +263,13 @@ def _adjoint_columns(layer, weights, inputs):
 
 def numeric_expectations(layer, weights, inputs):
     if layer.adjoint_plan is not None:
-        columns, count = _adjoint_columns(layer, weights, inputs)
+        columns, count = numeric_columns(layer, weights, inputs)
         return layer.adjoint_plan.expectations(
             columns, batch_size=count, batch_chunk_size=layer.batch_chunk_size
         )
     from ..batch import expectations_batch
 
+    backend = layer.shift_plan._backend()
     rows = numeric_rows(layer, weights, inputs)
     size = layer.batch_chunk_size
     if size is not None and len(rows) > size:
@@ -264,7 +281,7 @@ def numeric_expectations(layer, weights, inputs):
                     layer.circuit,
                     layer.observables,
                     rows[start : start + size],
-                    backend=layer.execution_backend,
+                    backend=backend,
                     **layer.limits,
                 )
                 for start in range(0, len(rows), size)
@@ -275,7 +292,7 @@ def numeric_expectations(layer, weights, inputs):
         layer.circuit,
         layer.observables,
         rows,
-        backend=layer.execution_backend,
+        backend=backend,
         **layer.limits,
     )
 
@@ -304,12 +321,11 @@ def numeric_rows(layer, weights, inputs):
 
 
 def numeric_vjp(layer, weights, inputs, cotangents, *, input_grad=True, weight_grad=True):
-    """Stream only active shifts, then scatter exact zeros to eliminated columns."""
+    """Scatter streamed gradient columns back to source ownership and batch shapes."""
     import numpy as np
 
-    from ..gradients import parameter_shift_vjp
-
     weights, inputs = np.asarray(weights), np.asarray(inputs)
+    columns, count = numeric_columns(layer, weights, inputs)
     active = set(layer.circuit.parameters)
     selected = tuple(
         name
@@ -319,31 +335,22 @@ def numeric_vjp(layer, weights, inputs, cotangents, *, input_grad=True, weight_g
         )
         if name in active
     )
-    method, options = (
-        parameter_shift_vjp,
-        {
-            "chunk_size": layer.gradient_chunk_size,
-            "backend": layer.execution_backend,
-            **layer.limits,
-        },
-    )
+    cotangents = np.asarray(cotangents).reshape(count, len(layer.observables))
     if layer.adjoint_plan is not None:
-        columns, count = _adjoint_columns(layer, weights, inputs)
         values = layer.adjoint_plan.vjp(
             columns,
-            np.asarray(cotangents).reshape(count, len(layer.observables)),
+            cotangents,
             parameters=selected,
             batch_size=count,
             batch_chunk_size=layer.batch_chunk_size,
         )
     else:
-        values = method(
-            layer.circuit,
-            layer.observables,
-            numeric_rows(layer, weights, inputs),
-            np.asarray(cotangents).reshape(-1, len(layer.observables)),
+        values = layer.shift_plan.vjp(
+            columns,
+            cotangents,
             parameters=selected,
-            **options,
+            batch_size=count,
+            chunk_size=layer.gradient_chunk_size,
         )
     positions = {name: i for i, name in enumerate(selected)}
     shape = broadcast_batch_shape(weights, inputs)
@@ -361,16 +368,12 @@ def numeric_vjp(layer, weights, inputs, cotangents, *, input_grad=True, weight_g
 
 
 def numeric_jvp(layer, weights, inputs, weight_tangent, input_tangent):
-    """Shared first-order external directional bridge; never allocate B*M*P."""
-    import math
-
+    """Shared first-order directional bridge; never allocate B*M*P."""
     import numpy as np
 
-    from ..gradients import parameter_shift_jvp
-
     weights, inputs = np.asarray(weights), np.asarray(inputs)
+    columns, count = numeric_columns(layer, weights, inputs)
     shape = broadcast_batch_shape(weights, inputs)
-    count = math.prod(shape)
     source_names = layer.input_parameters + layer.weight_parameters
     active = set(layer.circuit.parameters)
     indices = [i for i, name in enumerate(source_names) if name in active]
@@ -381,17 +384,8 @@ def numeric_jvp(layer, weights, inputs, weight_tangent, input_tangent):
     dw = np.broadcast_to(weight_tangent, shape + (len(layer.weight_parameters),)).reshape(
         count, len(layer.weight_parameters)
     )
-    method, options = (
-        parameter_shift_jvp,
-        {
-            "chunk_size": layer.gradient_chunk_size,
-            "backend": layer.execution_backend,
-            **layer.limits,
-        },
-    )
     directions = np.concatenate((dx, dw), axis=-1)[:, indices]
     if layer.adjoint_plan is not None:
-        columns, count = _adjoint_columns(layer, weights, inputs)
         result = layer.adjoint_plan.jvp(
             columns,
             directions,
@@ -400,12 +394,11 @@ def numeric_jvp(layer, weights, inputs, weight_tangent, input_tangent):
             batch_chunk_size=layer.batch_chunk_size,
         )
     else:
-        result = method(
-            layer.circuit,
-            layer.observables,
-            numeric_rows(layer, weights, inputs),
+        result = layer.shift_plan.jvp(
+            columns,
             directions,
             parameters=names,
-            **options,
+            batch_size=count,
+            chunk_size=layer.gradient_chunk_size,
         )
     return result.reshape(shape + (len(layer.observables),)).astype(inputs.dtype)
