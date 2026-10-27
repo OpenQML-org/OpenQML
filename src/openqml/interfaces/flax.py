@@ -19,6 +19,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
 
     reduce_readout=True keeps source parameter shapes and checkpoint semantics.
     execution_method='pauli' uses bounded real arithmetic with native autodiff.
+    execution_method='planned' selects and shares exact local query engines.
     """
 
     circuit: object
@@ -40,6 +41,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
     reduce_readout: bool = False
     execution_method: str = "auto"
     pauli_options: object = None
+    planning_options: object = None
 
     @classmethod
     def from_checkpoint(cls, checkpoint, **kwargs):
@@ -96,6 +98,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
             reduce_readout=self.reduce_readout,
             execution_method=self.execution_method,
             pauli_options=self.pauli_options,
+            planning_options=self.planning_options,
         )
         return layer(weights, jnp.asarray(inputs, dtype=self.dtype))
 
