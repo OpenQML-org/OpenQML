@@ -13,7 +13,7 @@ except ImportError as exc:
 from ..errors import ValidationError
 from ..parameters import real
 from ..simulator import _checkpoint_interval, _resource_check, expectations
-from ._spec import LayerSpecMixin, broadcast_batch_shape, prepare_layer
+from ._spec import LayerSpecMixin, broadcast_batch_shape, prepare_layer, resolve_gradient_method
 
 
 class QuantumLayer(LayerSpecMixin):
@@ -24,6 +24,8 @@ class QuantumLayer(LayerSpecMixin):
 
     optimize=True preserves source ownership and returns zero gradients for
     eliminated symbols. circuit is executable IR; optimization holds the report.
+    gradient_method='auto' retains native autodiff or numerical parameter shifts.
+    NumPy unitary simulation also supports explicit first-order adjoint gradients.
     """
 
     def __init__(
@@ -39,6 +41,7 @@ class QuantumLayer(LayerSpecMixin):
         batch_chunk_size=None,
         checkpoint_interval=None,
         gradient_chunk_size=64,
+        gradient_method="auto",
         max_branches=256,
         optimize=False,
         optimization_options=None,
@@ -96,6 +99,9 @@ class QuantumLayer(LayerSpecMixin):
         }
         if self.checkpoint_interval is not None:
             self.limits["checkpoint_interval"] = self.checkpoint_interval
+        self.gradient_method = resolve_gradient_method(
+            circuit, backend, gradient_method, self.limits
+        )
 
     def init(self, key, *, scale=0.1, dtype=jnp.float32):
         scale = real(scale)

@@ -128,6 +128,24 @@ def broadcast_batch_shape(weights, inputs):
         raise ValidationError("Input and weight batch dimensions must be broadcastable.") from exc
 
 
+def resolve_gradient_method(circuit, backend, method, limits):
+    """Keep native graphs by default; adjoint is an explicit NumPy simulator choice."""
+    if not isinstance(method, str) or method not in {"auto", "parameter-shift", "adjoint"}:
+        raise ValidationError("gradient_method must be auto, parameter-shift or adjoint.")
+    native = isinstance(backend, str) and backend in {"torch", "jax"}
+    if method == "auto":
+        return "backprop" if native else "parameter-shift"
+    if native:
+        raise ValidationError("Explicit numerical gradient methods require an external backend.")
+    if method == "adjoint":
+        if not isinstance(backend, str) or backend != "numpy":
+            raise ValidationError("Adjoint gradients require backend='numpy'.")
+        from ..adjoint import _check_adjoint
+
+        _check_adjoint(circuit, limits["max_qubits"], limits["max_memory_mb"])
+    return method
+
+
 def _sum_to_shape(values, shape):
     """Undo NumPy broadcasting for a first-order numerical pullback."""
     leading = values.ndim - len(shape)
@@ -174,15 +192,28 @@ def numeric_vjp(layer, weights, inputs, cotangents, *, input_grad=True, weight_g
         )
         if name in active
     )
-    values = parameter_shift_vjp(
+    method, options = (
+        parameter_shift_vjp,
+        {
+            "chunk_size": layer.gradient_chunk_size,
+            "backend": layer.execution_backend,
+            **layer.limits,
+        },
+    )
+    if layer.gradient_method == "adjoint":
+        from ..adjoint import adjoint_vjp
+
+        method, options = (
+            adjoint_vjp,
+            {name: layer.limits[name] for name in ("max_qubits", "max_memory_mb")},
+        )
+    values = method(
         layer.circuit,
         layer.observables,
         numeric_rows(layer, weights, inputs),
         np.asarray(cotangents).reshape(-1, len(layer.observables)),
         parameters=selected,
-        chunk_size=layer.gradient_chunk_size,
-        backend=layer.execution_backend,
-        **layer.limits,
+        **options,
     )
     positions = {name: i for i, name in enumerate(selected)}
     shape = broadcast_batch_shape(weights, inputs)
@@ -220,14 +251,27 @@ def numeric_jvp(layer, weights, inputs, weight_tangent, input_tangent):
     dw = np.broadcast_to(weight_tangent, shape + (len(layer.weight_parameters),)).reshape(
         count, len(layer.weight_parameters)
     )
-    result = parameter_shift_jvp(
+    method, options = (
+        parameter_shift_jvp,
+        {
+            "chunk_size": layer.gradient_chunk_size,
+            "backend": layer.execution_backend,
+            **layer.limits,
+        },
+    )
+    if layer.gradient_method == "adjoint":
+        from ..adjoint import adjoint_jvp
+
+        method, options = (
+            adjoint_jvp,
+            {name: layer.limits[name] for name in ("max_qubits", "max_memory_mb")},
+        )
+    result = method(
         layer.circuit,
         layer.observables,
         numeric_rows(layer, weights, inputs),
         np.concatenate((dx, dw), axis=-1)[:, indices],
         parameters=names,
-        chunk_size=layer.gradient_chunk_size,
-        backend=layer.execution_backend,
-        **layer.limits,
+        **options,
     )
     return result.reshape(shape + (len(layer.observables),)).astype(inputs.dtype)

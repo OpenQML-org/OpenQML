@@ -40,6 +40,8 @@ JAX exposes `layer(weights, inputs)`; Flax uses standard parameter trees and Opt
 
 `batch_chunk_size` bounds each simulator batch. For native unitary circuits, `checkpoint_interval` trades recomputation for fewer retained training tensors. Native tensor backends support higher derivatives; external numerical bridges support first-order differentiation.
 
+For unitary simulation, `backend="numpy", gradient_method="adjoint"` uses reversible VJP/JVP sweeps instead of shifted circuits. Retained state vectors stay independent of gate count. Channels, measurements and feedback require the existing differentiation paths.
+
 ## Circuit interoperability
 
 Import native programs with `convert(program, target="ir")`. Inspect compatibility before loading a target SDK, then export the prepared plan:
@@ -54,7 +56,7 @@ result = plan.export()  # Raises ConversionError for reported incompatibilities.
 print(result.value)
 ```
 
-Plans report source and prepared resources, required extras and deferred SDK synthesis. Conversion accepts `max_operations`, `max_depth` and `max_output_statements` budgets; the CLI exposes matching flags. Single-qubit matrices lower with NumPy and retain global phase; OpenQASM 2 phase loss is rejected.
+Plans report source and prepared resources, required extras and deferred SDK synthesis. Conversion and `QuantumProgram.convert(...)` accept `max_operations`, `max_depth` and `max_output_statements`; the CLI exposes matching flags. Global limits constrain built-in importers before expansion. Single-qubit matrices lower with NumPy and retain global phase; OpenQASM 2 phase loss is rejected.
 
 IR readers check byte, operation, nesting, expression and matrix budgets before constructing circuits. Import settings belong in `source_options`; portable layer and checkpoint readers accept matching matrix limits.
 
