@@ -1,4 +1,10 @@
-"""OpenQML: hybrid quantum learning and explicit circuit interoperability."""
+"""Hybrid quantum learning and explicit circuit interoperability.
+
+Import once as ``import openqml as oq``. Optional integrations are available
+through ``oq.torch``, ``oq.jax`` and ``oq.flax`` and load only when accessed.
+"""
+
+from importlib import import_module as _import_module
 
 from ._scheduling import ExecutionBatch, ReadoutRoute
 from .adjoint import AdjointPlan, adjoint_jvp, adjoint_vjp
@@ -50,6 +56,21 @@ from .readout import ReadoutPlan, plan_readout
 from .simulator import ExecutionResult, execute, expectation, expectations, sample, statevector
 from .templates import data_reuploading, hardware_efficient
 from .verification import ConversionCheck
+
+_INTERFACE_NAMES = frozenset({"torch", "jax", "flax"})
+
+
+def __getattr__(name):
+    if name in _INTERFACE_NAMES:
+        module = _import_module(f".interfaces.{name}", __name__)
+        globals()[name] = module
+        return module
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(set(globals()) | _INTERFACE_NAMES)
+
 
 __version__ = "0.3.0a8"
 
