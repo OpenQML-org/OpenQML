@@ -1,5 +1,6 @@
 include README.md LICENSE
-recursive-include examples *.py *.qasm
+recursive-include docs *.svg
+prune examples
 recursive-include tests *.py
 recursive-include benchmarks *.py
 recursive-include .github/workflows *.yml
