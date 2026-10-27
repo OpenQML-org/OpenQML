@@ -83,6 +83,17 @@ class ReadoutPlan:
         return json.dumps(self.to_dict(), indent=indent, allow_nan=False)
 
 
+def _causal_cone(circuit, live):
+    """Return source indices and wires without copying immutable matrix payloads."""
+    live, indices = set(live), []
+    for index in range(len(circuit.operations) - 1, -1, -1):
+        op = circuit.operations[index]
+        if op.name != "barrier" and live.intersection(op.qubits):
+            indices.append(index)
+            live.update(op.qubits)
+    return tuple(reversed(indices)), tuple(sorted(live))
+
+
 def plan_readout(circuit, observables, *, max_operations=100_000):
     """Trace a conservative backward cone, then compact its wires and readouts.
 
@@ -116,15 +127,9 @@ def plan_readout(circuit, observables, *, max_operations=100_000):
             if term.coefficient:
                 live.update(q for q, pauli in enumerate(term.paulis) if pauli != "I")
 
-    indices = []
-    for index in range(len(circuit.operations) - 1, -1, -1):
-        op = circuit.operations[index]
-        if op.name != "barrier" and live.intersection(op.qubits):
-            indices.append(index)
-            live.update(op.qubits)
-    qubits = tuple(sorted(live)) or (0,)
+    indices, qubits = _causal_cone(circuit, live)
+    qubits = qubits or (0,)
     wire_map = {q: i for i, q in enumerate(qubits)}
-    indices = tuple(reversed(indices))
     operations = []
     for index in indices:
         op = circuit.operations[index]
