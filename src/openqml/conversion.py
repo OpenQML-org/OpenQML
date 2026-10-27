@@ -321,6 +321,7 @@ class ConversionPlan:
         max_branches=256,
         basis_chunk_size=16,
         source_options=None,
+        mode="roundtrip",
     ):
         """Numerically check export/reimport over a complete quantum input basis.
 
@@ -329,6 +330,9 @@ class ConversionPlan:
         input zero. This checks the adapters at one binding through the IR
         simulator; it is not a target-runtime test or an all-parameter proof.
         Basis chunks, work, width and branch counts are explicitly bounded.
+        mode='native' executes the exported SDK artifact without reimporting it.
+        It supports unitary circuits and channels/reset without recorded
+        measurement or feedback. OpenQASM uses Qiskit's official frontend.
         """
         from .verification import _verify_conversion
 
@@ -343,6 +347,7 @@ class ConversionPlan:
             max_branches=max_branches,
             basis_chunk_size=basis_chunk_size,
             source_options=source_options,
+            mode=mode,
         )
 
     def export(self):
