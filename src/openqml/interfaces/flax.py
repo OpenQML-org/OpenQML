@@ -18,6 +18,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
     """Linen layer with optional adjoint gradients and unitary readout reduction.
 
     reduce_readout=True keeps source parameter shapes and checkpoint semantics.
+    execution_method='pauli' uses bounded real arithmetic with native autodiff.
     """
 
     circuit: object
@@ -37,6 +38,8 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
     optimization_options: object = None
     gradient_method: str = "auto"
     reduce_readout: bool = False
+    execution_method: str = "auto"
+    pauli_options: object = None
 
     @classmethod
     def from_checkpoint(cls, checkpoint, **kwargs):
@@ -91,6 +94,8 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
             optimize=self.optimize,
             optimization_options=self.optimization_options,
             reduce_readout=self.reduce_readout,
+            execution_method=self.execution_method,
+            pauli_options=self.pauli_options,
         )
         return layer(weights, jnp.asarray(inputs, dtype=self.dtype))
 
