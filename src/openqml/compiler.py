@@ -12,15 +12,8 @@ def rename_parameters(circuit, names):
     from .parameters import Parameter
 
     mapping = {name: Parameter(value) for name, value in names.items()}
-    ops = tuple(
-        replace(
-            op,
-            params=tuple(p.substitute(mapping) for p in op.params),
-            blocks=tuple(rename_parameters(b, names) for b in op.blocks),
-        )
-        for op in circuit.operations
-    )
-    return replace(circuit, operations=ops, global_phase=circuit.global_phase.substitute(mapping))
+    active = set(circuit.parameters)
+    return circuit.substitute({name: value for name, value in mapping.items() if name in active})
 
 
 PORTABLE_BASIS = (GATES_V1 | {"unitary"}) - {"measure", "barrier"}

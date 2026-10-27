@@ -468,10 +468,15 @@ class Circuit:
             raise ValidationError(f"Unknown substitution parameters: {sorted(unknown)}.")
         mapping = {name: expression(value) for name, value in mapping.items()}
 
+        return self._map_parameters(lambda p: p.substitute(mapping))
+
+    def _map_parameters(self, transform):
+        """Rewrite expressions while sharing every unchanged immutable operation."""
+
         def rewrite(body):
             operations = []
             for op in body.operations:
-                params = tuple(p.substitute(mapping) for p in op.params)
+                params = tuple(transform(p) for p in op.params)
                 blocks = tuple(rewrite(block) for block in op.blocks)
                 changed = params != op.params or any(
                     new is not old for new, old in zip(blocks, op.blocks, strict=True)
@@ -479,7 +484,7 @@ class Circuit:
                 # Keep unchanged matrices/channels intact instead of repeating
                 # their potentially expensive validation during symbol rewrites.
                 operations.append(replace(op, params=params, blocks=blocks) if changed else op)
-            phase = body.global_phase.substitute(mapping)
+            phase = transform(body.global_phase)
             if phase == body.global_phase and all(
                 new is old for new, old in zip(operations, body.operations, strict=True)
             ):
@@ -489,27 +494,19 @@ class Circuit:
         return rewrite(self)
 
     def bind(self, bindings: Mapping[str, float], *, partial: bool = False) -> Circuit:
-        unknown = set(bindings) - set(self.parameters)
-        missing = set(self.parameters) - set(bindings)
+        from .parameters import parameter_name, real
+
+        if not isinstance(bindings, Mapping):
+            raise ValidationError("Parameter bindings require a name mapping.")
+        bindings = {parameter_name(name): real(value) for name, value in bindings.items()}
+        parameters = set(self.parameters)
+        unknown = set(bindings) - parameters
+        missing = parameters - set(bindings)
         if unknown or (missing and not partial):
             raise ValidationError(
                 f"Parameter mismatch: missing={sorted(missing)}, unknown={sorted(unknown)}."
             )
-        operations = tuple(
-            replace(
-                op,
-                params=tuple(p.bind(bindings) for p in op.params),
-                blocks=tuple(
-                    block.bind(
-                        {k: v for k, v in bindings.items() if k in block.parameters},
-                        partial=partial,
-                    )
-                    for block in op.blocks
-                ),
-            )
-            for op in self.operations
-        )
-        return replace(self, operations=operations, global_phase=self.global_phase.bind(bindings))
+        return self._map_parameters(lambda p: p.bind(bindings))
 
     def unitary_part(self) -> Circuit:
         """Remove terminal measurements; reject any subsequent quantum operation."""
