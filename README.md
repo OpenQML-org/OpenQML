@@ -42,7 +42,7 @@ For unitary simulation, `backend="numpy", gradient_method="adjoint"` reuses boun
 
 `execution_method="pauli"` compiles supported unitary expectations into real arithmetic without state vectors. `PauliPlan` also evaluates NumPy arrays. `pauli_options` bounds symbolic growth; exhaustion raises diagnostics without approximate truncation. Growth can be exponential.
 
-`execution_method="planned"` factors each readout, shares local queries and parameter graphs, and selects exact Pauli or dense engines per block. `ExpectationPlan` exposes source provenance, candidate costs and rejection reasons. `plan.verify(...)` checks a concrete binding against bounded full-source execution through NumPy, Qiskit, Cirq or PennyLane. `planning_options` bounds total search, groups and dense width. Native PyTorch/JAX/Flax retain higher derivatives and source checkpoints; working-memory limits exclude autodiff retention. Selection uses a static cost heuristic.
+`execution_method="planned"` factors readouts and selects exact Pauli or dense engines. Repeated dense functions execute once; matching blocks with different parameters pack into native batches. `ExpectationPlan` exposes provenance, costs, rejection reasons and `dense_batches`. `planning_options` bounds search, groups, dense width and `max_dense_batch`; packing also adapts to working memory. Native PyTorch/JAX/Flax retain higher derivatives and source checkpoints. Memory estimates exclude autodiff retention; engine selection uses a static heuristic. `plan.verify(...)` compares expectations against bounded full-source execution through NumPy, Qiskit, Cirq or PennyLane.
 
 ## Circuit interoperability
 
@@ -59,6 +59,8 @@ print(result.value)
 ```
 
 Plans report resources, required extras and deferred synthesis. Conversion, `QuantumProgram.convert(...)` and the CLI expose operation, nesting and output-statement limits, enforced before built-in import expansion. Single-qubit matrices lower with NumPy while retaining phase; OpenQASM 2 phase loss is rejected.
+
+`ConversionPlan.verify(bindings)` checks export/reimport over a complete quantum input basis, including unitary phase, channels and final classical records with feedback. Checks use bounded basis chunks and the IR simulator at one binding. `ConversionCheck.raise_for_errors()` rejects numerical mismatches; this checks adapters, not target-runtime behavior or all parameter values.
 
 IR readers check byte, operation, nesting, expression and matrix budgets before constructing circuits. Import settings belong in `source_options`; portable layer and checkpoint readers accept matching matrix limits.
 

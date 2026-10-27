@@ -309,6 +309,42 @@ class ConversionPlan:
     def to_json(self, *, indent=2):
         return json.dumps(self.to_dict(), indent=indent, allow_nan=False)
 
+    def verify(
+        self,
+        bindings=None,
+        *,
+        atol=1e-10,
+        rtol=1e-10,
+        max_qubits=6,
+        max_memory_mb=64,
+        max_work=10_000_000,
+        max_branches=256,
+        basis_chunk_size=16,
+        source_options=None,
+    ):
+        """Numerically check export/reimport over a complete quantum input basis.
+
+        Unitary checks retain phase. Effectful checks retain final classical
+        storage and compare linear maps on every matrix unit, with classical
+        input zero. This checks the adapters at one binding through the IR
+        simulator; it is not a target-runtime test or an all-parameter proof.
+        Basis chunks, work, width and branch counts are explicitly bounded.
+        """
+        from .verification import _verify_conversion
+
+        return _verify_conversion(
+            self,
+            bindings,
+            atol=atol,
+            rtol=rtol,
+            max_qubits=max_qubits,
+            max_memory_mb=max_memory_mb,
+            max_work=max_work,
+            max_branches=max_branches,
+            basis_chunk_size=basis_chunk_size,
+            source_options=source_options,
+        )
+
     def export(self):
         """Export exactly this plan, refusing every reported incompatibility."""
         self.raise_for_errors()

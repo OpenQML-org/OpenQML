@@ -176,7 +176,12 @@ def prepare_execution(
         from ..execution import ExpectationPlan
 
         planning = {} if planning_options is None else dict(planning_options)
-        if set(planning) - {"max_groups", "max_dense_qubits", "max_planning_work"}:
+        if set(planning) - {
+            "max_groups",
+            "max_dense_qubits",
+            "max_planning_work",
+            "max_dense_batch",
+        }:
             raise ValidationError("Unknown expectation planning option.")
         return ExpectationPlan(
             circuit, observables, max_memory_mb=limits["max_memory_mb"], **settings, **planning
