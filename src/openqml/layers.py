@@ -129,6 +129,39 @@ class LayerSpec:
         )
         return spec
 
+    def reparameterize(self, mapping, *, input_parameters, weight_parameters):
+        """Retie or transform symbols through the IR with explicit new ownership.
+
+        Replacements are simultaneous real expressions, including nonlinear
+        input/weight dependencies. Declare every resulting symbol exactly once;
+        ownership is never inferred across newly shared inputs and weights.
+        """
+        return LayerSpec(
+            self.circuit.substitute(mapping),
+            input_parameters,
+            weight_parameters,
+            self.observables,
+        )
+
+    def bind(self, bindings):
+        """Fix a subset of inputs/weights to finite real values.
+
+        Remaining ownership keeps its source order. Symbols eliminated by
+        constant folding are also omitted from the returned layer interface.
+        """
+        if not isinstance(bindings, Mapping):
+            raise ValidationError("Layer bindings require a name mapping.")
+        circuit = self.circuit.substitute(
+            {parameter_name(name): real(value) for name, value in bindings.items()}
+        )
+        active = set(circuit.parameters)
+        return LayerSpec(
+            circuit,
+            tuple(name for name in self.input_parameters if name in active),
+            tuple(name for name in self.weight_parameters if name in active),
+            self.observables,
+        )
+
     def to_dict(self):
         def term(p):
             return {"paulis": p.paulis, "coefficient": p.coefficient}
@@ -328,6 +361,25 @@ class LayerCheckpoint:
             if destination in values and values[destination] != value:
                 raise ValidationError(f"Shared weight {destination!r} has conflicting values.")
             values[destination] = value
+        return LayerCheckpoint(
+            spec, {name: values[name] for name in spec.weight_parameters}, self.dtype
+        )
+
+    def freeze(self, parameters=None):
+        """Fix selected weights at saved precision and retain the other weights.
+
+        Omit parameters to freeze all weights. The resulting checkpoint loads
+        into any interface; frozen constants are embedded in its portable IR.
+        Inputs cannot be selected, and optimizer state is not transferred.
+        """
+        names = self.spec.weight_parameters if parameters is None else _parameter_names(parameters)
+        if len(set(names)) != len(names):
+            raise ValidationError("Frozen weight names must be unique.")
+        unknown = set(names) - set(self.spec.weight_parameters)
+        if unknown:
+            raise ValidationError(f"Unknown checkpoint weight parameters: {sorted(unknown)}.")
+        values = self.bindings
+        spec = self.spec.bind({name: values[name] for name in names})
         return LayerCheckpoint(
             spec, {name: values[name] for name in spec.weight_parameters}, self.dtype
         )
