@@ -46,6 +46,8 @@ class ConversionCheck:
     worst_record: tuple[int, ...] | None
     atol: float
     rtol: float
+    mode: str = "roundtrip"
+    runtime_backend: str | None = None
 
     @property
     def diagnostics(self):
@@ -53,8 +55,10 @@ class ConversionCheck:
             return ()
         return (
             Diagnostic(
-                "CONVERSION_ROUNDTRIP_MISMATCH",
-                f"Round trip changed {self.mismatched_entries} basis-map entries; "
+                "CONVERSION_NATIVE_MISMATCH"
+                if self.mode == "native"
+                else "CONVERSION_ROUNDTRIP_MISMATCH",
+                f"Conversion changed {self.mismatched_entries} input-map entries; "
                 f"maximum absolute error is {self.max_absolute_error:g}.",
                 f"input[{self.worst_input}].output[{self.worst_output}].record{self.worst_record}",
                 hint="Inspect wire order, phase, channel conventions and classical records.",
@@ -67,12 +71,18 @@ class ConversionCheck:
 
     def to_dict(self):
         return {
-            "scope": "adapter_roundtrip_at_bindings",
-            "quantum_inputs": "complete_basis",
+            "scope": "native_runtime_at_bindings"
+            if self.mode == "native"
+            else "adapter_roundtrip_at_bindings",
+            "quantum_inputs": "spanning_pure_states"
+            if self.semantics == "quantum_channel"
+            else "complete_basis",
             "classical_input": "all_zero",
             "wire_order": "q0_most_significant",
             "basis_indexing": (
-                "row_major_matrix_units"
+                "basis_states_then_pair_real_imaginary"
+                if self.semantics == "quantum_channel"
+                else "row_major_matrix_units"
                 if self.semantics == "quantum_instrument"
                 else "basis_states"
             ),
@@ -82,6 +92,57 @@ class ConversionCheck:
 
     def to_json(self, *, indent=2):
         return json.dumps(self.to_dict(), indent=indent, allow_nan=False)
+
+
+@dataclass
+class _Comparison:
+    checked: int = 0
+    mismatched: int = 0
+    maximum: float = 0.0
+    worst_input: int | None = None
+    worst_output: int | None = None
+    worst_record: tuple | None = None
+
+    def add(self, expected, actual, start, atol, rtol):
+        for record in sorted(expected.keys() | actual.keys(), key=lambda k: tuple(sorted(k))):
+            a, b = actual.get(record), expected.get(record)
+            if a is None:
+                a = np.zeros_like(b)
+            if b is None:
+                b = np.zeros_like(a)
+            if a.shape != b.shape:
+                raise ValidationError("Conversion verification returned an unexpected array shape.")
+            errors = np.abs(a - b)
+            if not np.isfinite(errors).all():
+                raise ValidationError("Conversion verification produced nonfinite values.")
+            self.checked += errors.size
+            self.mismatched += int(np.count_nonzero(~np.isclose(a, b, atol=atol, rtol=rtol)))
+            index = np.unravel_index(int(np.argmax(errors)), errors.shape)
+            error = float(errors[index])
+            if error > self.maximum:
+                self.maximum = error
+                self.worst_input, self.worst_output = start + int(index[0]), int(index[1])
+                self.worst_record = tuple(sorted(record))
+
+    def result(self, circuit, target, semantics, size, atol, rtol, mode="roundtrip", backend=None):
+        return ConversionCheck(
+            not self.mismatched,
+            target,
+            semantics,
+            circuit.num_qubits,
+            circuit.num_clbits,
+            size,
+            self.checked,
+            self.mismatched,
+            self.maximum,
+            self.worst_input,
+            self.worst_output,
+            self.worst_record,
+            atol,
+            rtol,
+            mode,
+            backend,
+        )
 
 
 def _expression_work(circuit, limit):
@@ -193,9 +254,16 @@ def _verify_conversion(
     max_branches,
     basis_chunk_size,
     source_options,
+    mode,
 ):
     from .conversion import plan_conversion
 
+    if not isinstance(mode, str) or mode not in {"roundtrip", "native"}:
+        raise ValidationError("Verification mode must be roundtrip or native.")
+    if mode == "native":
+        from ._native_verification import _native_scope
+
+        _native_scope(plan.circuit, plan.target_format, source_options)
     atol, rtol = real(atol), real(rtol)
     budget = real(max_memory_mb)
     if min(atol, rtol) < 0 or budget <= 0:
@@ -247,6 +315,23 @@ def _verify_conversion(
         raise ResourceError("Conversion verification exceeds max_work.")
     _basis_capacity((circuit,), (source_peak, source_peak), size, budget)
     exported = plan.export()
+    if mode == "native":
+        from ._native_verification import _verify_native
+
+        return _verify_native(
+            plan,
+            exported.value,
+            instrument,
+            source_records,
+            source_peak,
+            size,
+            work,
+            max_work,
+            budget,
+            chunk,
+            atol,
+            rtol,
+        )
     restored = plan_conversion(
         exported.value,
         source=plan.target_format,
@@ -278,46 +363,20 @@ def _verify_conversion(
     # evolution; eight buffers per peak branch bound primal arrays conservatively.
     capacity = _basis_capacity((circuit, restored), (source_peak, target_peak), size, budget)
     chunk = min(chunk, capacity, size)
-    checked = mismatched = 0
-    maximum, worst_input, worst_output, worst_record = 0.0, None, None, None
+    comparison = _Comparison()
     for start in range(0, size, chunk):
         rows = min(chunk, size - start)
         basis = np.zeros((rows, size), dtype=complex)
         basis[np.arange(rows), np.arange(start, start + rows)] = 1
         expected = _evolve_basis(circuit, basis, instrument, source_records)
         actual = _evolve_basis(restored, basis, instrument, target_records)
-        for record in sorted(expected.keys() | actual.keys(), key=lambda k: tuple(sorted(k))):
-            a, b = actual.get(record), expected.get(record)
-            if a is None:
-                a = np.zeros_like(b)
-            if b is None:
-                b = np.zeros_like(a)
-            errors = np.abs(a - b)
-            if not np.isfinite(errors).all():
-                raise ValidationError("Conversion verification produced nonfinite values.")
-            checked += errors.size
-            mismatched += int(np.count_nonzero(~np.isclose(a, b, atol=atol, rtol=rtol)))
-            index = np.unravel_index(int(np.argmax(errors)), errors.shape)
-            error = float(errors[index])
-            if error > maximum:
-                maximum = error
-                worst_input, worst_output = start + int(index[0]), int(index[1])
-                worst_record = tuple(sorted(record))
-            del a, b, errors
+        comparison.add(expected, actual, start, atol, rtol)
         del expected, actual, basis
-    return ConversionCheck(
-        not mismatched,
+    return comparison.result(
+        circuit,
         plan.target_format,
         "quantum_instrument" if instrument else "unitary_including_global_phase",
-        circuit.num_qubits,
-        circuit.num_clbits,
         size,
-        checked,
-        mismatched,
-        maximum,
-        worst_input,
-        worst_output,
-        worst_record,
         atol,
         rtol,
     )
