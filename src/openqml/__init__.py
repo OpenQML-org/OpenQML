@@ -25,6 +25,7 @@ from .batch import execute_batch, expectations_batch
 from .compiler import CircuitStats, circuit_stats, decompose, inverse, simplify
 from .conversion import ConversionPlan, ConversionResult, convert, diagnose, plan_conversion
 from .density import density_matrix
+from .environment import environment_report
 from .errors import (
     BackendError,
     ConversionError,
@@ -43,6 +44,7 @@ from .gradients import (
     parameter_shift_jvp,
     parameter_shift_vjp,
 )
+from .inspection import PythonSourceReport, inspect_python
 from .ir import Circuit, CircuitBuilder, ClassicalCondition, Operation
 from .layers import LayerCheckpoint, LayerSpec
 from .measurement import EstimateResult, MeasurementPlan, ShotBackend, estimate, measurement_plan
@@ -54,6 +56,7 @@ from .planning import DensityPlan, plan_density
 from .program import QuantumProgram, as_circuit
 from .providers import CirqDensityBackend, QiskitEstimatorBackend, QiskitSamplerBackend
 from .readout import ReadoutPlan, plan_readout
+from .resources import ResourceEstimate, estimate_resources
 from .simulator import ExecutionResult, execute, expectation, expectations, sample, statevector
 from .templates import data_reuploading, hardware_efficient
 from .verification import ConversionCheck
@@ -90,9 +93,14 @@ def __dir__():
     return sorted(set(globals()) | _LAZY_MODULES.keys())
 
 
-__version__ = "0.3.0a12"
+__version__ = "0.3.0a13"
 
 __all__ = [
+    "environment_report",
+    "PythonSourceReport",
+    "inspect_python",
+    "ResourceEstimate",
+    "estimate_resources",
     "ReadoutRoute",
     "ConversionCheck",
     "ExecutionBatch",

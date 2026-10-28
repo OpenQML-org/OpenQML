@@ -13,7 +13,7 @@ def _diagonal_value(diagonal, mask, num_qubits):
     value = diagonal.reshape(shape + (2,) * num_qubits)
     if axes:
         value = value.sum(axis=axes)
-    for _ in range(mask.bit_count()):
+    for _ in range(num_qubits - len(axes)):
         value = value[..., 0] - value[..., 1]
     return value
 
@@ -48,13 +48,14 @@ def _evaluate_readouts(observables, num_qubits, ops, anchor, diagonal, pauli):
             if not isinstance(term, PauliString) or len(term.paulis) != num_qubits:
                 raise ValidationError("Observable width must equal the circuit's qubit count.")
             if term.coefficient:
-                words.setdefault(term.paulis, None)
+                if term.paulis not in words:
+                    words[term.paulis] = None
                 route.append((term.paulis, term.coefficient))
         routes.append(route)
     masks = {
         word: sum(1 << (num_qubits - q - 1) for q, p in enumerate(word) if p == "Z")
         for word in words
-        if not set(word) - {"I", "Z"}
+        if "X" not in word and "Y" not in word
     }
     if masks:
         probabilities = diagonal()

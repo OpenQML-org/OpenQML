@@ -3,5 +3,7 @@ recursive-include docs *.svg
 prune examples
 recursive-include tests *.py
 recursive-include benchmarks *.py
+include benchmarks/results/scientific_cpu.json
+include benchmarks/results/installation_linux.json
 recursive-include .github/workflows *.yml
 global-exclude *.py[cod] __pycache__ .DS_Store

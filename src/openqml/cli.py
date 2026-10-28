@@ -12,6 +12,9 @@ from . import (
     circuit_stats,
     convert,
     decompose,
+    environment_report,
+    estimate_resources,
+    inspect_python,
     list_backends,
     optimize,
     plan_conversion,
@@ -21,7 +24,37 @@ from . import (
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="openqml")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("doctor", help="Report installed extras without importing them")
+    doctor = commands.add_parser("doctor", help="Report integration availability and compatibility")
+    doctor.add_argument(
+        "--report", action="store_true", help="Include dependency and platform details"
+    )
+    doctor.add_argument(
+        "--check-imports", action="store_true", help="Probe imports in isolated subprocesses"
+    )
+    doctor.add_argument(
+        "--sizes", action="store_true", help="Measure logical installed dependency files"
+    )
+    doctor.add_argument("--output", type=Path)
+    doctor.add_argument("--force", action="store_true")
+    python = commands.add_parser(
+        "inspect-python", help="Inspect source without executing or translating it"
+    )
+    python.add_argument("input", type=Path)
+    python.add_argument("--max-source-bytes", type=int, default=8_000_000)
+    python.add_argument("--max-tokens", type=int, default=200_000)
+    python.add_argument("--max-nodes", type=int, default=100_000)
+    resources = commands.add_parser(
+        "resources", help="Estimate storage separately from circuit size"
+    )
+    resources.add_argument("input", type=Path)
+    resources.add_argument(
+        "--from", dest="source", choices=("json", "openqasm2", "openqasm3"), required=True
+    )
+    resources.add_argument("--max-qubits", type=int, default=20)
+    resources.add_argument("--max-memory-mb", type=float, default=256)
+    resources.add_argument("--batch-size", type=int, default=1)
+    resources.add_argument("--max-operations", type=int, default=100_000)
+    resources.add_argument("--max-depth", type=int, default=64)
     command = commands.add_parser(
         "convert", help="Convert JSON IR and the supported OpenQASM subset"
     )
@@ -70,6 +103,17 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "doctor":
+            if args.report or args.check_imports or args.sizes or args.output:
+                report = environment_report(
+                    check_imports=args.check_imports, include_sizes=args.sizes
+                )
+                text = json.dumps(report, indent=2) + "\n"
+                if args.output:
+                    with args.output.open("w" if args.force else "x", encoding="utf-8") as stream:
+                        stream.write(text)
+                else:
+                    print(text, end="")
+                return 0 if report["status"] == "ok" else 2
             packages = {"openqml": "installed"}
             for package in (
                 "numpy",
@@ -81,6 +125,9 @@ def main(argv=None):
                 "cirq-core",
                 "flax",
                 "optax",
+                "openqasm3",
+                "sympy",
+                "packaging",
             ):
                 try:
                     version(package)
@@ -89,10 +136,40 @@ def main(argv=None):
                     packages[package] = "missing"
             packages["registered_backends"] = list_backends()
             print(json.dumps(packages, indent=2))
+        elif args.command == "inspect-python":
+            if args.max_source_bytes < 1 or args.input.stat().st_size > args.max_source_bytes:
+                raise ValueError("Python source exceeds --max-source-bytes.")
+            report = inspect_python(
+                args.input.read_text(encoding="utf-8"),
+                filename=str(args.input),
+                max_source_bytes=args.max_source_bytes,
+                max_tokens=args.max_tokens,
+                max_nodes=args.max_nodes,
+            )
+            print(report.to_json())
+            return 0 if report.static_scan_complete else 2
         else:
             if args.input.stat().st_size > 8_000_000:
                 raise ValueError("Input file exceeds 8 MB.")
             text = args.input.read_text(encoding="utf-8")
+            if args.command == "resources":
+                circuit = plan_conversion(
+                    text,
+                    source=args.source,
+                    target="ir",
+                    max_operations=args.max_operations,
+                    max_depth=args.max_depth,
+                ).circuit
+                report = estimate_resources(
+                    circuit,
+                    batch_size=args.batch_size,
+                    max_qubits=args.max_qubits,
+                    max_memory_mb=args.max_memory_mb,
+                    max_operations=args.max_operations,
+                    max_depth=args.max_depth,
+                )
+                print(report.to_json())
+                return 0
             if args.command == "convert" and args.check:
                 if args.output or args.force:
                     raise ValueError("--check cannot be combined with --output or --force.")

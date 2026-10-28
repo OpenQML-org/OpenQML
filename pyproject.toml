@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openqml"
-version = "0.3.0a12"
+version = "0.3.0a13"
 description = "Differentiable quantum layers and diagnostic-driven quantum circuit interoperability"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,7 +25,9 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Physics",
 ]
 dependencies = [
-  "numpy>=1.24",
+  "packaging>=23",
+  "numpy>=1.24; platform_system != 'Darwin' or platform_machine != 'x86_64'",
+  "numpy>=1.26,<2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
   "torch>=2.2",
   "jax>=0.4.30",
   "flax>=0.10",
