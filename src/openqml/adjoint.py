@@ -15,7 +15,7 @@ from .errors import ResourceError, ValidationError
 from .ir import Circuit, integer
 from .observables import Hamiltonian
 from .parameters import real
-from .simulator import _X, _Y, _Z, _apply_matrix, _gate_matrix, _TensorOps
+from .simulator import _X, _Y, _Z, _apply_matrix, _expectations_from_state, _gate_matrix, _TensorOps
 
 
 def _check_adjoint(circuit, max_qubits, max_memory_mb):
@@ -289,10 +289,9 @@ class AdjointPlan:
             state = _forward(
                 self.circuit, {n: v[start:end] for n, v in bindings.items()}, end - start
             )
-            for j, observable in enumerate(self.observables):
-                result[start:end, j] = np.real(
-                    np.sum(np.conj(state) * _observable_action(state, observable), axis=-1)
-                )
+            result[start:end] = _expectations_from_state(
+                state, self.observables, self.circuit.num_qubits, _TensorOps()
+            )
         if not np.isfinite(result).all():
             raise ValidationError("Expectation values exceed finite real precision.")
         return result

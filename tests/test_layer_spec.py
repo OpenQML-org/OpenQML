@@ -4,6 +4,7 @@ import json
 import numpy as np
 import pytest
 
+import openqml as oq
 from openqml import (
     Circuit,
     ClassicalCondition,
@@ -241,7 +242,7 @@ def test_torch_jax_flax_share_spec_weights_outputs_and_derivatives():
     tl = TorchLayer.from_spec(spec, dtype=torch.float64, optimize=True)
     output = torch.func.functional_call(tl, {"weights": tw}, (tx,))
     dw, dx = torch.autograd.grad(output.sum(), (tw, tx))
-    with jax.enable_x64():
+    with oq.jax.enable_x64():
         jl = JaxLayer.from_spec(spec, optimize=True)
         jx, jw = jnp.asarray(tx.detach().numpy()), jnp.asarray(tw.detach().numpy())
         np.testing.assert_allclose(jax.jit(jl)(jw, jx), output.detach().numpy(), atol=1e-12)

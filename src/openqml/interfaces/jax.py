@@ -8,10 +8,10 @@ try:
 except ImportError as exc:
     from ..errors import MissingDependencyError
 
-    raise MissingDependencyError("Install openqml[jax] for QuantumLayer.") from exc
+    raise MissingDependencyError("Cannot load JAX. Run: python -m pip install openqml.") from exc
 
 from ..errors import ValidationError
-from ..parameters import real
+from ..parameters import real as _real
 from ..simulator import _checkpoint_interval, _resource_check, expectations
 from ._spec import (
     LayerSpecMixin,
@@ -148,7 +148,7 @@ class QuantumLayer(LayerSpecMixin):
         self.adjoint_plan, self.shift_plan = prepare_gradients(self)
 
     def init(self, key, *, scale=0.1, dtype=jnp.float32):
-        scale = real(scale)
+        scale = _real(scale)
         if scale < 0 or jnp.dtype(dtype) not in {jnp.dtype("float32"), jnp.dtype("float64")}:
             raise ValidationError("Use nonnegative scale and float32/float64 dtype.")
         return scale * jax.random.normal(key, (len(self.weight_parameters),), dtype=dtype)
@@ -306,3 +306,16 @@ def _external_layer(layer, weights, inputs):
     from ._jax_ad import external_call
 
     return external_call(layer, weights, inputs)
+
+
+def __getattr__(name):
+    """Expose native JAX transforms, arrays and random keys through one import."""
+    if name == "enable_x64" and not hasattr(jax, name):
+        from jax.experimental import enable_x64
+
+        return enable_x64
+    return getattr(jax, name)
+
+
+def __dir__():
+    return sorted(set(globals()) | set(dir(jax)) | {"enable_x64"})

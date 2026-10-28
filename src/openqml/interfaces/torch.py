@@ -8,7 +8,9 @@ try:
 except ImportError as exc:
     from ..errors import MissingDependencyError
 
-    raise MissingDependencyError("Install openqml[torch] for QuantumLayer.") from exc
+    raise MissingDependencyError(
+        "Cannot load PyTorch. Run: python -m pip install openqml."
+    ) from exc
 
 from ..errors import ValidationError
 from ..simulator import _checkpoint_interval, _resource_check, expectations
@@ -151,9 +153,9 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
         dtype = torch.get_default_dtype() if dtype is None else dtype
         if dtype not in {torch.float32, torch.float64}:
             raise ValidationError("QuantumLayer requires float32 or float64 weights.")
-        from ..parameters import real
+        from ..parameters import real as _real
 
-        init_scale = real(init_scale)
+        init_scale = _real(init_scale)
         if init_scale < 0:
             raise ValidationError("init_scale must be nonnegative.")
         self.weights = nn.Parameter(
@@ -401,3 +403,12 @@ class QuantumConv2d(nn.Module):
             inputs.shape[0], height * width, self.out_channels
         )
         return projected.transpose(1, 2).reshape(inputs.shape[0], self.out_channels, height, width)
+
+
+def __getattr__(name):
+    """Expose native PyTorch APIs alongside OpenQML layers through one import."""
+    return getattr(torch, name)
+
+
+def __dir__():
+    return sorted(set(globals()) | set(dir(torch)))

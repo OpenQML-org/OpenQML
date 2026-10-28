@@ -9,7 +9,9 @@ def dependency(module, extra):
     try:
         return importlib.import_module(module)
     except ImportError as exc:
-        raise MissingDependencyError(f"Install openqml[{extra}] for this integration.") from exc
+        raise MissingDependencyError(
+            f"Cannot load {extra}. Run: python -m pip install openqml."
+        ) from exc
 
 
 def numeric(value, location="parameter"):
