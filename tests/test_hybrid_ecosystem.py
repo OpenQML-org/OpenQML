@@ -1,6 +1,8 @@
 import numpy as np
 import pytest
 
+import openqml as oq
+
 
 def test_torch_vectorized_nonlinear_batch_input_weight_gradients_and_autocast():
     torch = pytest.importorskip("torch")
@@ -167,7 +169,7 @@ def test_native_pennylane_jax_qnode_graph_and_flax_module():
         qml.StronglyEntanglingLayers(weights, wires=[0, 1])
         return [qml.expval(qml.Z(i)) for i in range(2)]
 
-    with jax.enable_x64():
+    with oq.jax.enable_x64():
         x = jnp.array([[0.23, -0.41], [0.37, 0.61]], dtype=jnp.float64)
         layer = NativePennyLaneLayer(node, {"weights": (2, 2, 3)})
         weights = layer.init(jax.random.key(3), dtype=jnp.float64)
