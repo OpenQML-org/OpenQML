@@ -518,7 +518,7 @@
   },
   "installed_footprint": {
     "scope": "logical_runtime_dependency_files",
-    "bytes": 6856110084,
+    "bytes": 6856112177,
     "file_paths_counted": 44079,
     "missing_recorded_paths": 0,
     "excludes": [
@@ -527,5 +527,6 @@
       "unrelated_distributions"
     ]
   },
-  "diagnostics": []
+  "diagnostics": [],
+  "source_sha256": "b7c70e611ca1b3bb228d6602f627bcc85d092fa223f1aef10100303ff39a0748"
 }
