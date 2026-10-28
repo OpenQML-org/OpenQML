@@ -117,7 +117,7 @@ def _apply(op, args):
     return _checked(result)
 
 
-def _evaluate(value, bindings):
+def _evaluate_graph(value, bindings):
     nodes, uses = tuple(_postorder((value,))), {}
     for node in nodes:
         for arg in node.args:
@@ -137,9 +137,24 @@ def _evaluate(value, bindings):
     return values[id(value)]
 
 
+def _evaluate(value, bindings):
+    # Unary chains need neither graph indexing nor reference counts. A binary
+    # tail still uses the shared evaluator, keeping arbitrarily deep paths flat.
+    chain = []
+    while value.op is not None and len(value.args) == 1:
+        chain.append(value.op)
+        value = value.args[0]
+    result = _leaf_value(value, bindings) if value.op is None else _evaluate_graph(value, bindings)
+    for op in reversed(chain):
+        result = _apply(op, (result,))
+    return result
+
+
 def _rewrite_expression(value, mapping, *, substitute=False, memo=None):
     """Share rewrites across a circuit forest; replacement graphs remain simultaneous."""
     memo = {} if memo is None else memo
+    if (existing := memo.get(id(value))) is not None:
+        return existing
     for current in _postorder((value,), memo):
         if current.op is not None:
             args = tuple(memo[id(arg)] for arg in current.args)

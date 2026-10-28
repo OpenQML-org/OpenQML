@@ -155,9 +155,10 @@ def worker(args):
     samples = []
     for _ in range(args.repetitions):
         start = time.perf_counter()
-        actual = run()
-        elapsed = time.perf_counter() - start
-        np.testing.assert_allclose(actual, reference, atol=1e-10, rtol=1e-10)
+        values = [run() for _ in range(args.iterations)]
+        elapsed = (time.perf_counter() - start) / args.iterations
+        for actual in values:
+            np.testing.assert_allclose(actual, reference, atol=1e-10, rtol=1e-10)
         samples.append(elapsed)
 
     if not args.case.startswith(("torch-", "jax-")):
@@ -181,6 +182,7 @@ def worker(args):
         "case": args.case,
         "depth": depth,
         "source_sha256": source_hash(args.source),
+        "iterations_per_sample": args.iterations,
         "preparation_seconds": preparation,
         "median_seconds": statistics.median(samples),
         "samples_seconds": samples,
@@ -195,11 +197,12 @@ def main():
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1] / "src")
     parser.add_argument("--case", choices=tuple(CASES))
     parser.add_argument("--repetitions", type=int, default=7)
+    parser.add_argument("--iterations", type=int, default=5)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    if args.repetitions < 1:
-        parser.error("--repetitions must be positive")
+    if min(args.repetitions, args.iterations) < 1:
+        parser.error("--repetitions and --iterations must be positive")
     if args.worker:
         sys.path.insert(0, str(args.source.resolve()))
         print(json.dumps(worker(args), allow_nan=False))
@@ -222,6 +225,8 @@ def main():
                     str(source.resolve()),
                     "--repetitions",
                     str(args.repetitions),
+                    "--iterations",
+                    str(args.iterations),
                 ],
                 env=env,
                 capture_output=True,
