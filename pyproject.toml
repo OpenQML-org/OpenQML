@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openqml"
-version = "0.3.0a11"
+version = "0.3.0a12"
 description = "Differentiable quantum layers and diagnostic-driven quantum circuit interoperability"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,22 +24,34 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Topic :: Scientific/Engineering :: Physics",
 ]
-dependencies = ["numpy>=1.24"]
+dependencies = [
+  "numpy>=1.24",
+  "torch>=2.2",
+  "jax>=0.4.30",
+  "flax>=0.10",
+  "optax>=0.2",
+  "qiskit[qasm3-import]>=1.2",
+  "qiskit-aer>=0.15",
+  "pennylane>=0.40",
+  "cirq-core>=1.4",
+  "openqasm3[parser]>=1.0",
+  "sympy>=1.12",
+]
 
 [project.urls]
 Repository = "https://github.com/OpenQML-org/OpenQML"
 
 [project.optional-dependencies]
-torch = ["torch>=2.2"]
-jax = ["jax>=0.4.30"]
-qiskit = ["qiskit>=1.2", "sympy>=1.12"]
-aer = ["qiskit-aer>=0.15", "qiskit>=1.2", "sympy>=1.12"]
-qasm = ["qiskit[qasm3-import]>=1.2", "openqasm3[parser]>=1.0", "sympy>=1.12"]
-flax = ["flax>=0.10", "optax>=0.2", "jax>=0.4.30"]
-symbolic = ["sympy>=1.12"]
-pennylane = ["pennylane>=0.40"]
-cirq = ["cirq-core>=1.4", "sympy>=1.12"]
-all = ["openqml[torch,jax,qiskit,pennylane,cirq,aer,qasm,flax]"]
+torch = []
+jax = []
+qiskit = []
+aer = []
+qasm = []
+flax = []
+symbolic = []
+pennylane = []
+cirq = []
+all = []
 dev = ["pytest>=8", "ruff>=0.11", "build>=1.2", "twine>=6"]
 
 [project.scripts]

@@ -8,7 +8,7 @@ OpenQML adds trainable quantum layers to PyTorch and JAX models and converts cir
 python -m pip install openqml
 ```
 
-NumPy is the only required dependency. Install the extra for your workflow, for example `python -m pip install 'openqml[torch]'`. Other extras include `jax`, `flax`, `qiskit`, `pennylane`, `cirq`, `aer` and `qasm`; `all` installs every integration.
+This installs PyTorch, JAX, Flax, Optax, Qiskit, PennyLane, Cirq, Aer and OpenQASM tooling. All supported integrations are included by default and load when accessed.
 
 ## One OpenQML import
 
@@ -28,26 +28,31 @@ Core operations use the `oq` namespace. Framework integrations load only when ac
 | `oq.torch` | PyTorch modules and functional quantum layers |
 | `oq.jax` | Functional layers with JIT, gradients and mapped execution |
 | `oq.flax` | Linen modules with standard parameter trees |
+| `oq.optax` | JAX optimizers |
+| `oq.qiskit`, `oq.cirq`, `oq.pennylane` | Native SDK APIs and circuit construction |
+| `oq.qiskit_aer`, `oq.openqasm3` | Aer simulation and OpenQASM tooling |
+| `oq.numpy`, `oq.sympy` | Numerical arrays and symbolic expressions |
 
 ## Hybrid training
 
 ```python
-import torch
 import openqml as oq
 
-model = torch.nn.Sequential(
-    torch.nn.Linear(4, 2),
+model = oq.torch.nn.Sequential(
+    oq.torch.nn.Linear(4, 2),
     oq.torch.QuantumLayer.data_reuploading(2, depth=1),
-    torch.nn.Linear(2, 1),
+    oq.torch.nn.Linear(2, 1),
 )
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+optimizer = oq.torch.optim.Adam(model.parameters(), lr=1e-3)
 optimizer.zero_grad()
-loss = model(torch.randn(8, 4)).square().mean()
+loss = model(oq.torch.randn(8, 4)).square().mean()
 loss.backward()
 optimizer.step()
 ```
 
 One optimizer updates the classical and quantum parameters. For JAX, construct `oq.jax.QuantumLayer`, initialize weights with `layer.init(key)`, then call `layer(weights, inputs)`. Native tensor backends support higher derivatives; numerical bridges provide first-order JVPs and VJPs.
+
+Native state-vector and density readouts share duplicate Pauli terms within each call. Sparse diagonal queries use marginal probabilities; large sets of I/Z queries share a Walsh transform. Output order, Hamiltonian coefficients and native automatic differentiation are preserved, including for circuits imported from other frameworks. Provider-native estimators retain their own sampling behavior.
 
 `oq.ShiftPlan` compiles sparse shift rules and backend lowering once, streams numerical products, and shares repeated points only for backends declaring deterministic expectations. Reuse windows and submitted circuit batches are bounded.
 
@@ -66,6 +71,8 @@ Catch `oq.OpenQMLError` or a specific subclass. Public errors have one inheritan
 Defaults remain bounded. `oq.ExecutionOptions.for_statevector(1024, batch_size=8)` derives an explicit qubit cap from a memory budget in MiB; pass its `max_qubits` and `max_memory_mb` to execution. Autodiff tapes and density branches need separate memory planning.
 
 Report cold imports/compilation separately from warm calls. `benchmarks/resource_audit.py` measures both and resets Linux RSS high-water marks before memory windows; RSS counters are approximate. Benchmark JAX precision uses scoped `jax.enable_x64()` and restores the caller's setting.
+
+Readout constant caches have fixed payload caps. Wide NumPy X/Y contractions use bounded tiles. Run `python benchmarks/shared_readouts.py` for fresh-worker readout timing and memory probes; these measure prepared-state readouts separately from full training.
 
 ## Architecture
 

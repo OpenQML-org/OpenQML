@@ -270,7 +270,7 @@ def unregister_backend(name: str) -> StatevectorBackend:
 
 
 def list_backends() -> tuple[str, ...]:
-    """Return registered names; optional built-ins may still need their extra installed."""
+    """Return registered names; built-in implementations load on first selection."""
     with _LOCK:
         return tuple(sorted(set(_REGISTRY) | _BUILTIN_NAMES))
 

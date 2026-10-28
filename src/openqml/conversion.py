@@ -263,7 +263,12 @@ class ConversionPlan:
 
     @property
     def required_extras(self):
-        """Built-in package extras needed at export; installed packages are not probed."""
+        """Compatibility field: built-in integrations are default dependencies."""
+        return ()
+
+    @property
+    def required_integrations(self):
+        """Integrations used at export, without importing or probing their packages."""
         extras = (
             {self.target_format} if self.target_format in {"qiskit", "cirq", "pennylane"} else set()
         )
@@ -290,6 +295,7 @@ class ConversionPlan:
             "compatible": self.compatible,
             "preparation_complete": self.preparation_complete,
             "required_extras": list(self.required_extras),
+            "required_integrations": list(self.required_integrations),
             "parameters": list(self.circuit.parameters),
             "parameter_map": dict(self.parameter_map),
             "resources": asdict(circuit_stats(self.circuit)),
@@ -618,7 +624,7 @@ def plan_conversion(
                 "Matrix synthesis uses Qiskit at export; final gate count and phase are deferred.",
                 _operation_location(path),
                 severity="info",
-                hint="Install openqml[qiskit].",
+                hint="Qiskit synthesis is included in the default OpenQML installation.",
             )
             for path, op in circuit.walk_operations()
             if op.name == "unitary" and op.name in basis

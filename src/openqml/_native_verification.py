@@ -215,7 +215,9 @@ def _verify_native(
         )
     except ImportError as exc:
         extra = "qasm" if target.startswith("openqasm") else backend
-        raise MissingDependencyError(f"Install openqml[{extra}] for native verification.") from exc
+        raise MissingDependencyError(
+            f"Cannot load {extra} for verification. Run: python -m pip install openqml."
+        ) from exc
     except (ConversionError, ResourceError, ValidationError):
         raise
     except Exception as exc:

@@ -6,7 +6,6 @@ import numpy as np
 
 from .errors import ResourceError, ValidationError
 from .ir import CHANNEL_GATES, UNITARY_GATES, integer
-from .observables import Hamiltonian, PauliString
 from .parameters import real
 from .planning import _record_plan
 
@@ -383,25 +382,42 @@ def density_matrix(
     return (rho + zero).reshape(shape + (dimension, dimension))
 
 
-def expectation_from_density(rho, observable, num_qubits, ops):
+def _density_pauli_expectation(rho, paulis, num_qubits, ops):
     from .simulator import _pauli_plan, _torch_pauli_plan
 
-    terms = observable.terms if isinstance(observable, Hamiltonian) else (observable,)
-    total = ops.real(rho[..., 0, 0]) * 0
-    for term in terms:
-        if not isinstance(term, PauliString) or len(term.paulis) != num_qubits:
-            raise ValidationError("Observable width must equal the circuit width.")
-        if ops.backend == "torch":
-            source, phase = _torch_pauli_plan(term.paulis, ops.device, ops.dtype)
-            indices = ops.xp.arange(2**num_qubits, device=ops.device)
-        else:
-            source, phase = _pauli_plan(term.paulis)
-            source, phase = ops.xp.asarray(source), ops.array(phase)
-            indices = ops.xp.arange(2**num_qubits)
-        total = total + term.coefficient * ops.real(
-            (rho[..., source, indices] * phase).sum(axis=-1)
+    if ops.backend == "torch":
+        source, phase = _torch_pauli_plan(paulis, ops.device, ops.dtype)
+        indices = ops.xp.arange(2**num_qubits, device=ops.device)
+    else:
+        source, phase = _pauli_plan(paulis)
+        source, phase = ops.xp.asarray(source), ops.array(phase)
+        indices = ops.xp.arange(2**num_qubits)
+    return ops.real((rho[..., source, indices] * phase).sum(axis=-1))
+
+
+def _expectations_from_density(rho, observables, num_qubits, ops):
+    from ._readouts import _evaluate_readouts
+
+    def diagonal():
+        value = (
+            rho.diagonal(dim1=-2, dim2=-1)
+            if ops.backend == "torch"
+            else rho.diagonal(axis1=-2, axis2=-1)
         )
-    return total
+        return ops.real(value)
+
+    return _evaluate_readouts(
+        observables,
+        num_qubits,
+        ops,
+        rho[..., 0, 0],
+        diagonal,
+        lambda word: _density_pauli_expectation(rho, word, num_qubits, ops),
+    )
+
+
+def expectation_from_density(rho, observable, num_qubits, ops):
+    return _expectations_from_density(rho, (observable,), num_qubits, ops)[..., 0]
 
 
 def execute_density(
