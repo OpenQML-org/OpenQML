@@ -29,7 +29,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
     observables: tuple | None = None
     dtype: object = jnp.float32
     init_scale: float = 0.1
-    max_qubits: int = 20
+    max_qubits: int | None = None
     max_memory_mb: float = 256
     backend: str = "jax"
     batch_chunk_size: int | None = None

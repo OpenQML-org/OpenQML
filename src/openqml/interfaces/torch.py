@@ -54,7 +54,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
         dtype=None,
         device=None,
         init_scale=0.1,
-        max_qubits=20,
+        max_qubits=None,
         max_memory_mb=256,
         backend="torch",
         batch_chunk_size=None,

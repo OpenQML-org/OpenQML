@@ -51,7 +51,7 @@ class QuantumLayer(LayerSpecMixin):
         weight_parameters,
         observables=None,
         *,
-        max_qubits=20,
+        max_qubits=None,
         max_memory_mb=256,
         backend="jax",
         batch_chunk_size=None,

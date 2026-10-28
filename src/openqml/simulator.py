@@ -221,15 +221,17 @@ def _apply_matrix(state, matrix, qubits, num_qubits, ops):
 
 
 def _resource_check(circuit, max_qubits, max_memory_mb, batch_size=1):
-    integer(max_qubits, "max_qubits", 1)
+    if max_qubits is not None:
+        integer(max_qubits, "max_qubits", 1)
     budget = real(max_memory_mb)
     if budget <= 0:
         raise ValidationError("max_memory_mb must be positive.")
     # Four state buffers; autodiff graphs may retain additional memory.
-    max_by_memory = math.floor(
-        math.log2(budget) + 20 - math.log2(4 * 16) - math.log2(max(1, batch_size))
-    )
-    if circuit.num_qubits > min(max_qubits, max_by_memory):
+    numerator, denominator = budget.as_integer_ratio()
+    capacity = ((numerator << 20) // denominator) >> (circuit.num_qubits + 6)
+    if max(1, batch_size) > capacity or (
+        max_qubits is not None and circuit.num_qubits > max_qubits
+    ):
         raise ResourceError(
             f"Dense simulation of {circuit.num_qubits} qubits exceeds "
             f"max_qubits={max_qubits} or working budget={budget:g} MiB. "
@@ -323,7 +325,7 @@ def statevector(
     *,
     backend: str = "numpy",
     like=None,
-    max_qubits: int = 20,
+    max_qubits: int | None = None,
     max_memory_mb: float = 256,
     batch_shape=None,
     checkpoint_interval=None,
@@ -792,7 +794,6 @@ def execute(
                 bound, probabilities, shots, seed, max_memory_mb, classical_bits
             )
         return ExecutionResult(device.name, probabilities, None, counts, rho, classical_bits)
-    max_qubits = 20 if max_qubits is None else max_qubits
     _resource_check(circuit, max_qubits, max_memory_mb)
     pure = bound.unitary_part()
     from .compiler import decompose

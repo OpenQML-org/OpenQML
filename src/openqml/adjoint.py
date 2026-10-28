@@ -23,7 +23,8 @@ def _check_adjoint(circuit, max_qubits, max_memory_mb):
         raise ValidationError("Adjoint differentiation requires an OpenQML Circuit.")
     if circuit.has_effects:
         raise ValidationError("Adjoint differentiation requires a unitary circuit without effects.")
-    integer(max_qubits, "max_qubits", 1)
+    if max_qubits is not None:
+        integer(max_qubits, "max_qubits", 1)
     budget = real(max_memory_mb)
     if budget <= 0:
         raise ValidationError("max_memory_mb must be positive.")
@@ -34,7 +35,7 @@ def _check_adjoint(circuit, max_qubits, max_memory_mb):
     # Existing circuit, symbolic/input metadata and result arrays are separate.
     if (
         width >= 63
-        or width > max_qubits
+        or (max_qubits is not None and width > max_qubits)
         or width + math.log2(12 * 16) > log_bytes
         or 2 * local + math.log2(8 * 16) > log_bytes
     ):
@@ -208,7 +209,7 @@ class AdjointPlan:
     circuit: Circuit
     observables: tuple
     parameters: tuple | None = None
-    max_qubits: int = 20
+    max_qubits: int | None = None
     max_memory_mb: float = 256
     _derivatives: tuple = field(init=False, repr=False)
     _symbols: tuple = field(init=False, repr=False)
@@ -237,7 +238,10 @@ class AdjointPlan:
         for name, value in (
             ("parameters", names),
             ("observables", obs),
-            ("max_qubits", integer(self.max_qubits, "max_qubits", 1)),
+            (
+                "max_qubits",
+                None if self.max_qubits is None else integer(self.max_qubits, "max_qubits", 1),
+            ),
             ("max_memory_mb", real(self.max_memory_mb)),
             ("_derivatives", derivatives),
             ("_symbols", symbols),
@@ -362,7 +366,7 @@ def adjoint_vjp(
     cotangents,
     *,
     parameters=None,
-    max_qubits=20,
+    max_qubits=None,
     max_memory_mb=256,
     batch_chunk_size=None,
 ):
@@ -384,7 +388,7 @@ def adjoint_jvp(
     tangents,
     *,
     parameters=None,
-    max_qubits=20,
+    max_qubits=None,
     max_memory_mb=256,
     batch_chunk_size=None,
 ):

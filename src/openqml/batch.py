@@ -49,7 +49,7 @@ def _vectorized_states(circuits, options):
 
     if any(signature(c) != signature(first) for c in circuits[1:]):
         return [
-            statevector(c, max_qubits=options.max_qubits or 20, max_memory_mb=options.max_memory_mb)
+            statevector(c, max_qubits=options.max_qubits, max_memory_mb=options.max_memory_mb)
             for c in circuits
         ]
     operations, bindings = [], {}
@@ -68,7 +68,7 @@ def _vectorized_states(circuits, options):
     return statevector(
         prototype,
         bindings,
-        max_qubits=options.max_qubits or 20,
+        max_qubits=options.max_qubits,
         max_memory_mb=options.max_memory_mb,
     )
 
@@ -197,7 +197,7 @@ def _dense_states(circuits, device, options):
     from ._validation import invoke, validate_states
     from .simulator import _resource_check
 
-    limit = 20 if options.max_qubits is None else options.max_qubits
+    limit = options.max_qubits
     for circuit in circuits:
         _resource_check(circuit, limit, options.max_memory_mb)
     options = replace(options, max_qubits=limit)
@@ -246,7 +246,7 @@ def expectations_batch(
                         c,
                         observables,
                         backend=backend,
-                        max_qubits=20 if max_qubits is None else max_qubits,
+                        max_qubits=max_qubits,
                         max_memory_mb=max_memory_mb,
                         max_branches=max_branches,
                     )

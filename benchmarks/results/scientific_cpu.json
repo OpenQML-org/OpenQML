@@ -1,7 +1,7 @@
 {
   "scope": "restricted_families_not_general_quantum_scale",
   "cpu_only": true,
-  "source_sha256": "b7c70e611ca1b3bb228d6602f627bcc85d092fa223f1aef10100303ff39a0748",
+  "source_sha256": "f9e8e6c1ddf6288e22b5d6f89ff9939f07e6493014ba398e584edf28882fab37",
   "environment": {
     "python": "3.12.14",
     "system": "Linux",
@@ -25,25 +25,25 @@
       "small_dense_max_error": 2.220446049250313e-16,
       "analytic_binding_count": 4,
       "analytic_max_error": 0.0,
-      "prepare_seconds": 0.01566980200004764,
-      "warm_median_seconds": 4.1244999010814354e-05,
+      "prepare_seconds": 0.009528585999760253,
+      "warm_median_seconds": 2.428700008749729e-05,
       "warm_samples_seconds": [
-        0.00011285500113444868,
-        0.00011922700105060358,
-        4.1244999010814354e-05,
-        3.692599966598209e-05,
-        4.308700044930447e-05,
-        2.9132999770808965e-05,
-        2.774900167423766e-05
+        3.357999958097935e-05,
+        2.428700008749729e-05,
+        5.906799924559891e-05,
+        2.4486000256729312e-05,
+        1.8538000404078048e-05,
+        1.760600025590975e-05,
+        1.7735999790602364e-05
       ],
       "prepare_memory": {
         "status": "measured",
         "metric": "linux_procfs_reset_hwm",
         "scope": "current_process_call_window",
         "approximate": true,
-        "start_rss_bytes": 44466176,
-        "peak_rss_bytes": 44548096,
-        "peak_over_start_bytes": 81920
+        "start_rss_bytes": 42942464,
+        "peak_rss_bytes": 43032576,
+        "peak_over_start_bytes": 90112
       },
       "plan": {
         "semantics": "declared_expectations",
@@ -109,7 +109,7 @@
         "num_qubits": 1024,
         "operations": 1025,
         "batch_size": 1,
-        "max_qubits": 20,
+        "max_qubits": null,
         "max_memory_mb": 256.0,
         "statevector_log2_bytes": 1028.0,
         "density_log2_bytes": 2052.0,
@@ -118,13 +118,6 @@
         "statevector_budget_bytes": null,
         "within_statevector_policy": false,
         "diagnostics": [
-          {
-            "code": "DENSE_WIDTH_LIMIT",
-            "message": "Source width exceeds the selected dense execution limit.",
-            "location": "num_qubits",
-            "severity": "error",
-            "hint": ""
-          },
           {
             "code": "DENSE_MEMORY_LIMIT",
             "message": "Four state buffers exceed the budget; dense storage grows exponentially.",
@@ -146,25 +139,25 @@
       "small_dense_max_error": 5.551115123125783e-16,
       "analytic_binding_count": 4,
       "analytic_max_error": 0.0,
-      "prepare_seconds": 0.011782262999986415,
-      "warm_median_seconds": 3.703099901031237e-05,
+      "prepare_seconds": 0.008444232999863743,
+      "warm_median_seconds": 2.131099972757511e-05,
       "warm_samples_seconds": [
-        5.174600119062234e-05,
-        0.00012032599988742732,
-        3.2293999538524076e-05,
-        3.703099901031237e-05,
-        0.00012432999938027933,
-        3.162699977110606e-05,
-        2.5858000299194828e-05
+        0.00024212900007114513,
+        3.3510000321257394e-05,
+        2.4236000172095373e-05,
+        2.131099972757511e-05,
+        1.9948999579355586e-05,
+        1.718600015010452e-05,
+        1.659500048845075e-05
       ],
       "prepare_memory": {
         "status": "measured",
         "metric": "linux_procfs_reset_hwm",
         "scope": "current_process_call_window",
         "approximate": true,
-        "start_rss_bytes": 44421120,
-        "peak_rss_bytes": 44503040,
-        "peak_over_start_bytes": 81920
+        "start_rss_bytes": 44699648,
+        "peak_rss_bytes": 44793856,
+        "peak_over_start_bytes": 94208
       },
       "plan": {
         "semantics": "declared_expectations",
@@ -230,7 +223,7 @@
         "num_qubits": 1024,
         "operations": 1025,
         "batch_size": 1,
-        "max_qubits": 20,
+        "max_qubits": null,
         "max_memory_mb": 256.0,
         "statevector_log2_bytes": 1028.0,
         "density_log2_bytes": 2052.0,
@@ -239,13 +232,6 @@
         "statevector_budget_bytes": null,
         "within_statevector_policy": false,
         "diagnostics": [
-          {
-            "code": "DENSE_WIDTH_LIMIT",
-            "message": "Source width exceeds the selected dense execution limit.",
-            "location": "num_qubits",
-            "severity": "error",
-            "hint": ""
-          },
           {
             "code": "DENSE_MEMORY_LIMIT",
             "message": "Four state buffers exceed the budget; dense storage grows exponentially.",
@@ -267,24 +253,24 @@
       "small_dense_max_error": 7.771561172376096e-16,
       "analytic_binding_count": 4,
       "analytic_max_error": 0.0,
-      "prepare_seconds": 0.01578887899995607,
-      "warm_median_seconds": 5.418500040832441e-05,
+      "prepare_seconds": 0.01231097299933026,
+      "warm_median_seconds": 4.959399939252762e-05,
       "warm_samples_seconds": [
-        0.001120502000048873,
-        5.718399916077033e-05,
-        3.9339000068139285e-05,
-        9.007400149130262e-05,
-        3.702300091390498e-05,
-        3.4071001209667884e-05,
-        5.418500040832441e-05
+        4.959399939252762e-05,
+        5.973799943603808e-05,
+        0.00010603700047795428,
+        3.929799913748866e-05,
+        0.00011751399961212883,
+        3.455200021562632e-05,
+        2.7750999834097456e-05
       ],
       "prepare_memory": {
         "status": "measured",
         "metric": "linux_procfs_reset_hwm",
         "scope": "current_process_call_window",
         "approximate": true,
-        "start_rss_bytes": 44482560,
-        "peak_rss_bytes": 44544000,
+        "start_rss_bytes": 44593152,
+        "peak_rss_bytes": 44654592,
         "peak_over_start_bytes": 61440
       },
       "plan": {
@@ -351,7 +337,7 @@
         "num_qubits": 256,
         "operations": 737,
         "batch_size": 1,
-        "max_qubits": 20,
+        "max_qubits": null,
         "max_memory_mb": 256.0,
         "statevector_log2_bytes": 260.0,
         "density_log2_bytes": 516.0,
@@ -360,13 +346,6 @@
         "statevector_budget_bytes": null,
         "within_statevector_policy": false,
         "diagnostics": [
-          {
-            "code": "DENSE_WIDTH_LIMIT",
-            "message": "Source width exceeds the selected dense execution limit.",
-            "location": "num_qubits",
-            "severity": "error",
-            "hint": ""
-          },
           {
             "code": "DENSE_MEMORY_LIMIT",
             "message": "Four state buffers exceed the budget; dense storage grows exponentially.",
@@ -381,7 +360,7 @@
       "case": "ir",
       "work_performed": "IR_counting_and_storage_estimation_only",
       "quantum_simulation_performed": false,
-      "seconds": 0.253783221998674,
+      "seconds": 0.12415014999987761,
       "resources": {
         "schema": "openqml.resource_estimate",
         "scope": "storage_and_policy_only",
@@ -397,7 +376,7 @@
         "num_qubits": 8,
         "operations": 100000,
         "batch_size": 1,
-        "max_qubits": 20,
+        "max_qubits": null,
         "max_memory_mb": 256.0,
         "statevector_log2_bytes": 12.0,
         "density_log2_bytes": 20.0,
@@ -412,9 +391,9 @@
         "metric": "linux_procfs_reset_hwm",
         "scope": "current_process_call_window",
         "approximate": true,
-        "start_rss_bytes": 61235200,
-        "peak_rss_bytes": 61247488,
-        "peak_over_start_bytes": 12288
+        "start_rss_bytes": 61267968,
+        "peak_rss_bytes": 61276160,
+        "peak_over_start_bytes": 8192
       }
     },
     {
