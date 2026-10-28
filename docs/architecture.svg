@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="660" viewBox="0 0 1000 660" role="img" aria-labelledby="title description">
   <title id="title">OpenQML project architecture</title>
-  <desc id="description">A single Python namespace exposes hybrid learning and circuit interoperability. Both use a shared circuit IR, compilation and planning, execution backends, and differentiable results. Gradients feed back into the hybrid model.</desc>
+  <desc id="description">A single Python namespace exposes hybrid learning and circuit interoperability. A shared IR supports algebraic equivalence certificates, native differential checks and bounded adaptive execution through Pauli, MPS, stabilizer and dense backends. Gradients feed back into the hybrid model.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
@@ -36,19 +36,19 @@
   <rect x="560" y="138" width="360" height="88" rx="14" class="card"/>
   <text x="740" y="168" class="heading">Circuit interoperability</text>
   <text x="740" y="191" class="detail">Qiskit · PennyLane · Cirq · OpenQASM</text>
-  <text x="740" y="212" class="detail">Circuit scope; context diagnostics</text>
+  <text x="740" y="212" class="detail">Algebraic certificates; native checks</text>
   <rect x="250" y="274" width="500" height="88" rx="14" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.5"/>
   <text x="500" y="307" class="heading">Shared circuit IR</text>
   <text x="500" y="332" class="detail">Parameters · gates · observables · noise · classical branches</text>
   <text x="500" y="352" class="detail">Source ownership and portable checkpoints</text>
   <rect x="80" y="410" width="360" height="88" rx="14" class="card"/>
   <text x="260" y="443" class="heading">Compilation and planning</text>
-  <text x="260" y="468" class="detail">Readout reduction; exact Pauli arithmetic</text>
-  <text x="260" y="488" class="detail">Dense grouping and bounded batches</text>
+  <text x="260" y="468" class="detail">Symbolic equivalence; semantic coverage</text>
+  <text x="260" y="488" class="detail">Adaptive selection and bounded batches</text>
   <rect x="560" y="410" width="360" height="88" rx="14" class="card"/>
   <text x="740" y="443" class="heading">Execution backends</text>
-  <text x="740" y="468" class="detail">NumPy · native tensors · SDKs</text>
-  <text x="740" y="488" class="detail">Resource budgets and backend plugins</text>
+  <text x="740" y="468" class="detail">Pauli · MPS · stabilizer · dense · CUDA</text>
+  <text x="740" y="488" class="detail">Tensor shapes and memory admission</text>
   <rect x="250" y="546" width="500" height="100" rx="14" fill="#f0fdfa" stroke="#5eead4" stroke-width="1.5"/>
   <text x="500" y="580" class="heading">Results and differentiation</text>
   <text x="500" y="605" class="detail">Expectations · samples · density / state vectors</text>

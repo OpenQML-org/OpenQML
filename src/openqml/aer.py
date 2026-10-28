@@ -20,6 +20,8 @@ class AerBackend:
     device: str = "CPU"
     parameter_batching: bool = True
     compile_cache_size: int = 8
+    mps_truncation_threshold: float = 0.0
+    mps_max_bond_dimension: int | None = None
     _compiled: object = field(default_factory=OrderedDict, repr=False, compare=False)
     _compile_lock: object = field(default_factory=RLock, repr=False, compare=False)
     _cache_stats: dict = field(
@@ -38,8 +40,26 @@ class AerBackend:
 
     def __post_init__(self):
         from .ir import integer
+        from .parameters import real
 
         integer(self.compile_cache_size, "compile_cache_size", 1)
+        if real(self.mps_truncation_threshold) < 0:
+            raise ValidationError("mps_truncation_threshold must be nonnegative.")
+        if self.mps_max_bond_dimension is not None:
+            integer(self.mps_max_bond_dimension, "mps_max_bond_dimension", 1)
+        if self.method == "stabilizer":
+            from .semantics import _CLIFFORD
+
+            object.__setattr__(
+                self,
+                "capabilities",
+                replace(
+                    self.capabilities,
+                    gates=_CLIFFORD,
+                    channels=False,
+                    deterministic_expectations=True,
+                ),
+            )
         if self.method == "density_matrix":
             object.__setattr__(
                 self, "capabilities", replace(self.capabilities, density_matrix=True)
@@ -157,12 +177,17 @@ class AerBackend:
         from .adapters._common import dependency
 
         aer = dependency("qiskit_aer", "aer")
+        settings = {}
+        if self.method == "matrix_product_state":
+            settings["matrix_product_state_truncation_threshold"] = self.mps_truncation_threshold
+            settings["matrix_product_state_max_bond_dimension"] = self.mps_max_bond_dimension
         return aer.AerSimulator(
             method=self.method,
             noise_model=self.noise_model,
             device=self.device,
             max_parallel_threads=self.max_parallel_threads,
             max_memory_mb=max(1, int(np.ceil(options.max_memory_mb))),
+            **settings,
         )
 
     def _run(self, circuits, options, shots=1):
@@ -182,6 +207,10 @@ class AerBackend:
         return self.run_batch([circuit], options=options)[0]
 
     def run_batch(self, circuits, *, options):
+        if self.method == "stabilizer":
+            raise BackendError(
+                "Stabilizer execution provides native readouts and samples, not dense state output."
+            )
         if (
             self.noise_model is not None
             or self.method == "density_matrix"

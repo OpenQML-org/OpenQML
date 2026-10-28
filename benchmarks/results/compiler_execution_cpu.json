@@ -1,0 +1,1662 @@
+{
+  "scope": "bounded_compiler_and_representation_specific_execution_evidence",
+  "source_sha256": "f9e8e6c1ddf6288e22b5d6f89ff9939f07e6493014ba398e584edf28882fab37",
+  "benchmark_sha256": "25148f6ae1c5060046c439898a451f7c1410fed3843a4b016a60c84f43c463a2",
+  "environment": {
+    "python": "3.12.14",
+    "system": "Linux",
+    "machine": "x86_64",
+    "numpy": "2.5.4",
+    "qiskit_aer": "0.18.2",
+    "dependencies": {
+      "numpy": "2.5.4",
+      "torch": "2.15.0+cpu",
+      "jax": "0.12.0.1",
+      "qiskit": "2.6.1",
+      "qiskit-aer": "0.18.2",
+      "pennylane": "0.45.1",
+      "cirq-core": "1.7.0",
+      "sympy": "1.14.0"
+    },
+    "threads": {
+      "OMP_NUM_THREADS": 1,
+      "OPENBLAS_NUM_THREADS": 1
+    }
+  },
+  "accelerator_execution_checked": false,
+  "runs": [
+    {
+      "case": "compiler",
+      "scope": "supported_IR_semantics_not_arbitrary_Python_translation",
+      "coverage": {
+        "scope": "representative_IR_feature_export_admissibility",
+        "native_execution_checked": false,
+        "source_programs": "circuit_objects_only",
+        "external_backend_context": "not_represented",
+        "proof_methods": [
+          "structural_identity",
+          "phase_polynomial",
+          "algebraic_word",
+          "projective_clifford_conjugation"
+        ],
+        "rows": [
+          {
+            "feature": "clifford_unitary",
+            "targets": {
+              "ir": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "json": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "qiskit": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "pennylane": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "cirq": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "openqasm2": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "openqasm3": {
+                "supported": true,
+                "diagnostics": []
+              }
+            }
+          },
+          {
+            "feature": "symbolic_rotations",
+            "targets": {
+              "ir": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "json": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "qiskit": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "pennylane": {
+                "supported": false,
+                "diagnostics": [
+                  "UNBOUND_PARAMETER"
+                ]
+              },
+              "cirq": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "openqasm2": {
+                "supported": false,
+                "diagnostics": [
+                  "UNBOUND_PARAMETER"
+                ]
+              },
+              "openqasm3": {
+                "supported": true,
+                "diagnostics": []
+              }
+            }
+          },
+          {
+            "feature": "explicit_global_phase",
+            "targets": {
+              "ir": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "json": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "qiskit": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "pennylane": {
+                "supported": false,
+                "diagnostics": [
+                  "UNBOUND_PARAMETER"
+                ]
+              },
+              "cirq": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "openqasm2": {
+                "supported": false,
+                "diagnostics": [
+                  "UNBOUND_PARAMETER",
+                  "GLOBAL_PHASE_UNSUPPORTED"
+                ]
+              },
+              "openqasm3": {
+                "supported": false,
+                "diagnostics": [
+                  "RESERVED_IDENTIFIER"
+                ]
+              }
+            }
+          },
+          {
+            "feature": "terminal_measurements",
+            "targets": {
+              "ir": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "json": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "qiskit": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "pennylane": {
+                "supported": false,
+                "diagnostics": [
+                  "CLASSICAL_REGISTER_UNSUPPORTED",
+                  "MEASUREMENT_UNSUPPORTED",
+                  "MEASUREMENT_UNSUPPORTED"
+                ]
+              },
+              "cirq": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "openqasm2": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "openqasm3": {
+                "supported": true,
+                "diagnostics": []
+              }
+            }
+          },
+          {
+            "feature": "measurement_feedback",
+            "targets": {
+              "ir": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "json": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "qiskit": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "pennylane": {
+                "supported": false,
+                "diagnostics": [
+                  "CLASSICAL_REGISTER_UNSUPPORTED",
+                  "MEASUREMENT_UNSUPPORTED",
+                  "CONTROL_FLOW_UNSUPPORTED"
+                ]
+              },
+              "cirq": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "openqasm2": {
+                "supported": false,
+                "diagnostics": [
+                  "CONTROL_FLOW_UNSUPPORTED"
+                ]
+              },
+              "openqasm3": {
+                "supported": true,
+                "diagnostics": []
+              }
+            }
+          },
+          {
+            "feature": "reset",
+            "targets": {
+              "ir": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "json": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "qiskit": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "pennylane": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "cirq": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "openqasm2": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "openqasm3": {
+                "supported": true,
+                "diagnostics": []
+              }
+            }
+          },
+          {
+            "feature": "explicit_noise_channel",
+            "targets": {
+              "ir": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "json": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "qiskit": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "pennylane": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "cirq": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "openqasm2": {
+                "supported": false,
+                "diagnostics": [
+                  "CHANNEL_UNSUPPORTED"
+                ]
+              },
+              "openqasm3": {
+                "supported": false,
+                "diagnostics": [
+                  "CHANNEL_UNSUPPORTED"
+                ]
+              }
+            }
+          },
+          {
+            "feature": "matrix_defined_unitary",
+            "targets": {
+              "ir": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "json": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "qiskit": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "pennylane": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "cirq": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "openqasm2": {
+                "supported": true,
+                "diagnostics": []
+              },
+              "openqasm3": {
+                "supported": true,
+                "diagnostics": []
+              }
+            }
+          }
+        ]
+      },
+      "randomized_conversions": [
+        {
+          "seed": 0,
+          "target": "ir",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 0,
+          "target": "json",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 0,
+          "target": "qiskit",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 0,
+          "target": "pennylane",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 1.5700924586837752e-16,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 0,
+          "target": "cirq",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 2.7755575615628914e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 0,
+          "target": "openqasm2",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 3.1401849173675503e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 0,
+          "target": "openqasm3",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 3.1401849173675503e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 1,
+          "target": "ir",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 1,
+          "target": "json",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 1,
+          "target": "qiskit",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 1,
+          "target": "pennylane",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 2.220446049250313e-16,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 1,
+          "target": "cirq",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 3.510833468576701e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 1,
+          "target": "openqasm2",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 3.3306690738754696e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 1,
+          "target": "openqasm3",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 3.3306690738754696e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 2,
+          "target": "ir",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 2,
+          "target": "json",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 2,
+          "target": "qiskit",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 2,
+          "target": "pennylane",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 1.1295700899707568e-16,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 2,
+          "target": "cirq",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 3.356589068483857e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 2,
+          "target": "openqasm2",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 2.7833528704240246e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 2,
+          "target": "openqasm3",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 2.897767167584095e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 3,
+          "target": "ir",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 3,
+          "target": "json",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 3,
+          "target": "qiskit",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 3,
+          "target": "pennylane",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 2.220446049250313e-16,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 3,
+          "target": "cirq",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 4.518280359883027e-16,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 3,
+          "target": "openqasm2",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 3,
+          "target": "openqasm3",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 4,
+          "target": "ir",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 4,
+          "target": "json",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 4,
+          "target": "qiskit",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 4,
+          "target": "pennylane",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 1.1857187100668868e-16,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 4,
+          "target": "cirq",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 3.0436364816617974e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 4,
+          "target": "openqasm2",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 3.376611507232129e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 4,
+          "target": "openqasm3",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 3.376611507232129e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 5,
+          "target": "ir",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 5,
+          "target": "json",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 5,
+          "target": "qiskit",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 5,
+          "target": "pennylane",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 2.237726045655905e-16,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 5,
+          "target": "cirq",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 3.510833468576701e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 5,
+          "target": "openqasm2",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 1.1443916996305594e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 5,
+          "target": "openqasm3",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 1.1443916996305594e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 6,
+          "target": "ir",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 6,
+          "target": "json",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 6,
+          "target": "qiskit",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 6,
+          "target": "pennylane",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 2.2887833992611187e-16,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 6,
+          "target": "cirq",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 3.376611507232129e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 6,
+          "target": "openqasm2",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 4.742874840267547e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 6,
+          "target": "openqasm3",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 4.742874840267547e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 7,
+          "target": "ir",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 7,
+          "target": "json",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 7,
+          "target": "qiskit",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 7,
+          "target": "pennylane",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 2.7755575615628914e-17,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 7,
+          "target": "cirq",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 3.433175098891678e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 7,
+          "target": "openqasm2",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 1.1254433453991587e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 7,
+          "target": "openqasm3",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 1.1254433453991587e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 8,
+          "target": "ir",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 8,
+          "target": "json",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 8,
+          "target": "qiskit",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 8,
+          "target": "pennylane",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 2.482534153247273e-16,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 8,
+          "target": "cirq",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 6.473657049138937e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 8,
+          "target": "openqasm2",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 4.449557262054371e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 8,
+          "target": "openqasm3",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 4.449557262054371e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 9,
+          "target": "ir",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 9,
+          "target": "json",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 9,
+          "target": "qiskit",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 9,
+          "target": "pennylane",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 2.2247786310271853e-16,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 9,
+          "target": "cirq",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 4.494775313252277e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 9,
+          "target": "openqasm2",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 9,
+          "target": "openqasm3",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 2.2729511820139823e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 10,
+          "target": "ir",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 10,
+          "target": "json",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 10,
+          "target": "qiskit",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 10,
+          "target": "pennylane",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 1.6653345369377348e-16,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 10,
+          "target": "cirq",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 3.365900013051177e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 10,
+          "target": "openqasm2",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 1.1102230246251565e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 10,
+          "target": "openqasm3",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 1.1102230246251565e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 11,
+          "target": "ir",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 11,
+          "target": "json",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 11,
+          "target": "qiskit",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 11,
+          "target": "pennylane",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 1.4033044459902308e-16,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 11,
+          "target": "cirq",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 6.087272963323594e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 11,
+          "target": "openqasm2",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 2.3714374201337736e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 11,
+          "target": "openqasm3",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 3.342213888644167e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 12,
+          "target": "ir",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 12,
+          "target": "json",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 12,
+          "target": "qiskit",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 12,
+          "target": "pennylane",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 1.6883057536160646e-16,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 12,
+          "target": "cirq",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 3.9472488203928496e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 12,
+          "target": "openqasm2",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 1.6653345369377348e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 12,
+          "target": "openqasm3",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 1.716587549445839e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 13,
+          "target": "ir",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 13,
+          "target": "json",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 13,
+          "target": "qiskit",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 13,
+          "target": "pennylane",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 3.342213888644167e-16,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 13,
+          "target": "cirq",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 4.518280359883027e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 13,
+          "target": "openqasm2",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 3.342213888644167e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 13,
+          "target": "openqasm3",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 3.342213888644167e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 14,
+          "target": "ir",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 14,
+          "target": "json",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 14,
+          "target": "qiskit",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 14,
+          "target": "pennylane",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 2.231868554647719e-16,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 14,
+          "target": "cirq",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 3.376611507232129e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 14,
+          "target": "openqasm2",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 2.2530044628618934e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 14,
+          "target": "openqasm3",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 2.265790592267349e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 15,
+          "target": "ir",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 15,
+          "target": "json",
+          "input_parameters": "symbolic",
+          "comparison": "roundtrip",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 15,
+          "target": "qiskit",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 0.0,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 15,
+          "target": "pennylane",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 1.1102230246251565e-16,
+          "algebraic_proof": "structural_identity",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 15,
+          "target": "cirq",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 3.331798259726381e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 15,
+          "target": "openqasm2",
+          "input_parameters": "bound",
+          "comparison": "native",
+          "complete_input_basis_checks": 1,
+          "max_absolute_error": 3.3306690738754696e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        },
+        {
+          "seed": 15,
+          "target": "openqasm3",
+          "input_parameters": "symbolic",
+          "comparison": "native",
+          "complete_input_basis_checks": 3,
+          "max_absolute_error": 3.3306690738754696e-16,
+          "algebraic_proof": "algebraic_word",
+          "proof_diagnostics": null
+        }
+      ],
+      "max_absolute_error": 6.473657049138937e-16,
+      "algebraically_proven": 112,
+      "complete_input_basis_checks": 272,
+      "independent_native_checks": 176,
+      "inconclusive": 0,
+      "large_symbolic_phase_proof": {
+        "scope": "IR_algebraic_equivalence",
+        "parameter_domain": "all_real_bindings_where_expressions_are_defined",
+        "numeric_constants": "exact_stored_binary_rationals",
+        "requires_valid_IR_parameters": true,
+        "coefficient_limit_bits": 4096,
+        "named_gate_angles": "mathematical_pi",
+        "global_phase": "compared",
+        "target_execution_checked": false,
+        "inconclusive_is_inequivalent": false,
+        "proven": true,
+        "method": "phase_polynomial",
+        "semantics": "unitary",
+        "source_fingerprint": "e8ff6c331bc860285e5c453d5b12b1a6189fe5a5cd6fd3dd0ee9fd8de2fedd1d",
+        "target_fingerprint": "bb5f8f5d36ade8d7586d773cf83c4287c192476392b092cb7ba3006ed643b707",
+        "parameters": [
+          "theta"
+        ],
+        "checked_operations": 1024,
+        "work": 3586,
+        "normal_form_fingerprint": "b25cc26fbc53c5e70b2e904c2827242c723c6bb01bd4533354187ca710240fd9",
+        "diagnostics": []
+      },
+      "wrong_sign_not_certified": true
+    },
+    {
+      "case": "stabilizer",
+      "status": "passed",
+      "num_qubits": 1024,
+      "operations": 4024,
+      "readouts": 8,
+      "preparation_seconds": 0.00347812400013936,
+      "cold_first_execution_seconds": 0.9407044099998529,
+      "warm_execution_seconds": 0.12421227400045609,
+      "memory": {
+        "status": "measured",
+        "metric": "linux_procfs_reset_hwm",
+        "scope": "current_process_call_window",
+        "approximate": true,
+        "start_rss_bytes": 159748096,
+        "peak_rss_bytes": 167661568,
+        "peak_over_start_bytes": 7913472
+      },
+      "selection": {
+        "scope": "declared_expectations_from_zero_state",
+        "selected_method": "stabilizer",
+        "device": "CPU",
+        "requested_dense_device": "CPU",
+        "supported": true,
+        "num_qubits": 1024,
+        "max_qubits": null,
+        "max_memory_mb": 128.0,
+        "memory_policy": "explicit",
+        "exactness": "no_intentional_truncation_or_shot_approximation; floating_point_roundoff_remains",
+        "memory_guarantee": "representation_admission_model_not_process_RSS_limit",
+        "mps_profile": null,
+        "candidates": [
+          {
+            "method": "stabilizer",
+            "eligible": true,
+            "reason": "Named Clifford gates and bounded tableau workspace.",
+            "working_bytes": 17825792
+          }
+        ]
+      },
+      "max_absolute_error": 0.0,
+      "comparison_atol": 1e-12,
+      "verification": {
+        "independent_reference": "symbolic_Pauli_propagation_and_stabilizer_identities",
+        "analytic_expectations": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "log2_middle_cut_Schmidt_rank": 512,
+        "entanglement_reason": "crossed_Bell_pairs_followed_by_local_Cliffords_on_each_half"
+      }
+    },
+    {
+      "case": "mps",
+      "status": "passed",
+      "num_qubits": 128,
+      "operations": 1278,
+      "readouts": 3,
+      "preparation_seconds": 0.007888866000030248,
+      "cold_first_execution_seconds": 0.04534893900017778,
+      "warm_execution_seconds": 0.04584376000002521,
+      "memory": {
+        "status": "measured",
+        "metric": "linux_procfs_reset_hwm",
+        "scope": "current_process_call_window",
+        "approximate": true,
+        "start_rss_bytes": 132001792,
+        "peak_rss_bytes": 132005888,
+        "peak_over_start_bytes": 4096
+      },
+      "selection": {
+        "scope": "declared_expectations_from_zero_state",
+        "selected_method": "mps",
+        "device": "CPU",
+        "requested_dense_device": "CPU",
+        "supported": true,
+        "num_qubits": 128,
+        "max_qubits": null,
+        "max_memory_mb": 128.0,
+        "memory_policy": "explicit",
+        "exactness": "no_intentional_truncation_or_shot_approximation; floating_point_roundoff_remains",
+        "memory_guarantee": "representation_admission_model_not_process_RSS_limit",
+        "mps_profile": {
+          "max_bond": 16,
+          "max_log2_bond": 4,
+          "workspace_bytes": 628352,
+          "analysis_complete": true,
+          "truncation": "none_full_SVD_columns_retained"
+        },
+        "candidates": [
+          {
+            "method": "stabilizer",
+            "eligible": false,
+            "reason": "Requires named Clifford gates and sufficient tableau workspace.",
+            "working_bytes": 311296
+          },
+          {
+            "method": "pauli",
+            "eligible": false,
+            "reason": "[PAULI_TERM_LIMIT] prepared.operations[1203]: Propagation exceeds max_terms. Hint: Increase the explicit budget or use dense execution.",
+            "working_bytes": null
+          },
+          {
+            "method": "mps",
+            "eligible": true,
+            "reason": "Full-SVD tensor-shape and workspace admission completed.",
+            "working_bytes": 628352
+          }
+        ]
+      },
+      "max_absolute_error": 4.993882098212193e-13,
+      "comparison_atol": 1e-10,
+      "verification": {
+        "independent_reference": "Aer_MPS_without_intentional_truncation",
+        "small_dense_qubits": 6,
+        "large_inverse_echo_qubits": 128,
+        "nonclifford_depth": 4,
+        "global_readouts": 2
+      }
+    },
+    {
+      "case": "dense",
+      "status": "passed",
+      "num_qubits": 24,
+      "operations": 2,
+      "readouts": 2,
+      "preparation_seconds": 6.472699988080421e-05,
+      "cold_first_execution_seconds": 0.47736351099956664,
+      "warm_execution_seconds": 0.5387563149997732,
+      "memory": {
+        "status": "measured",
+        "metric": "linux_procfs_reset_hwm",
+        "scope": "current_process_call_window",
+        "approximate": true,
+        "start_rss_bytes": 44888064,
+        "peak_rss_bytes": 582156288,
+        "peak_over_start_bytes": 537268224
+      },
+      "selection": {
+        "scope": "declared_expectations_from_zero_state",
+        "selected_method": "statevector",
+        "device": "CPU",
+        "requested_dense_device": "CPU",
+        "supported": true,
+        "num_qubits": 24,
+        "max_qubits": null,
+        "max_memory_mb": 1024.0,
+        "memory_policy": "explicit",
+        "exactness": "no_intentional_truncation_or_shot_approximation; floating_point_roundoff_remains",
+        "memory_guarantee": "representation_admission_model_not_process_RSS_limit",
+        "mps_profile": null,
+        "candidates": [
+          {
+            "method": "statevector",
+            "eligible": true,
+            "reason": "Four-buffer dense working model fits the memory budget.",
+            "working_bytes": 1073741824
+          }
+        ]
+      },
+      "max_absolute_error": 0.0,
+      "comparison_atol": 1e-12,
+      "verification": {
+        "independent_reference": "analytic_product_state_readouts",
+        "requested_qubits": 24,
+        "dense_width_is_memory_derived": true,
+        "available_bytes_before_run": 4472897536
+      }
+    }
+  ]
+}

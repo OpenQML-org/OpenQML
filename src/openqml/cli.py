@@ -50,7 +50,7 @@ def main(argv=None):
     resources.add_argument(
         "--from", dest="source", choices=("json", "openqasm2", "openqasm3"), required=True
     )
-    resources.add_argument("--max-qubits", type=int, default=20)
+    resources.add_argument("--max-qubits", type=int)
     resources.add_argument("--max-memory-mb", type=float, default=256)
     resources.add_argument("--batch-size", type=int, default=1)
     resources.add_argument("--max-operations", type=int, default=100_000)
