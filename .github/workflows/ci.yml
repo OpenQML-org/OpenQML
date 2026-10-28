@@ -22,3 +22,28 @@ jobs:
       - run: ruff format --check .
       - run: python -m build
       - run: python -m twine check dist/*
+  portable-install:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            python: '3.12'
+          - os: macos-latest
+            python: '3.12'
+          - os: macos-15-intel
+            python: '3.11'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install ".[dev]" --report install-report.json
+      - run: python -m pip check
+      - run: python -m pytest -q tests/test_public_api.py tests/test_shared_readouts.py tests/test_conversion_plan.py tests/test_resource_audit.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installation-${{ runner.os }}-${{ runner.arch }}-${{ matrix.python }}
+          path: install-report.json
