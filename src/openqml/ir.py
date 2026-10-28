@@ -458,7 +458,7 @@ class Circuit:
         swapping names is safe and replacement expressions are not rewritten.
         Branch bodies and their global phases follow the same substitution.
         """
-        from .parameters import parameter_name
+        from .parameters import _rewrite_expression, parameter_name
 
         if not isinstance(mapping, Mapping):
             raise ValidationError("Parameter substitutions require a name mapping.")
@@ -468,7 +468,10 @@ class Circuit:
             raise ValidationError(f"Unknown substitution parameters: {sorted(unknown)}.")
         mapping = {name: expression(value) for name, value in mapping.items()}
 
-        return self._map_parameters(lambda p: p.substitute(mapping))
+        memo = {}
+        return self._map_parameters(
+            lambda p: _rewrite_expression(p, mapping, substitute=True, memo=memo)
+        )
 
     def _map_parameters(self, transform):
         """Rewrite expressions while sharing every unchanged immutable operation."""
@@ -478,14 +481,14 @@ class Circuit:
             for op in body.operations:
                 params = tuple(transform(p) for p in op.params)
                 blocks = tuple(rewrite(block) for block in op.blocks)
-                changed = params != op.params or any(
+                changed = any(a is not b for a, b in zip(params, op.params, strict=True)) or any(
                     new is not old for new, old in zip(blocks, op.blocks, strict=True)
                 )
                 # Keep unchanged matrices/channels intact instead of repeating
                 # their potentially expensive validation during symbol rewrites.
                 operations.append(replace(op, params=params, blocks=blocks) if changed else op)
             phase = transform(body.global_phase)
-            if phase == body.global_phase and all(
+            if phase is body.global_phase and all(
                 new is old for new, old in zip(operations, body.operations, strict=True)
             ):
                 return body
@@ -494,7 +497,7 @@ class Circuit:
         return rewrite(self)
 
     def bind(self, bindings: Mapping[str, float], *, partial: bool = False) -> Circuit:
-        from .parameters import parameter_name, real
+        from .parameters import _rewrite_expression, parameter_name, real
 
         if not isinstance(bindings, Mapping):
             raise ValidationError("Parameter bindings require a name mapping.")
@@ -506,7 +509,8 @@ class Circuit:
             raise ValidationError(
                 f"Parameter mismatch: missing={sorted(missing)}, unknown={sorted(unknown)}."
             )
-        return self._map_parameters(lambda p: p.bind(bindings))
+        memo = {}
+        return self._map_parameters(lambda p: _rewrite_expression(p, bindings, memo=memo))
 
     def unitary_part(self) -> Circuit:
         """Remove terminal measurements; reject any subsequent quantum operation."""

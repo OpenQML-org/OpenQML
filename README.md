@@ -51,6 +51,8 @@ One optimizer updates the classical and quantum parameters. For JAX, construct `
 
 `oq.ShiftPlan` compiles sparse shift rules and backend lowering once, streams numerical products, and shares repeated points only for backends declaring deterministic expectations. Reuse windows and submitted circuit batches are bounded.
 
+Each expression evaluation visits shared graph nodes once and retains native automatic differentiation. Circuit binding and symbol replacement preserve shared nonlinear expressions across gates and branch bodies.
+
 ## Circuit interoperability
 
 Import SDK program objects with `oq.convert(program, target="ir")`. Use `oq.plan_conversion(...)` to inspect compatibility and resource limits before exporting. Plans diagnose unsupported features and conversions that cannot preserve semantics. Layers retain source ownership and support portable checkpoints.
