@@ -40,7 +40,11 @@ class QuantumProgram:
 
     @classmethod
     def from_callable(cls, factory: Callable, *args, framework=None, **kwargs):
-        """Call caller-provided Python code normally; source strings are never eval'ed."""
+        """Run an explicitly supplied factory and capture its returned circuit only.
+
+        This does not translate Python source or capture imports, helper behavior,
+        noise models or backend configuration. Source strings are never eval'ed.
+        """
         if not callable(factory):
             raise TypeError("factory must be a callable, not source text")
         return cls.capture(factory(*args, **kwargs), framework=framework)
