@@ -19,9 +19,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+from _precision import scoped_x64
 from planned_execution import source_hash
 
 
+@scoped_x64
 def worker(args):
     import openqml as oq
     import openqml.adjoint as adjoint
@@ -72,7 +74,6 @@ def worker(args):
 
             from openqml.interfaces.jax import QuantumLayer
 
-            jax.config.update("jax_enable_x64", True)
             layer = QuantumLayer.from_spec(configuration, **options)
             params = jax.tree_util.tree_map(jnp.asarray, initial)
             inputs, target = jnp.asarray(features), jnp.asarray(targets)

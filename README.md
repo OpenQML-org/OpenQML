@@ -57,6 +57,16 @@ Each expression evaluation visits shared graph nodes once and retains native aut
 
 Import SDK program objects with `oq.convert(program, target="ir")`. Use `oq.plan_conversion(...)` to inspect compatibility and resource limits before exporting. Plans diagnose unsupported features and conversions that cannot preserve semantics. Layers retain source ownership and support portable checkpoints.
 
+## Construction and runtime limits
+
+For long construction loops, use `oq.CircuitBuilder(...)` and call `build()` once. Its appends are amortized O(1); immutable `Circuit.append()` still copies the existing operation tuple. `Circuit.extend()` appends a batch in one copy.
+
+Catch `oq.OpenQMLError` or a specific subclass. Public errors have one inheritance chain and do not inherit Python's built-in error categories.
+
+Defaults remain bounded. `oq.ExecutionOptions.for_statevector(1024, batch_size=8)` derives an explicit qubit cap from a memory budget in MiB; pass its `max_qubits` and `max_memory_mb` to execution. Autodiff tapes and density branches need separate memory planning.
+
+Report cold imports/compilation separately from warm calls. `benchmarks/resource_audit.py` measures both and resets Linux RSS high-water marks before memory windows; RSS counters are approximate. Benchmark JAX precision uses scoped `jax.enable_x64()` and restores the caller's setting.
+
 ## Architecture
 
 ![OpenQML project architecture](https://raw.githubusercontent.com/OpenQML-org/OpenQML/main/docs/architecture.svg)

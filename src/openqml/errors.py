@@ -7,19 +7,19 @@ class OpenQMLError(Exception):
     """Base class for public OpenQML exceptions."""
 
 
-class ValidationError(OpenQMLError, ValueError):
+class ValidationError(OpenQMLError):
     """Invalid circuit, parameters, or runtime options."""
 
 
-class ResourceError(OpenQMLError, MemoryError):
+class ResourceError(OpenQMLError):
     """Execution exceeds a configured resource budget."""
 
 
-class MissingDependencyError(OpenQMLError, ImportError):
+class MissingDependencyError(OpenQMLError):
     """An optional integration was requested without its dependencies."""
 
 
-class BackendError(OpenQMLError, RuntimeError):
+class BackendError(OpenQMLError):
     """An execution backend failed or returned an invalid result."""
 
 
@@ -36,10 +36,13 @@ class Diagnostic:
         return f"[{self.code}] {self.location}: {self.message}{suffix}"
 
 
-class ConversionError(OpenQMLError, ValueError):
+class ConversionError(OpenQMLError):
     def __init__(self, diagnostics: list[Diagnostic] | tuple[Diagnostic, ...]):
         self.diagnostics = tuple(diagnostics)
         super().__init__("\n".join(str(d) for d in self.diagnostics))
+
+    def __reduce__(self):
+        return type(self), (self.diagnostics,)
 
 
 def conversion_error(code: str, message: str, location: str = "circuit", hint: str = ""):

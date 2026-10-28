@@ -162,8 +162,53 @@ def _gate_matrix(name, params, ops, matrix=None):
     raise ValidationError(f"No matrix for gate {name!r}.")
 
 
+def _apply_numpy(state, matrix, qubits, num_qubits):
+    """Apply local matrices through bounded gather/matmul/scatter tiles.
+
+    One output state is allocated. Work tiles target one MiB, with a minimum
+    of one local column; no whole-state permutation or index table is built.
+    Input/matrix storage and backend BLAS workspaces are separate.
+    """
+    dimension = 1 << len(qubits)
+    columns = 1 << (num_qubits - len(qubits))
+    batch = max(1, state.size // state.shape[-1])
+    dtype = np.result_type(state, matrix)
+    index_bytes = np.dtype(np.intp).itemsize
+    per_column = 3 * dimension * batch * dtype.itemsize + (dimension + 4) * index_bytes
+    tile = max(1, min(4096, (1 << 20) // per_column))
+    local = np.arange(dimension, dtype=np.intp)
+    offsets = sum(
+        ((local >> (len(qubits) - 1 - i)) & 1) << (num_qubits - 1 - q) for i, q in enumerate(qubits)
+    )
+    positions = sorted(num_qubits - 1 - q for q in qubits)
+    result = np.empty(state.shape, dtype=dtype)
+    block = np.empty(state.shape[:-1] + (dimension, tile), dtype=state.dtype)
+    evolved = np.empty(state.shape[:-1] + (dimension, tile), dtype=dtype)
+    indices = np.empty((dimension, tile), dtype=np.intp)
+    for start in range(0, columns, tile):
+        base = np.arange(start, min(columns, start + tile), dtype=np.intp)
+        for bit in positions:
+            mask = (1 << bit) - 1
+            base = ((base & ~mask) << 1) | (base & mask)
+        size = len(base)
+        selected = indices[:, :size]
+        np.bitwise_or(offsets[:, None], base[None, :], out=selected)
+        # Every generated index is in range. clip avoids take's mandatory
+        # temporary out buffer in raise mode; buffers are reused across tiles.
+        np.take(state, selected, axis=-1, out=block[..., :size], mode="clip")
+        np.matmul(matrix, block[..., :size], out=evolved[..., :size])
+        result[..., selected] = evolved[..., :size]
+    return result
+
+
 def _apply_matrix(state, matrix, qubits, num_qubits, ops):
     """Apply only a local 2**k matrix, without constructing a 2**n square unitary."""
+    if (
+        ops.backend == "numpy"
+        and state.size >= 65_536
+        and tuple(qubits) != tuple(range(len(qubits)))
+    ):
+        return _apply_numpy(state, matrix, qubits, num_qubits)
     batch_shape = tuple(state.shape[:-1])
     rank = len(batch_shape)
     local = tuple(qubits) + tuple(q for q in range(num_qubits) if q not in qubits)
