@@ -164,83 +164,10 @@ class Operation:
                 raise ValidationError("Channel probability must lie in [0, 1].")
 
 
-@dataclass(frozen=True)
-class Circuit:
-    num_qubits: int
-    operations: tuple[Operation, ...] = ()
-    num_clbits: int = 0
-    global_phase: Expression = Expression()
+class _CircuitGates:
+    """Gate spelling shared by immutable circuits and bulk builders."""
 
-    def __post_init__(self):
-        object.__setattr__(self, "num_qubits", integer(self.num_qubits, "num_qubits", 1))
-        object.__setattr__(self, "num_clbits", integer(self.num_clbits, "num_clbits"))
-        object.__setattr__(self, "operations", tuple(self.operations))
-        object.__setattr__(self, "global_phase", expression(self.global_phase))
-        for op in self.operations:
-            if not isinstance(op, Operation):
-                raise ValidationError("Circuit operations must be Operation objects.")
-            if max(op.qubits, default=-1) >= self.num_qubits:
-                raise ValidationError("Operation references an undeclared qubit.")
-            if op.clbits and max(op.clbits) >= self.num_clbits:
-                raise ValidationError("Operation references an undeclared classical bit.")
-            if op.condition and max(op.condition.bits) >= self.num_clbits:
-                raise ValidationError("Condition references an undeclared classical bit.")
-            if any(
-                b.num_qubits != self.num_qubits or b.num_clbits > self.num_clbits for b in op.blocks
-            ):
-                raise ValidationError(
-                    "Blocks must share global quantum indices and fit classical storage."
-                )
-
-    @property
-    def parameters(self) -> tuple[str, ...]:
-        return tuple(
-            sorted(
-                set(self.global_phase.parameters).union(
-                    *(p.parameters for _, op in self.walk_operations() for p in op.params),
-                    *(
-                        b.global_phase.parameters
-                        for _, op in self.walk_operations()
-                        for b in op.blocks
-                    ),
-                )
-            )
-        )
-
-    @property
-    def has_measurements(self) -> bool:
-        return any(op.name == "measure" for _, op in self.walk_operations())
-
-    @property
-    def has_effects(self):
-        return any(op.name not in UNITARY_GATES | {"barrier"} for op in self.operations)
-
-    def walk_operations(self, prefix=()):
-        for index, op in enumerate(self.operations):
-            path = prefix + (index,)
-            yield path, op
-            for block_index, block in enumerate(op.blocks):
-                yield from block.walk_operations(path + (block_index,))
-
-    def operation_at(self, path):
-        op = self.operations[path[0]]
-        return op if len(path) == 1 else op.blocks[path[1]].operation_at(path[2:])
-
-    def replace_operation(self, path, operation):
-        operations = list(self.operations)
-        if len(path) == 1:
-            operations[path[0]] = operation
-        else:
-            parent = operations[path[0]]
-            blocks = list(parent.blocks)
-            blocks[path[1]] = blocks[path[1]].replace_operation(path[2:], operation)
-            operations[path[0]] = replace(parent, blocks=tuple(blocks))
-        return replace(self, operations=tuple(operations))
-
-    def append(self, operation: Operation) -> Circuit:
-        return replace(self, operations=self.operations + (operation,))
-
-    def gate(self, name: str, *qubits: int, params=()) -> Circuit:
+    def gate(self, name: str, *qubits: int, params=()):
         return self.append(Operation(name, tuple(qubits), tuple(params)))
 
     def id(self, q):
@@ -360,6 +287,98 @@ class Circuit:
     def channel(self, kraus, *qubits):
         return self.append(Operation("kraus", tuple(qubits), kraus=kraus))
 
+    def barrier(self, *qubits):
+        return self.gate("barrier", *(qubits or tuple(range(self.num_qubits))))
+
+
+def _validate_operation(op, num_qubits, num_clbits):
+    if not isinstance(op, Operation):
+        raise ValidationError("Circuit operations must be Operation objects.")
+    if max(op.qubits, default=-1) >= num_qubits:
+        raise ValidationError("Operation references an undeclared qubit.")
+    if op.clbits and max(op.clbits) >= num_clbits:
+        raise ValidationError("Operation references an undeclared classical bit.")
+    if op.condition and max(op.condition.bits) >= num_clbits:
+        raise ValidationError("Condition references an undeclared classical bit.")
+    if any(b.num_qubits != num_qubits or b.num_clbits > num_clbits for b in op.blocks):
+        raise ValidationError("Blocks must share global quantum indices and fit classical storage.")
+
+
+def _operation_items(operations):
+    try:
+        return tuple(operations)
+    except TypeError as exc:
+        raise ValidationError("Operations require an iterable of Operation objects.") from exc
+
+
+@dataclass(frozen=True)
+class Circuit(_CircuitGates):
+    num_qubits: int
+    operations: tuple[Operation, ...] = ()
+    num_clbits: int = 0
+    global_phase: Expression = Expression()
+
+    def __post_init__(self):
+        object.__setattr__(self, "num_qubits", integer(self.num_qubits, "num_qubits", 1))
+        object.__setattr__(self, "num_clbits", integer(self.num_clbits, "num_clbits"))
+        object.__setattr__(self, "operations", tuple(self.operations))
+        object.__setattr__(self, "global_phase", expression(self.global_phase))
+        for op in self.operations:
+            _validate_operation(op, self.num_qubits, self.num_clbits)
+
+    @property
+    def parameters(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                set(self.global_phase.parameters).union(
+                    *(p.parameters for _, op in self.walk_operations() for p in op.params),
+                    *(
+                        b.global_phase.parameters
+                        for _, op in self.walk_operations()
+                        for b in op.blocks
+                    ),
+                )
+            )
+        )
+
+    @property
+    def has_measurements(self) -> bool:
+        return any(op.name == "measure" for _, op in self.walk_operations())
+
+    @property
+    def has_effects(self):
+        return any(op.name not in UNITARY_GATES | {"barrier"} for op in self.operations)
+
+    def walk_operations(self, prefix=()):
+        for index, op in enumerate(self.operations):
+            path = prefix + (index,)
+            yield path, op
+            for block_index, block in enumerate(op.blocks):
+                yield from block.walk_operations(path + (block_index,))
+
+    def operation_at(self, path):
+        op = self.operations[path[0]]
+        return op if len(path) == 1 else op.blocks[path[1]].operation_at(path[2:])
+
+    def replace_operation(self, path, operation):
+        operations = list(self.operations)
+        if len(path) == 1:
+            operations[path[0]] = operation
+        else:
+            parent = operations[path[0]]
+            blocks = list(parent.blocks)
+            blocks[path[1]] = blocks[path[1]].replace_operation(path[2:], operation)
+            operations[path[0]] = replace(parent, blocks=tuple(blocks))
+        return replace(self, operations=tuple(operations))
+
+    def append(self, operation: Operation) -> Circuit:
+        """Return an immutable copy in O(n); use CircuitBuilder for repeated appends."""
+        return replace(self, operations=self.operations + (operation,))
+
+    def extend(self, operations) -> Circuit:
+        """Append an iterable in one immutable O(n + m) construction."""
+        return replace(self, operations=self.operations + _operation_items(operations))
+
     def if_else(self, condition, when_true, when_false=None):
         if not isinstance(condition, ClassicalCondition):
             raise ValidationError("Use ClassicalCondition(bits, value) for if_else.")
@@ -433,9 +452,6 @@ class Circuit:
 
         return inverse(self)
 
-    def barrier(self, *qubits) -> Circuit:
-        return self.gate("barrier", *(qubits or tuple(range(self.num_qubits))))
-
     def measure(self, qubit: int, cbit: int | None = None) -> Circuit:
         cbit = integer(qubit if cbit is None else cbit, "classical bit")
         return replace(self, num_clbits=max(self.num_clbits, cbit + 1)).append(
@@ -443,10 +459,12 @@ class Circuit:
         )
 
     def measure_all(self) -> Circuit:
-        circuit = self
-        for q in range(self.num_qubits):
-            circuit = circuit.measure(q, q)
-        return circuit
+        return replace(
+            self,
+            num_clbits=max(self.num_clbits, self.num_qubits),
+            operations=self.operations
+            + tuple(Operation("measure", (q,), clbits=(q,)) for q in range(self.num_qubits)),
+        )
 
     def with_global_phase(self, phase) -> Circuit:
         return replace(self, global_phase=expression(phase))
@@ -699,3 +717,97 @@ class Circuit:
             max_matrix_qubits=max_matrix_qubits,
             max_matrix_entries=max_matrix_entries,
         )
+
+
+class CircuitBuilder(_CircuitGates):
+    """Mutable O(1)-amortized appends followed by an O(n) immutable build.
+
+    Gate methods mutate this builder and return it. build() takes an independent
+    Circuit snapshot; later edits never change a previously built circuit.
+    append/extend require declared classical bits, while measure/if_else grow
+    the register as their immutable Circuit counterparts do.
+    """
+
+    def __init__(self, num_qubits, *, num_clbits=0, global_phase=0):
+        self._num_qubits = integer(num_qubits, "num_qubits", 1)
+        self._num_clbits = integer(num_clbits, "num_clbits")
+        self._global_phase = expression(global_phase)
+        self._operations = []
+
+    @property
+    def num_qubits(self):
+        return self._num_qubits
+
+    @property
+    def num_clbits(self):
+        return self._num_clbits
+
+    @property
+    def global_phase(self):
+        return self._global_phase
+
+    @property
+    def operations(self):
+        """Return an immutable O(n) snapshot of the operation buffer."""
+        return tuple(self._operations)
+
+    @classmethod
+    def from_circuit(cls, circuit):
+        if not isinstance(circuit, Circuit):
+            raise ValidationError("CircuitBuilder.from_circuit requires a Circuit.")
+        result = cls(
+            circuit.num_qubits, num_clbits=circuit.num_clbits, global_phase=circuit.global_phase
+        )
+        result._operations.extend(circuit.operations)
+        return result
+
+    def append(self, operation):
+        _validate_operation(operation, self.num_qubits, self.num_clbits)
+        self._operations.append(operation)
+        return self
+
+    def extend(self, operations):
+        pending = _operation_items(operations)
+        for op in pending:
+            _validate_operation(op, self.num_qubits, self.num_clbits)
+        self._operations.extend(pending)
+        return self
+
+    def _append_with_bits(self, operation, width):
+        _validate_operation(operation, self.num_qubits, width)
+        self._num_clbits = width
+        self._operations.append(operation)
+        return self
+
+    def measure(self, qubit, cbit=None):
+        cbit = integer(qubit if cbit is None else cbit, "classical bit")
+        return self._append_with_bits(
+            Operation("measure", (qubit,), clbits=(cbit,)), max(self.num_clbits, cbit + 1)
+        )
+
+    def measure_all(self):
+        self._num_clbits = max(self.num_clbits, self.num_qubits)
+        self._operations.extend(
+            Operation("measure", (q,), clbits=(q,)) for q in range(self.num_qubits)
+        )
+        return self
+
+    def if_else(self, condition, when_true, when_false=None):
+        if not isinstance(condition, ClassicalCondition):
+            raise ValidationError("Use ClassicalCondition(bits, value) for if_else.")
+        when_false = Circuit(self.num_qubits) if when_false is None else when_false
+        if not isinstance(when_true, Circuit) or not isinstance(when_false, Circuit):
+            raise ValidationError("Branch bodies must be Circuit instances.")
+        width = max(
+            self.num_clbits, max(condition.bits) + 1, when_true.num_clbits, when_false.num_clbits
+        )
+        return self._append_with_bits(
+            Operation("if_else", (), condition=condition, blocks=(when_true, when_false)), width
+        )
+
+    def with_global_phase(self, phase):
+        self._global_phase = expression(phase)
+        return self
+
+    def build(self):
+        return Circuit(self.num_qubits, tuple(self._operations), self.num_clbits, self.global_phase)

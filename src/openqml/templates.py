@@ -1,7 +1,7 @@
 """Feature maps and ansatz builders."""
 
 from .errors import ValidationError
-from .ir import Circuit, integer
+from .ir import CircuitBuilder, integer
 from .layers import LayerSpec
 from .parameters import Parameter
 
@@ -13,7 +13,7 @@ def data_reuploading(num_qubits: int, depth: int = 2, *, entanglement: str = "li
     owns independent weights. Entanglement may be linear, ring, full or none.
     """
     integer(depth, "depth", 1)
-    circuit = Circuit(num_qubits)
+    circuit = CircuitBuilder(num_qubits)
     if not isinstance(entanglement, str) or entanglement not in {"linear", "ring", "full", "none"}:
         raise ValidationError("entanglement must be linear, ring, full or none.")
     inputs = tuple(f"x_{q}" for q in range(num_qubits))
@@ -34,13 +34,13 @@ def data_reuploading(num_qubits: int, depth: int = 2, *, entanglement: str = "li
                 circuit = circuit.gate(axis, q, params=(Parameter(weight),))
         for a, b in edges:
             circuit = circuit.cx(a, b)
-    return LayerSpec(circuit, inputs, tuple(weights))
+    return LayerSpec(circuit.build(), inputs, tuple(weights))
 
 
 def hardware_efficient(num_qubits: int, depth: int = 2) -> LayerSpec:
     """RY input encoding, trainable RY/RZ blocks, and a nearest-neighbour CX chain."""
     integer(depth, "depth", 1)
-    circuit = Circuit(num_qubits)
+    circuit = CircuitBuilder(num_qubits)
     inputs = tuple(f"x_{q}" for q in range(num_qubits))
     weights = []
     for q, name in enumerate(inputs):
@@ -53,4 +53,4 @@ def hardware_efficient(num_qubits: int, depth: int = 2) -> LayerSpec:
                 circuit = circuit.gate(axis, q, params=(Parameter(name),))
         for q in range(num_qubits - 1):
             circuit = circuit.cx(q, q + 1)
-    return LayerSpec(circuit, inputs, tuple(weights))
+    return LayerSpec(circuit.build(), inputs, tuple(weights))

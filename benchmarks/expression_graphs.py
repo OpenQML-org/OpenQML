@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+from _precision import scoped_x64
 from planned_execution import source_hash
 
 CASES = {
@@ -35,6 +36,7 @@ CASES = {
 }
 
 
+@scoped_x64
 def worker(args):
     import openqml as oq
 
@@ -87,7 +89,6 @@ def worker(args):
             import jax
             import jax.numpy as jnp
 
-            jax.config.update("jax_enable_x64", True)
             p = {k: jnp.asarray(v) for k, v in initial.items()}
             inputs = jnp.asarray(raw)
             layer = oq.jax.QuantumLayer(circuit, ["x"], ["w"])

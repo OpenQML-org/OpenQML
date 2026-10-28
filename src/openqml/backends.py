@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from threading import RLock
@@ -9,7 +10,7 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
-from .errors import ValidationError
+from .errors import ResourceError, ValidationError
 from .ir import UNITARY_GATES, Circuit, integer
 
 
@@ -64,6 +65,27 @@ class ExecutionOptions:
     max_memory_mb: float = 256
     seed: int | None = None
     max_branches: int = 256
+
+    @classmethod
+    def for_statevector(cls, max_memory_mb, *, batch_size=1, max_qubits=None, seed=None):
+        """Derive an explicit width cap from four complex128 state buffers per row.
+
+        Defaults stay fixed and reproducible. This opt-in policy sizes a dense
+        unitary workload; density branches, local matrices and autodiff tapes
+        have separate costs. Every execution still checks its actual resources.
+        """
+        from .parameters import real
+
+        budget = real(max_memory_mb)
+        count = integer(batch_size, "batch_size", 1)
+        if budget <= 0:
+            raise ValidationError("max_memory_mb must be positive.")
+        width = math.floor(math.log2(budget) + 20 - math.log2(4 * 16) - math.log2(count))
+        if max_qubits is not None:
+            width = min(width, integer(max_qubits, "max_qubits", 1))
+        if width < 1:
+            raise ResourceError("The statevector budget cannot hold one quantum wire.")
+        return cls(width, budget, seed)
 
     def __post_init__(self):
         from .parameters import real

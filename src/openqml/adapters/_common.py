@@ -1,7 +1,7 @@
 import importlib
 from numbers import Real
 
-from ..errors import MissingDependencyError, conversion_error
+from ..errors import MissingDependencyError, ValidationError, conversion_error
 from ..parameters import Expression, Parameter, expression, node, real
 
 
@@ -27,7 +27,7 @@ def numeric(value, location="parameter"):
             elif not isinstance(value, (str, bytes, complex, bool)):
                 value = float(value)
         return real(value)
-    except (ValueError, TypeError, RuntimeError) as exc:
+    except (ValueError, TypeError, RuntimeError, ValidationError) as exc:
         raise conversion_error(
             "NONREAL_PARAMETER", "Expected a finite real scalar.", location
         ) from exc
