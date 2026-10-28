@@ -31,6 +31,15 @@ _INTEGRATIONS = {
 def _probe_import(module, timeout):
     """A broken binary import cannot terminate or alter the caller's SDK state."""
     code = "import importlib; importlib.import_module(" + repr(module) + ")"
+    checks = ["import"]
+    if module == "torch":
+        code += (
+            "; import numpy as np; import torch; "
+            "x=torch.tensor([1.0], requires_grad=True); x.square().sum().backward(); "
+            "assert x.detach().cpu().numpy()[0] == 1; "
+            "assert torch.from_numpy(np.ones(1)).shape == (1,)"
+        )
+        checks.append("numpy_array_bridge")
     try:
         result = subprocess.run(
             [sys.executable, "-c", code],
@@ -45,11 +54,12 @@ def _probe_import(module, timeout):
     except OSError:
         return {"status": "error", "reason": "probe_launch_failed"}
     return (
-        {"status": "ok"}
+        {"status": "ok", "checks": checks}
         if result.returncode == 0
         else {
             "status": "error",
-            "reason": "import_failed",
+            "reason": "runtime_probe_failed",
+            "requested_checks": checks,
             "returncode": result.returncode,
             "detail": result.stderr[-2000:],
         }
@@ -151,7 +161,7 @@ def environment_report(*, check_imports=False, include_sizes=False, import_timeo
             if probe["status"] != "ok":
                 diagnostics.append(
                     {
-                        "code": "INTEGRATION_IMPORT_FAILED",
+                        "code": "INTEGRATION_RUNTIME_PROBE_FAILED",
                         "integration": module,
                         "severity": "error",
                     }
@@ -190,6 +200,8 @@ def environment_report(*, check_imports=False, include_sizes=False, import_timeo
         "status": "error" if any(d["severity"] == "error" for d in diagnostics) else "ok",
         "scope": "observed_environment_not_universal_compatibility",
         "isolated_import_checks": check_imports,
+        "runtime_probe_coverage": ["imports", "Torch_NumPy_bridge"] if check_imports else [],
+        "accelerator_execution_checked": False,
         "dependency_count": len(dependencies),
         "dependencies": dict(sorted(dependencies.items())),
         "integrations": integrations,

@@ -20,7 +20,7 @@ class PythonSourceReport:
     tokens: int
     nodes: int
     imports: tuple[str, ...]
-    syntax_valid: bool | None
+    ast_parseable: bool | None
     static_scan_complete: bool
     diagnostics: tuple[Diagnostic, ...]
     diagnostics_truncated: bool = False
@@ -39,6 +39,7 @@ class PythonSourceReport:
             "scope": "static_source_inspection_only",
             "code_executed": False,
             "whole_program_conversion_supported": False,
+            "runtime_validity": "not_proven",
             **asdict(self),
         }
 
@@ -77,6 +78,7 @@ def inspect_python(
     """
     if not isinstance(source, str) or not isinstance(filename, str) or not filename:
         raise ValidationError("Python inspection requires source text and a filename label.")
+    source, filename = str.__str__(source), str.__str__(filename)
     limits = [max_source_bytes, max_tokens, max_nodes, max_nesting, max_statement_tokens]
     for value in limits:
         integer(value, "inspection limit", 1)
@@ -123,7 +125,7 @@ def inspect_python(
             tokens=count,
             nodes=nodes,
             imports=tuple(sorted(imports)),
-            syntax_valid=valid,
+            ast_parseable=valid,
             static_scan_complete=complete,
             diagnostics=tuple(diagnostics),
             diagnostics_truncated=truncated,
@@ -222,6 +224,13 @@ def inspect_python(
         "pulse",
     }
     custom = {"to_gate", "to_instruction", "Gate", "Instruction", "Operation", "define_gate"}
+
+    def resolved_name(node):
+        parts = _name(node).split(".")
+        return aliases.get(parts[0], parts[0]) + (
+            "." + ".".join(parts[1:]) if len(parts) > 1 else ""
+        )
+
     for node in syntax:
         if isinstance(node, control):
             # comprehension nodes have no own location; their parent carries it.
@@ -232,11 +241,7 @@ def inspect_python(
                     node,
                 )
         if isinstance(node, ast.Call):
-            name = _name(node.func)
-            parts = name.split(".")
-            resolved = aliases.get(parts[0], parts[0]) + (
-                "." + ".".join(parts[1:]) if len(parts) > 1 else ""
-            )
+            resolved = resolved_name(node.func)
             tail = resolved.split(".")[-1]
             keys = {keyword.arg for keyword in node.keywords}
             if tail in {"exec", "eval", "compile", "__import__", "import_module"}:
@@ -248,14 +253,15 @@ def inspect_python(
             if tail in noise or "noise_model" in keys or "noise" in keys or ".noise." in resolved:
                 note(
                     "PYTHON_NOISE_CONTEXT",
-                    "Represent noise explicitly as supported IR channels. "
+                    "Potential noise configuration: only explicit IR channels are preserved. "
                     "A circuit alone does not carry its simulator's noise model.",
                     node,
                 )
             if (
                 tail in hardware
                 or ".pulse." in resolved
-                or keys & {"backend", "calibrations", "target"}
+                or keys & {"backend", "calibrations"}
+                or ("target" in keys and resolved.startswith(("qiskit.", "qiskit_aer.")))
             ):
                 note(
                     "PYTHON_HARDWARE_CONTEXT",
@@ -275,7 +281,7 @@ def inspect_python(
                 node,
             )
         if isinstance(node, ast.ClassDef) and any(
-            _name(base).split(".")[-1] in custom for base in node.bases
+            resolved_name(base).split(".")[-1] in custom for base in node.bases
         ):
             note(
                 "PYTHON_CUSTOM_INSTRUCTION",
