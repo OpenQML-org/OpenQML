@@ -36,7 +36,7 @@ optimizer.step()
 
 JAX exposes `layer(weights, inputs)`; Flax uses standard parameter trees and Optax. Generated weights accept broadcastable `(..., n_weights)` arrays through PyTorch's `layer.functional(weights, inputs)`, JAX's call, or Flax's `weights=`. Inputs and weights remain differentiable.
 
-`batch_chunk_size` bounds each simulator batch. For native unitary circuits, `checkpoint_interval` trades recomputation for fewer retained training tensors. Native tensor backends support higher derivatives; external numerical bridges support first-order differentiation.
+`batch_chunk_size` bounds forward/adjoint batches; `gradient_chunk_size` bounds parameter-shift jobs, including under `vmap`. External bridges support standard PyTorch/JAX JVPs, VJPs, Jacobians and nested `vmap`; products stream without a full Jacobian. JAX `linearize`/`linear_transpose` builds fixed-point normal operators for hybrid models; see `examples/hybrid_linearization.py`. Nonlinear higher derivatives require native tensor execution. For native unitary circuits, `checkpoint_interval` trades recomputation for fewer retained training tensors.
 
 For unitary simulation, `backend="numpy", gradient_method="adjoint"` reuses bounded batches. `AdjointPlan` supports VJPs and directional JVPs with state-vector storage independent of gate count.
 
