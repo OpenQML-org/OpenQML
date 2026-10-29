@@ -193,7 +193,7 @@ class CirqDensityBackend:
 
     def expectations_batch(self, circuits, observables, *, options):
         if any(c.has_measurements for c in circuits):
-            from .density import density_matrix, expectation_from_density
+            from .density import _expectations_from_density, density_matrix
             from .simulator import _TensorOps
 
             rows = []
@@ -206,15 +206,13 @@ class CirqDensityBackend:
                     max_branches=options.max_branches,
                 )
                 rows.append(
-                    [
-                        expectation_from_density(rho, ob, c.num_qubits, _TensorOps())
-                        for ob in observables
-                    ]
+                    _expectations_from_density(rho, observables, c.num_qubits, _TensorOps())
                 )
             return np.asarray(rows)
         from .adapters.cirq import to_cirq
         from .compiler import decompose
-        from .simulator import _pauli_plan
+        from .density import _expectations_from_density
+        from .simulator import _TensorOps
 
         engine = self._engine(circuits, options)
         import cirq
@@ -225,16 +223,9 @@ class CirqDensityBackend:
                 to_cirq(decompose(circuit).with_global_phase(0)),
                 qubit_order=cirq.LineQubit.range(circuit.num_qubits),
             ).final_density_matrix
-            indices = np.arange(2**circuit.num_qubits)
-            output = []
-            for observable in observables:
-                terms = observable.terms if isinstance(observable, Hamiltonian) else (observable,)
-                total = 0.0
-                for term in terms:
-                    source, phase = _pauli_plan(term.paulis)
-                    total += term.coefficient * float(np.real((rho[source, indices] * phase).sum()))
-                output.append(total)
-            rows.append(output)
+            rows.append(
+                _expectations_from_density(rho, observables, circuit.num_qubits, _TensorOps())
+            )
         return np.asarray(rows)
 
     def sample_batch(self, circuits, shots, *, options):

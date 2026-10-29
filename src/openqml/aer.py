@@ -235,7 +235,7 @@ class AerBackend:
                 raise ValidationError(
                     "Use aer-density for exact effectful readouts, or ShotBackend for sampling."
                 )
-            from .density import density_matrix, expectation_from_density
+            from .density import _expectations_from_density, density_matrix
             from .simulator import _TensorOps
 
             rows = []
@@ -248,10 +248,7 @@ class AerBackend:
                     max_branches=options.max_branches,
                 )
                 rows.append(
-                    [
-                        expectation_from_density(rho, ob, c.num_qubits, _TensorOps())
-                        for ob in observables
-                    ]
+                    _expectations_from_density(rho, observables, c.num_qubits, _TensorOps())
                 )
             return np.asarray(rows)
         if self.method == "density_matrix":

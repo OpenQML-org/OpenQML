@@ -88,7 +88,7 @@ class QuantumProgram:
             raise
         except ImportError as exc:
             raise MissingDependencyError(
-                "Install openqml[qasm] for the official QASM frontend."
+                "Cannot load the QASM frontend. Run: python -m pip install openqml."
             ) from exc
         except Exception as exc:
             raise conversion_error("SDK_QASM_PARSE", str(exc)) from exc

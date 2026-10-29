@@ -16,7 +16,7 @@ class ResourceError(OpenQMLError):
 
 
 class MissingDependencyError(OpenQMLError):
-    """An optional integration was requested without its dependencies."""
+    """An integration dependency could not be imported."""
 
 
 class BackendError(OpenQMLError):
