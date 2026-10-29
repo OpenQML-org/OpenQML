@@ -37,6 +37,7 @@ from .errors import (
 from .execution import ExecutionGroup, ExpectationCheck, ExpectationPlan
 from .frontends import FrameworkAdapter, list_formats, register_adapter, unregister_adapter
 from .gradients import (
+    ShiftPlan,
     parameter_shift,
     parameter_shift_jacobian,
     parameter_shift_jvp,
@@ -72,7 +73,7 @@ def __dir__():
     return sorted(set(globals()) | _INTERFACE_NAMES)
 
 
-__version__ = "0.3.0a8"
+__version__ = "0.3.0a9"
 
 __all__ = [
     "ReadoutRoute",
@@ -85,6 +86,7 @@ __all__ = [
     "ReadoutPlan",
     "plan_readout",
     "AdjointPlan",
+    "ShiftPlan",
     "adjoint_vjp",
     "adjoint_jvp",
     "ConversionPlan",
