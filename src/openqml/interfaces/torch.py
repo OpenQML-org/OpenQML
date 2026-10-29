@@ -12,7 +12,7 @@ except ImportError as exc:
 
 from ..errors import ValidationError
 from ..simulator import _resource_check, expectations
-from ._spec import LayerSpecMixin, prepare_layer
+from ._spec import LayerSpecMixin, broadcast_batch_shape, prepare_layer
 
 
 class QuantumLayer(LayerSpecMixin, nn.Module):
@@ -135,40 +135,71 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
         return self
 
     def forward(self, inputs):
+        return self.functional(self.weights, inputs)
+
+    def functional(self, weights, inputs):
+        """Evaluate explicit (..., n_weights) weights without changing module parameters.
+
+        Leading weight/input dimensions broadcast. This supports classical weight
+        generators, parameter sharing and ensembles in the same autograd graph.
+        """
+        if (
+            not isinstance(weights, torch.Tensor)
+            or weights.ndim < 1
+            or weights.shape[-1] != len(self.weight_parameters)
+        ):
+            raise ValidationError(f"Expected weight shape (..., {len(self.weight_parameters)}).")
+        if weights.dtype not in {torch.float16, torch.bfloat16, torch.float32, torch.float64}:
+            raise ValidationError("Weights must use a floating-point dtype.")
         if (
             not isinstance(inputs, torch.Tensor)
             or inputs.ndim < 1
             or inputs.shape[-1] != len(self.input_parameters)
         ):
             raise ValidationError(f"Expected input shape (..., {len(self.input_parameters)}).")
-        if inputs.device != self.weights.device:
+        if inputs.device != weights.device:
             raise ValidationError("Inputs and layer weights must share a device.")
         if inputs.dtype not in {torch.float16, torch.bfloat16, torch.float32, torch.float64}:
             raise ValidationError("Inputs must use a floating-point dtype.")
         output_dtype = inputs.dtype
         computation_weights = (
-            self.weights
-            if self.weights.dtype in {torch.float32, torch.float64}
-            else self.weights.float()
+            weights if weights.dtype in {torch.float32, torch.float64} else weights.float()
         )
         inputs = inputs.to(dtype=computation_weights.dtype)
-        shape = inputs.shape[:-1]
+        shape = broadcast_batch_shape(computation_weights, inputs)
         import math
 
         # reshape(-1, 0) is ambiguous; compute row count from the batch dimensions.
-        flat = inputs.reshape(math.prod(shape), len(self.input_parameters))
-        if flat.shape[0] == 0:
+        count = math.prod(shape)
+        if count == 0:
             return (
                 torch.zeros(
                     (*shape, len(self.observables)), dtype=inputs.dtype, device=inputs.device
                 )
-                + (inputs.sum() + self.weights.sum()) * 0
+                + (inputs * 0).square().sum()
+                + (computation_weights * 0).square().sum()
             ).to(output_dtype)
-        if self.batch_chunk_size is not None and flat.shape[0] > self.batch_chunk_size:
+        if self.batch_chunk_size is not None and count > self.batch_chunk_size:
+            flat = inputs.expand(shape + (len(self.input_parameters),)).reshape(
+                count, len(self.input_parameters)
+            )
+            flat_weights = computation_weights.expand(
+                shape + (len(self.weight_parameters),)
+            ).reshape(count, len(self.weight_parameters))
             # Each call owns at most one chunk of simulator states. Autograd
             # retains the required activations and accumulates shared weights.
             return (
-                torch.cat([self(chunk) for chunk in flat.split(self.batch_chunk_size)], dim=0)
+                torch.cat(
+                    [
+                        self.functional(w, x)
+                        for w, x in zip(
+                            flat_weights.split(self.batch_chunk_size),
+                            flat.split(self.batch_chunk_size),
+                            strict=True,
+                        )
+                    ],
+                    dim=0,
+                )
                 .reshape(*shape, len(self.observables))
                 .to(output_dtype)
             )
@@ -182,8 +213,8 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
             if name in self._active_parameters
         }
         bindings.update(
-            (name, value)
-            for name, value in zip(self.weight_parameters, computation_weights, strict=True)
+            (name, computation_weights[..., i])
+            for i, name in enumerate(self.weight_parameters)
             if name in self._active_parameters
         )
         result = expectations(
@@ -195,11 +226,13 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
             batch_shape=shape,
             **self.limits,
         )
-        if self.optimization is not None and self.optimization.removed_parameters:
+        removed = self.optimization is not None and self.optimization.removed_parameters
+        if removed or not self.input_parameters:
             # Multiply before squaring: finite unused values cannot overflow.
             # Quadratic zero retains a graph for second-order autodiff as well.
             result = result + (inputs * 0).square().sum(-1, keepdim=True)
-            result = result + (computation_weights * 0).square().sum()
+        if removed or not self.weight_parameters:
+            result = result + (computation_weights * 0).square().sum(-1, keepdim=True)
         return result.to(output_dtype)
 
     def extra_repr(self):
@@ -223,7 +256,8 @@ class _ExternalQuantumFunction(torch.autograd.Function):
         output = expectations_batch(
             layer.circuit, layer.observables, rows, backend=layer.execution_backend, **layer.limits
         )
-        output = np.asarray(output).reshape(inputs.shape[:-1] + (len(layer.observables),))
+        shape = broadcast_batch_shape(weights, inputs)
+        output = np.asarray(output).reshape(shape + (len(layer.observables),))
         return torch.as_tensor(output, dtype=inputs.dtype, device=inputs.device)
 
     @staticmethod

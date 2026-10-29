@@ -42,6 +42,9 @@ def main(argv=None):
     command.add_argument(
         "--check", action="store_true", help="Print a JSON conversion plan without exporting"
     )
+    command.add_argument("--max-operations", type=int, default=100_000)
+    command.add_argument("--max-depth", type=int, default=64)
+    command.add_argument("--max-output-statements", type=int, default=100_000)
     inspection = commands.add_parser(
         "inspect", help="Report circuit width, dependencies and gate counts"
     )
@@ -94,7 +97,14 @@ def main(argv=None):
             if args.command == "convert" and args.check:
                 if args.output or args.force:
                     raise ValueError("--check cannot be combined with --output or --force.")
-                plan = plan_conversion(text, source=args.source, target=args.target)
+                plan = plan_conversion(
+                    text,
+                    source=args.source,
+                    target=args.target,
+                    max_operations=args.max_operations,
+                    max_depth=args.max_depth,
+                    max_output_statements=args.max_output_statements,
+                )
                 print(plan.to_json())
                 return 0 if plan.compatible else 2
             if args.command == "inspect":
@@ -102,7 +112,13 @@ def main(argv=None):
                 print(json.dumps(asdict(circuit_stats(circuit)), indent=2))
                 return 0
             if args.command == "optimize":
-                circuit = convert(text, source=args.source, target="ir").circuit
+                circuit = convert(
+                    text,
+                    source=args.source,
+                    target="ir",
+                    max_operations=args.max_operations,
+                    max_depth=args.max_depth,
+                ).circuit
                 profile = optimize(
                     circuit,
                     max_operations=args.max_operations,
@@ -115,15 +131,29 @@ def main(argv=None):
                         circuit,
                         basis=tuple(name.strip() for name in args.basis.split(",")),
                         max_operations=args.max_operations,
+                        max_depth=args.max_depth,
                     )
-                result = convert(circuit, source="ir", target=args.target)
+                result = convert(
+                    circuit,
+                    source="ir",
+                    target=args.target,
+                    max_operations=args.max_operations,
+                    max_depth=args.max_depth,
+                )
                 result = replace(
                     result,
                     optimization=profile,
                     diagnostics=profile.diagnostics + result.diagnostics,
                 )
             else:
-                result = convert(text, source=args.source, target=args.target)
+                result = convert(
+                    text,
+                    source=args.source,
+                    target=args.target,
+                    max_operations=args.max_operations,
+                    max_depth=args.max_depth,
+                    max_output_statements=args.max_output_statements,
+                )
             if args.diagnostics:
                 print(
                     json.dumps([asdict(diagnostic) for diagnostic in result.diagnostics]),

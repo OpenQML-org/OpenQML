@@ -434,31 +434,50 @@ def _format_angle(angle):
     return " + ".join(parts)
 
 
-def to_openqasm(circuit: Circuit, *, version=3, bindings=None) -> str:
+def to_openqasm(
+    circuit: Circuit,
+    *,
+    version=3,
+    bindings=None,
+    max_operations=100_000,
+    max_depth=64,
+    max_output_statements=100_000,
+) -> str:
     if type(version) is not int or version not in {2, 3}:
         raise conversion_error("QASM_VERSION", "Only versions 2 and 3 are supported.")
+    from ..compiler import QASM_BASIS, _check_circuit_limits, _qasm_basis, decompose
+
+    _check_circuit_limits(circuit, max_operations=max_operations, max_depth=max_depth)
     circuit = bound_for_export(circuit, bindings)
     from ..conversion import diagnose
 
-    diagnostics = diagnose(circuit, f"openqasm{version}")
+    limits = {
+        "max_operations": max_operations,
+        "max_depth": max_depth,
+        "max_output_statements": max_output_statements,
+    }
+    diagnostics = diagnose(circuit, f"openqasm{version}", **limits)
     if diagnostics:
         raise ConversionError(diagnostics)
+    circuit = decompose(
+        circuit, basis=_qasm_basis(circuit), max_operations=max_operations, max_depth=max_depth
+    )
     if any(op.name == "unitary" for _, op in circuit.walk_operations()):
         from ._common import dependency
         from .qiskit import from_qiskit, to_qiskit
 
         qiskit = dependency("qiskit", "qiskit")
         circuit = from_qiskit(
-            qiskit.transpile(to_qiskit(circuit), basis_gates=["u", "cx"], optimization_level=0)
+            qiskit.transpile(to_qiskit(circuit), basis_gates=["u", "cx"], optimization_level=0),
+            max_operations=max_operations,
+            max_depth=max_depth,
         )
-    from ..conversion import diagnose
-
-    diagnostics = diagnose(circuit, f"openqasm{version}")
+    circuit = decompose(
+        circuit, basis=QASM_BASIS, max_operations=max_operations, max_depth=max_depth
+    )
+    diagnostics = diagnose(circuit, f"openqasm{version}", **limits)
     if diagnostics:
         raise ConversionError(diagnostics)
-    from ..compiler import QASM_BASIS, decompose
-
-    circuit = decompose(circuit, basis=QASM_BASIS)
     lines = [
         f"OPENQASM {version}.0;",
         'include "qelib1.inc";' if version == 2 else 'include "stdgates.inc";',
@@ -477,7 +496,7 @@ def to_openqasm(circuit: Circuit, *, version=3, bindings=None) -> str:
         if version == 3 and (body.global_phase.parameters or body.global_phase.constant):
             lines.append(indent + f"gphase({_format_angle(body.global_phase)});")
         for op in body.operations:
-            if len(lines) > 100_000:
+            if len(lines) >= max_output_statements:
                 raise conversion_error(
                     "QASM_EXPORT_LIMIT", "Expanded conditional output exceeds the statement budget."
                 )
@@ -526,4 +545,8 @@ def to_openqasm(circuit: Circuit, *, version=3, bindings=None) -> str:
                 )
 
     emit_body(circuit)
+    if len(lines) > max_output_statements:
+        raise conversion_error(
+            "QASM_EXPORT_LIMIT", "Expanded OpenQASM exceeds max_output_statements."
+        )
     return "\n".join(lines) + "\n"
