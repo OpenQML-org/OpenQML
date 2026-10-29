@@ -1,5 +1,6 @@
 """OpenQML: hybrid quantum learning and explicit circuit interoperability."""
 
+from ._scheduling import ExecutionBatch
 from .adjoint import AdjointPlan, adjoint_jvp, adjoint_vjp
 from .aer import AerBackend
 from .backends import (
@@ -48,10 +49,13 @@ from .providers import CirqDensityBackend, QiskitEstimatorBackend, QiskitSampler
 from .readout import ReadoutPlan, plan_readout
 from .simulator import ExecutionResult, execute, expectation, expectations, sample, statevector
 from .templates import data_reuploading, hardware_efficient
+from .verification import ConversionCheck
 
 __version__ = "0.3.0a8"
 
 __all__ = [
+    "ConversionCheck",
+    "ExecutionBatch",
     "ExpectationCheck",
     "ExpectationPlan",
     "ExecutionGroup",

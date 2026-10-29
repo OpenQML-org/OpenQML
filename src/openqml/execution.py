@@ -11,6 +11,7 @@ import math
 from collections.abc import Mapping, Set
 from dataclasses import asdict, dataclass, field, replace
 
+from ._scheduling import _evaluate_dense, _schedule_dense
 from .compiler import _check_circuit_limits, circuit_stats
 from .errors import ConversionError, Diagnostic, ResourceError, ValidationError, conversion_error
 from .ir import Circuit, integer
@@ -75,6 +76,32 @@ def _import_program(arena, nodes, roots):
             index = arena.binary(node[0], mapping[node[1]], mapping[node[2]])
         mapping.append(index)
     return tuple(mapping[i] for i in roots)
+
+
+def _reuse_factors(nodes, roots, groups, batches, factor_count, max_nodes):
+    """Intern output arithmetic again after exact quantum functions are shared."""
+    aliases, coefficients = list(range(factor_count)), {}
+    for group in groups:
+        if group.pauli_plan is not None:
+            for slot, factor in zip(group.program_indices, group.factor_indices, strict=True):
+                aliases[factor] = coefficients.setdefault(slot, factor)
+    for batch in batches:
+        for destinations in batch.factor_maps:
+            readouts = {}
+            for factor, readout in destinations:
+                aliases[factor] = readouts.setdefault(readout, factor)
+    arena, mapping = _Arena(max_nodes), []
+    arena.location = "shared_outputs"
+    for node in nodes:
+        if node[0] == "factor":
+            index = arena.make(("factor", aliases[node[1]]))
+        elif node[0] == "const":
+            index = arena.make(node)
+        else:
+            index = arena.binary(node[0], mapping[node[1]], mapping[node[2]])
+        mapping.append(index)
+    nodes, roots = arena.compact(tuple(mapping[i] for i in roots))
+    return nodes, roots, tuple(aliases)
 
 
 def _components(circuit, indices):
@@ -299,7 +326,7 @@ class _Builder:
         plan, circuit = self.plan, draft.circuit
         readouts = tuple(PauliString(p) for p in draft.readouts)
         notes, dense_work, dense_bytes, dense_program = [], None, None, None
-        available = plan.max_memory_mb * 2**20 - reserve
+        available = plan._memory_bytes - reserve
         width = circuit.num_qubits
         if width <= plan.max_dense_qubits and width < 63:
             local = max((len(op.qubits) for op in circuit.operations), default=1)
@@ -475,16 +502,21 @@ class ExpectationPlan:
     max_work: int = 100_000
     max_operations: int = 100_000
     max_memory_mb: float = 256
+    max_dense_batch: int = 32
     groups: tuple = field(init=False)
+    dense_batches: tuple = field(init=False)
     active_parameters: tuple = field(init=False)
     planning_work: int = field(init=False)
     factor_count: int = field(init=False)
+    factor_aliases: tuple = field(init=False)
     working_bytes_per_row: int = field(init=False)
     _nodes: tuple = field(init=False, repr=False)
     _roots: tuple = field(init=False, repr=False)
     _coefficient_nodes: tuple = field(init=False, repr=False)
     _coefficient_roots: tuple = field(init=False, repr=False)
     _source_parameters: frozenset = field(init=False, repr=False)
+    _retained_bytes_per_row: int = field(init=False, repr=False)
+    _memory_bytes: int = field(init=False, repr=False)
 
     def __post_init__(self):
         for name in (
@@ -495,6 +527,7 @@ class ExpectationPlan:
             "max_nodes",
             "max_work",
             "max_operations",
+            "max_dense_batch",
         ):
             minimum = 0 if name == "max_dense_qubits" else 2 if name == "max_nodes" else 1
             object.__setattr__(self, name, integer(getattr(self, name), name, minimum))
@@ -502,6 +535,8 @@ class ExpectationPlan:
         if budget <= 0:
             raise ValidationError("max_memory_mb must be positive.")
         object.__setattr__(self, "max_memory_mb", budget)
+        numerator, denominator = budget.as_integer_ratio()
+        object.__setattr__(self, "_memory_bytes", numerator * 2**20 // denominator)
         _check_circuit_limits(self.circuit, max_operations=self.max_operations)
         if self.circuit.has_effects:
             raise _failure(
@@ -518,7 +553,7 @@ class ExpectationPlan:
                 ) from exc
             raise
         reserve = 8 * (len(nodes) + builder.factors + 8)
-        if reserve > budget * 2**20:
+        if reserve > self._memory_bytes:
             raise _failure(
                 "EXPECTATION_WORKING_LIMIT", "Readout contraction arrays exceed the memory budget."
             )
@@ -540,12 +575,17 @@ class ExpectationPlan:
             groups.append(replace(group, program_indices=indices))
         coefficient_nodes, coefficient_roots = shared.compact(tuple(slots))
         groups = tuple(groups)
-        required = (
-            reserve
-            + 8 * (len(coefficient_nodes) + len(coefficient_roots))
-            + max((g.working_bytes_per_row for g in groups), default=0)
+        dense_batches = _schedule_dense(groups, builder.charge)
+        builder.charge(len(nodes) + builder.factors)
+        nodes, roots, factor_aliases = _reuse_factors(
+            nodes, roots, groups, dense_batches, builder.factors, self.max_nodes
         )
-        if required > budget * 2**20:
+        reserve = 8 * (len(nodes) + builder.factors + 8)
+        retained = reserve + 8 * (len(coefficient_nodes) + len(coefficient_roots))
+        required = retained + max(
+            (batch.working_bytes_per_lane for batch in dense_batches), default=0
+        )
+        if required > self._memory_bytes:
             raise _failure(
                 "EXPECTATION_WORKING_LIMIT",
                 "Shared coefficient and local arrays exceed the memory budget.",
@@ -554,15 +594,18 @@ class ExpectationPlan:
         for name, value in (
             ("observables", obs),
             ("groups", groups),
+            ("dense_batches", dense_batches),
             ("active_parameters", active),
             ("planning_work", builder.work),
             ("factor_count", builder.factors),
+            ("factor_aliases", factor_aliases),
             ("working_bytes_per_row", required),
             ("_nodes", nodes),
             ("_roots", roots),
             ("_coefficient_nodes", coefficient_nodes),
             ("_coefficient_roots", coefficient_roots),
             ("_source_parameters", frozenset(self.circuit.parameters)),
+            ("_retained_bytes_per_row", retained),
         ):
             object.__setattr__(self, name, value)
 
@@ -578,7 +621,8 @@ class ExpectationPlan:
             Diagnostic(
                 "EXACT_EXECUTION_PORTFOLIO",
                 f"Shared {self.factor_count} local readouts across {len(self.groups)} "
-                "independently executed circuits.",
+                "source circuits; equal dense functions reuse execution and matching "
+                "templates pack parameter lanes.",
                 severity="info",
             ),
             Diagnostic(
@@ -598,19 +642,22 @@ class ExpectationPlan:
             "estimated_work": _program_work(self._coefficient_nodes)
             + len(self._nodes)
             + sum(
-                g.estimated_work - _program_work(g.dense_program.nodes)
-                for g in self.groups
-                if g.dense_program is not None
+                len(batch.parameter_slots) * batch.estimated_work_per_lane
+                for batch in self.dense_batches
             ),
             "planning_work": self.planning_work,
             "working_bytes_per_row": self.working_bytes_per_row,
             "factor_count": self.factor_count,
+            "unique_factors": len(set(self.factor_aliases)),
+            "factor_aliases": list(self.factor_aliases),
             "contraction_nodes": len(self._nodes),
             "shared_coefficient_nodes": len(self._coefficient_nodes),
             "shared_coefficient_outputs": len(self._coefficient_roots),
             "active_parameters": list(self.active_parameters),
             "removed_parameters": sorted(self._source_parameters - set(self.active_parameters)),
             "groups": [g.to_dict() for g in self.groups],
+            "dense_batches": [batch.to_dict() for batch in self.dense_batches],
+            "dense_unique_lanes": sum(len(b.parameter_slots) for b in self.dense_batches),
             "limits": {
                 n: getattr(self, n)
                 for n in (
@@ -622,6 +669,7 @@ class ExpectationPlan:
                     "max_work",
                     "max_operations",
                     "max_memory_mb",
+                    "max_dense_batch",
                 )
             },
             "diagnostics": [asdict(d) for d in self.diagnostics],
@@ -638,12 +686,10 @@ class ExpectationPlan:
         and framework autodiff retention are excluded. Batch chunks can be set
         on native layers; public calls reject batches exceeding this budget.
         """
-        from .simulator import expectations
-
         ops, local, shape = _prepare_bindings(
             bindings, backend, like, batch_shape, self._source_parameters, self.active_parameters
         )
-        if self.working_bytes_per_row * max(1, math.prod(shape)) > self.max_memory_mb * 2**20:
+        if self.working_bytes_per_row * max(1, math.prod(shape)) > self._memory_bytes:
             raise ResourceError(
                 "Planned expectation working arrays exceed max_memory_mb; "
                 "reduce the batch or use batch_chunk_size."
@@ -659,28 +705,7 @@ class ExpectationPlan:
             if group.pauli_plan is not None:
                 for slot, factor in zip(group.program_indices, group.factor_indices, strict=True):
                     factors[factor] = coefficients[..., slot]
-                continue
-            else:
-                prepared = group.dense_program
-                if prepared.names:
-                    bindings = {
-                        name: coefficients[..., slot]
-                        for name, slot in zip(prepared.names, group.program_indices, strict=True)
-                    }
-                else:
-                    bindings = {}
-                values = expectations(
-                    prepared.circuit,
-                    group.observables,
-                    bindings,
-                    backend=backend,
-                    like=context,
-                    batch_shape=shape,
-                    max_qubits=self.max_dense_qubits,
-                    max_memory_mb=self.max_memory_mb,
-                )
-            for i, index in enumerate(group.factor_indices):
-                factors[index] = values[..., i]
+        _evaluate_dense(self, coefficients, factors, ops, shape, context)
         return _evaluate_program(self._nodes, self._roots, local, ops, shape, factors)
 
     def verify(
