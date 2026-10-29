@@ -43,12 +43,15 @@ from .parameters import Expression, Parameter
 from .planning import DensityPlan, plan_density
 from .program import QuantumProgram, as_circuit
 from .providers import CirqDensityBackend, QiskitEstimatorBackend, QiskitSamplerBackend
+from .readout import ReadoutPlan, plan_readout
 from .simulator import ExecutionResult, execute, expectation, expectations, sample, statevector
 from .templates import data_reuploading, hardware_efficient
 
 __version__ = "0.3.0a8"
 
 __all__ = [
+    "ReadoutPlan",
+    "plan_readout",
     "AdjointPlan",
     "adjoint_vjp",
     "adjoint_jvp",
