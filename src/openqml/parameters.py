@@ -69,9 +69,169 @@ _ARITY = {
 }
 
 
-@dataclass(frozen=True)
+def _constant(value):
+    # Older pickled expressions do not contain this derived constant flag.
+    cached = getattr(value, "_parameter_free", None)
+    return not value.parameters if cached is None else cached
+
+
+def _postorder(roots, known=()):
+    """Visit each immutable node once, without recursive hashing or tree expansion."""
+    seen, pending = set(), [(value, False) for value in reversed(roots)]
+    while pending:
+        value, ready = pending.pop()
+        identity = id(value)
+        if identity in seen or identity in known:
+            continue
+        if ready or value.op is None:
+            seen.add(identity)
+            yield value
+        else:
+            pending.append((value, True))
+            pending.extend((arg, False) for arg in reversed(value.args))
+
+
+def _leaf_value(value, bindings):
+    result = value.constant
+    for name, coefficient in value.terms:
+        if name not in bindings:
+            raise ValidationError(f"Missing parameter binding: {name}.")
+        result = result + coefficient * bindings[name]
+    return _checked(result)
+
+
+def _apply(op, args):
+    try:
+        if op == "add":
+            result = args[0] + args[1]
+        elif op == "mul":
+            result = args[0] * args[1]
+        elif op == "div":
+            result = args[0] / args[1]
+        elif op == "pow":
+            result = args[0] ** args[1]
+        else:
+            result = getattr(_namespace(args[0]), op)(args[0])
+    except (ZeroDivisionError, OverflowError, ValueError) as exc:
+        raise ValidationError("Parameter expression is undefined over real values.") from exc
+    return _checked(result)
+
+
+def _evaluate_graph(value, bindings):
+    nodes, uses = tuple(_postorder((value,))), {}
+    for node in nodes:
+        for arg in node.args:
+            uses[id(arg)] = uses.get(id(arg), 0) + 1
+    values = {}
+    for node in nodes:
+        values[id(node)] = (
+            _leaf_value(node, bindings)
+            if node.op is None
+            else _apply(node.op, tuple(values[id(arg)] for arg in node.args))
+        )
+        for arg in node.args:
+            key = id(arg)
+            uses[key] -= 1
+            if not uses[key]:
+                del values[key]
+    return values[id(value)]
+
+
+def _evaluate(value, bindings):
+    # Unary chains need neither graph indexing nor reference counts. A binary
+    # tail still uses the shared evaluator, keeping arbitrarily deep paths flat.
+    chain = []
+    while value.op is not None and len(value.args) == 1:
+        chain.append(value.op)
+        value = value.args[0]
+    result = _leaf_value(value, bindings) if value.op is None else _evaluate_graph(value, bindings)
+    for op in reversed(chain):
+        result = _apply(op, (result,))
+    return result
+
+
+def _rewrite_expression(value, mapping, *, substitute=False, memo=None):
+    """Share rewrites across a circuit forest; replacement graphs remain simultaneous."""
+    memo = {} if memo is None else memo
+    if (existing := memo.get(id(value))) is not None:
+        return existing
+    for current in _postorder((value,), memo):
+        if current.op is not None:
+            args = tuple(memo[id(arg)] for arg in current.args)
+            result = (
+                current
+                if not _constant(current)
+                and all(a is b for a, b in zip(args, current.args, strict=True))
+                else node(current.op, *args)
+            )
+        elif not any(name in mapping for name, _ in current.terms):
+            result = current
+        elif substitute:
+            result = expression(current.constant)
+            for name, coefficient in current.terms:
+                result += coefficient * expression(mapping.get(name, Parameter(name)))
+        else:
+            result = Expression(
+                tuple((k, v) for k, v in current.terms if k not in mapping),
+                current.constant
+                + sum(v * real(mapping[k]) for k, v in current.terms if k in mapping),
+            )
+        if current.op is None and result == current:
+            result = current
+        memo[id(current)] = result
+    return memo[id(value)]
+
+
+def _differentiate(value, name):
+    derivatives, active = {}, {}
+    for current in _postorder((value,)):
+        key = id(current)
+        if current.op is None:
+            coefficient = dict(current.terms).get(name, 0)
+            active[key], derivatives[key] = bool(coefficient), expression(coefficient)
+            continue
+        active[key] = any(active[id(arg)] for arg in current.args)
+        if not active[key]:
+            derivatives[key] = expression(0)
+            continue
+        a, da = current.args[0], derivatives[id(current.args[0])]
+        if current.op == "sin":
+            result = a.cos() * da
+        elif current.op == "cos":
+            result = -a.sin() * da
+        elif current.op == "tan":
+            result = da / a.cos() ** 2
+        elif current.op == "exp":
+            result = a.exp() * da
+        elif current.op == "log":
+            result = da / a
+        elif current.op == "sqrt":
+            result = da / (2 * a.sqrt())
+        else:
+            b, db = current.args[1], derivatives[id(current.args[1])]
+            if current.op == "add":
+                result = da + db
+            elif current.op == "mul":
+                result = da * b + a * db
+            elif current.op == "div":
+                result = (da * b - a * db) / b**2
+            elif _constant(b):
+                exponent = real(b.evaluate({}))
+                result = exponent * a ** (exponent - 1) * da
+            else:
+                result = current * (db * a.log() + b * da / a)
+        derivatives[key] = result
+    return derivatives[id(value)]
+
+
+@dataclass(frozen=True, eq=False)
 class Expression:
-    """Affine expressions retain canonical terms; nonlinear graphs use whitelisted nodes."""
+    """Canonical affine terms and shared nonlinear graphs with native tensor evaluation.
+
+    Evaluation, differentiation and rewrites visit each reachable node once.
+    Evaluation releases temporary values after their final graph use. Numeric
+    values and autodiff graphs are never cached between calls.
+    """
 
     terms: tuple[tuple[str, float], ...] = ()
     constant: float = 0.0
@@ -85,6 +245,7 @@ class Expression:
             if self.terms or self.constant != 0:
                 raise ValidationError("A nonlinear node cannot also contain affine terms.")
             object.__setattr__(self, "args", tuple(expression(v) for v in self.args))
+            object.__setattr__(self, "_parameter_free", all(_constant(v) for v in self.args))
             return
         if self.args:
             raise ValidationError("Affine expressions cannot contain graph arguments.")
@@ -96,6 +257,49 @@ class Expression:
         object.__setattr__(
             self, "terms", tuple((k, real(v)) for k, v in sorted(combined.items()) if v)
         )
+        object.__setattr__(self, "_parameter_free", not self.terms)
+
+    def __eq__(self, other):
+        if other.__class__ is not self.__class__:
+            return NotImplemented
+        if self is other:
+            return True
+        if (
+            self.terms != other.terms
+            or self.constant != other.constant
+            or self.op != other.op
+            or len(self.args) != len(other.args)
+        ):
+            return False
+        if self.op is None:
+            return True
+        pending, seen = [(self, other)], set()
+        while pending:
+            left, right = pending.pop()
+            key = id(left), id(right)
+            if left is right or key in seen:
+                continue
+            if (
+                left.__class__ is not right.__class__
+                or left.terms != right.terms
+                or left.constant != right.constant
+                or left.op != right.op
+                or len(left.args) != len(right.args)
+            ):
+                return False
+            seen.add(key)
+            pending.extend(zip(left.args, right.args, strict=True))
+        return True
+
+    def __hash__(self):
+        if self.op is None:
+            return hash((self.terms, self.constant, self.op, ()))
+        hashes = {}
+        for value in _postorder((self,)):
+            hashes[id(value)] = hash(
+                (value.terms, value.constant, value.op, tuple(hashes[id(a)] for a in value.args))
+            )
+        return hashes[id(self)]
 
     @property
     def parameters(self):
@@ -119,74 +323,26 @@ class Expression:
 
     def evaluate(self, bindings: Mapping[str, Any]):
         if self.op is None:
-            result = self.constant
-            for name, coefficient in self.terms:
-                if name not in bindings:
-                    raise ValidationError(f"Missing parameter binding: {name}.")
-                result = result + coefficient * bindings[name]
-            return _checked(result)
-        args = tuple(arg.evaluate(bindings) for arg in self.args)
-        try:
-            if self.op == "add":
-                result = args[0] + args[1]
-            elif self.op == "mul":
-                result = args[0] * args[1]
-            elif self.op == "div":
-                result = args[0] / args[1]
-            elif self.op == "pow":
-                result = args[0] ** args[1]
-            else:
-                result = getattr(_namespace(args[0]), self.op)(args[0])
-        except (ZeroDivisionError, OverflowError, ValueError) as exc:
-            raise ValidationError("Parameter expression is undefined over real values.") from exc
-        return _checked(result)
+            return _leaf_value(self, bindings)
+        if all(arg.op is None for arg in self.args):
+            first = _leaf_value(self.args[0], bindings)
+            args = (first,)
+            if len(self.args) == 2:
+                second = (
+                    first if self.args[1] is self.args[0] else _leaf_value(self.args[1], bindings)
+                )
+                args = first, second
+            return _apply(self.op, args)
+        return _evaluate(self, bindings)
 
     def bind(self, bindings):
-        if self.op is not None:
-            return node(self.op, *(arg.bind(bindings) for arg in self.args))
-        return Expression(
-            tuple((k, v) for k, v in self.terms if k not in bindings),
-            self.constant + sum(v * real(bindings[k]) for k, v in self.terms if k in bindings),
-        )
+        return _rewrite_expression(self, bindings)
 
     def derivative(self, name):
-        if name not in self.parameters:
-            return expression(0)
-        if self.op is None:
-            return expression(dict(self.terms).get(name, 0))
-        a = self.args[0]
-        da = a.derivative(name)
-        if self.op == "sin":
-            return a.cos() * da
-        if self.op == "cos":
-            return -a.sin() * da
-        if self.op == "tan":
-            return da / a.cos() ** 2
-        if self.op == "exp":
-            return a.exp() * da
-        if self.op == "log":
-            return da / a
-        if self.op == "sqrt":
-            return da / (2 * a.sqrt())
-        b, db = self.args[1], self.args[1].derivative(name)
-        if self.op == "add":
-            return da + db
-        if self.op == "mul":
-            return da * b + a * db
-        if self.op == "div":
-            return (da * b - a * db) / b**2
-        if not b.parameters:
-            exponent = real(b.evaluate({}))
-            return exponent * a ** (exponent - 1) * da
-        return self * (db * a.log() + b * da / a)
+        return _differentiate(self, name)
 
     def substitute(self, mapping):
-        if self.op is not None:
-            return node(self.op, *(arg.substitute(mapping) for arg in self.args))
-        result = expression(self.constant)
-        for name, coefficient in self.terms:
-            result += coefficient * expression(mapping.get(name, Parameter(name)))
-        return result
+        return _rewrite_expression(self, mapping, substitute=True)
 
     def to_dict(self):
         if self.op is None:
@@ -236,7 +392,7 @@ class Expression:
 
     def __truediv__(self, other):
         other = expression(other)
-        if not other.parameters:
+        if _constant(other):
             value = real(other.evaluate({}))
             if value == 0:
                 raise ValidationError("Division by zero.")
@@ -275,7 +431,7 @@ def node(op, *args):
     if op not in _ARITY or len(args) != _ARITY[op]:
         raise ValidationError("Unknown expression node or invalid arity.")
     args = tuple(expression(arg) for arg in args)
-    if not any(arg.parameters for arg in args):
+    if all(_constant(arg) for arg in args):
         return expression(Expression(op=op, args=args).evaluate({}))
     if op == "add":
         if args[0] == expression(0):
