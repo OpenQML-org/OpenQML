@@ -99,6 +99,36 @@ class LayerSpec:
         )
         return cls(circuit, inputs, weights, observables)
 
+    def compose(
+        self,
+        other,
+        *,
+        prefix="block",
+        shared_inputs=None,
+        shared_weights=None,
+        qubits=None,
+        clbits=None,
+        observables=None,
+    ):
+        """Append a quantum block with explicit symbol sharing and wire maps.
+
+        Unshared incoming symbols become ``prefix_name``. Sharing maps incoming
+        names to this spec's names of the same ownership type. Final readouts
+        default to this spec's observables and run after both circuit bodies.
+        Symbol order is stable; symbols canceled from the resulting IR are omitted.
+        """
+        spec, _ = _compose_specs(
+            self,
+            other,
+            prefix=prefix,
+            shared_inputs=shared_inputs,
+            shared_weights=shared_weights,
+            qubits=qubits,
+            clbits=clbits,
+            observables=observables,
+        )
+        return spec
+
     def to_dict(self):
         def term(p):
             return {"paulis": p.paulis, "coefficient": p.coefficient}
@@ -262,6 +292,46 @@ class LayerCheckpoint:
             raise ValidationError("Checkpoint configuration differs from this layer.")
         return self.weights
 
+    def compose(
+        self,
+        other,
+        *,
+        prefix="block",
+        shared_inputs=None,
+        shared_weights=None,
+        qubits=None,
+        clbits=None,
+        observables=None,
+    ):
+        """Combine trained blocks in source order, requiring equal shared weights.
+
+        Both checkpoints must use the same precision. The returned checkpoint
+        uses the composed spec's ordered names and can load into any interface.
+        """
+        if not isinstance(other, LayerCheckpoint):
+            raise ValidationError("Checkpoint composition requires another LayerCheckpoint.")
+        if self.dtype != other.dtype:
+            raise ValidationError("Checkpoint precision must match before composition.")
+        spec, names = _compose_specs(
+            self.spec,
+            other.spec,
+            prefix=prefix,
+            shared_inputs=shared_inputs,
+            shared_weights=shared_weights,
+            qubits=qubits,
+            clbits=clbits,
+            observables=observables,
+        )
+        values = self.bindings
+        for name, value in other.bindings.items():
+            destination = names[name]
+            if destination in values and values[destination] != value:
+                raise ValidationError(f"Shared weight {destination!r} has conflicting values.")
+            values[destination] = value
+        return LayerCheckpoint(
+            spec, {name: values[name] for name in spec.weight_parameters}, self.dtype
+        )
+
     def to_dict(self):
         # Store values by name so JSON object ordering cannot reassign weights.
         return {
@@ -326,3 +396,69 @@ class LayerCheckpoint:
             max_matrix_qubits=max_matrix_qubits,
             max_matrix_entries=max_matrix_entries,
         )
+
+
+def _compose_specs(
+    left, right, *, prefix, shared_inputs, shared_weights, qubits, clbits, observables
+):
+    from .compiler import rename_parameters
+
+    if not isinstance(left, LayerSpec) or not isinstance(right, LayerSpec):
+        raise ValidationError("Layer composition requires another LayerSpec.")
+    prefix = parameter_name(prefix)
+    names = {name: f"{prefix}_{name}" for name in right.circuit.parameters}
+    for role, sharing, sources, destinations in (
+        ("input", shared_inputs, right.input_parameters, left.input_parameters),
+        ("weight", shared_weights, right.weight_parameters, left.weight_parameters),
+    ):
+        if sharing is None:
+            continue
+        if not isinstance(sharing, Mapping):
+            raise ValidationError(f"shared_{role}s must be a name mapping.")
+        for source, target in sharing.items():
+            source, target = parameter_name(source), parameter_name(target)
+            if source not in sources:
+                raise ValidationError(f"Unknown shared {role} source {source!r}.")
+            if target not in destinations:
+                raise ValidationError(
+                    f"Shared {role} targets must belong to destination {role} parameters."
+                )
+            names[source] = target
+
+    shared = set((shared_inputs or {}).keys()) | set((shared_weights or {}).keys())
+    occupied = set(left.circuit.parameters)
+    if any(target in occupied for name, target in names.items() if name not in shared):
+        raise ValidationError(
+            "Parameter namespace collision; choose a different prefix or explicit sharing."
+        )
+
+    def wire_map(values, label):
+        if values is None:
+            return None
+        if isinstance(values, (str, bytes, Set, Mapping)):
+            raise ValidationError(f"{label} requires ordered bit indices.")
+        try:
+            return tuple(integer(value, f"{label} index") for value in values)
+        except TypeError as exc:
+            raise ValidationError(f"{label} requires ordered bit indices.") from exc
+
+    circuit = left.circuit.compose(
+        rename_parameters(right.circuit, names),
+        qubits=wire_map(qubits, "qubits"),
+        clbits=wire_map(clbits, "clbits"),
+    )
+    active = set(circuit.parameters)
+
+    def ownership(first, second):
+        return tuple(
+            name
+            for name in dict.fromkeys(first + tuple(names[n] for n in second))
+            if name in active
+        )
+
+    return LayerSpec(
+        circuit,
+        ownership(left.input_parameters, right.input_parameters),
+        ownership(left.weight_parameters, right.weight_parameters),
+        left.observables if observables is None else observables,
+    ), names

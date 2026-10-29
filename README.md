@@ -17,6 +17,8 @@ For a source checkout, use `python -m pip install '.[all,dev]'`.
 
 Use one optimizer for classical parameters and quantum weights. Layers support arbitrary leading batch dimensions, input gradients, portable checkpoints and configurable execution backends.
 
+Compose reusable quantum blocks with `spec.compose(...)` and trained values with `checkpoint.compose(...)`. Explicit input/weight sharing maps preserve ownership; independent symbols receive separate namespaces.
+
 ```python
 import torch
 from openqml.interfaces.torch import QuantumLayer
