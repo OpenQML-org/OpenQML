@@ -107,7 +107,7 @@ def from_cirq(
         if getattr(operation, "tags", ()):
             diagnostics.extend(
                 conversion_error(
-                    "OPERATION_TAGS", "Cirq operation tags cannot be preserved by IR v2.", location
+                    "OPERATION_TAGS", "Cirq operation tags cannot be preserved by IR.", location
                 ).diagnostics
             )
             continue

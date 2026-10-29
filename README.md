@@ -4,10 +4,10 @@ Differentiable quantum layers for hybrid AI, with a shared circuit IR connecting
 
 ## Install
 
-Python 3.10+. NumPy is the only required dependency; integrations are optional.
+NumPy is the only required dependency; integrations are optional.
 
 ```bash
-python -m pip install 'openqml[torch]==0.3.0a8'
+python -m pip install 'openqml[torch]'
 # Other extras: jax, flax, qiskit, pennylane, cirq, aer, qasm
 ```
 
@@ -34,7 +34,7 @@ optimizer.step()
 
 JAX exposes `layer(weights, inputs)`; Flax uses standard parameter trees and Optax. For classical weight generators and ensembles, pass broadcastable `(..., n_weights)` arrays via PyTorch's `layer.functional(weights, inputs)`, JAX's call, or Flax's `weights=` argument. Both inputs and generated weights receive gradients.
 
-`batch_chunk_size` bounds each simulator batch; backpropagation retains required activations. Native tensor backends support higher derivatives; external numerical bridges support first-order differentiation.
+`batch_chunk_size` bounds each simulator batch. For native unitary circuits, `checkpoint_interval` trades recomputation for fewer retained training tensors. Native tensor backends support higher derivatives; external numerical bridges support first-order differentiation.
 
 ## Circuit interoperability
 
@@ -51,6 +51,8 @@ print(result.value)
 ```
 
 Plans report source and prepared resources, required extras and deferred SDK synthesis. Conversion accepts `max_operations`, `max_depth` and `max_output_statements` budgets; the CLI exposes matching flags. Single-qubit matrices lower with NumPy and retain global phase; OpenQASM 2 phase loss is rejected.
+
+IR readers check byte, operation, nesting, expression and matrix budgets before constructing circuits. Import settings belong in `source_options`; portable layer and checkpoint readers accept matching matrix limits.
 
 The IR preserves parameter expressions, wire order, supported channels, measurements and classical branches. General runtime classical computation, pulse schedules and some native control flow remain outside the portable subset. Simulator execution has explicit resource budgets.
 

@@ -1,12 +1,11 @@
 import json
-from importlib.metadata import version
 
 from openqml.cli import main
 
 
 def test_doctor_and_cli_conversion(tmp_path, capsys):
     assert main(["doctor"]) == 0
-    assert json.loads(capsys.readouterr().out)["openqml"] == version("openqml")
+    assert json.loads(capsys.readouterr().out)["openqml"] == "installed"
     source, output = tmp_path / "bell.qasm", tmp_path / "bell.json"
     source.write_text("OPENQASM 3.0; qubit[2] q; h q[0]; cx q[0],q[1];")
     argv = ["convert", str(source), "--from", "openqasm3", "--to", "json", "-o", str(output)]
@@ -47,3 +46,21 @@ def test_cli_inspection_optimization_and_diagnostics(tmp_path, capsys):
     captured = capsys.readouterr()
     assert captured.out.startswith("OPENQASM 3.0;")
     assert json.loads(captured.err)[0]["code"] == "EXACT_GATE_DECOMPOSITION"
+
+
+def test_doctor_reports_availability_without_release_labels(monkeypatch, capsys):
+    from importlib.metadata import PackageNotFoundError
+
+    import openqml.cli as cli
+
+    def metadata(package):
+        if package == "flax":
+            raise PackageNotFoundError(package)
+        return "release-marker"
+
+    monkeypatch.setattr(cli, "version", metadata)
+    assert main(["doctor"]) == 0
+    output = capsys.readouterr().out
+    data = json.loads(output)
+    assert data["openqml"] == data["torch"] == "installed"
+    assert data["flax"] == "missing" and "release-marker" not in output
