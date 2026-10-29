@@ -17,8 +17,8 @@ from ._spec import (
     LayerSpecMixin,
     broadcast_batch_shape,
     prepare_adjoint,
+    prepare_execution,
     prepare_layer,
-    prepare_pauli,
     prepare_readout,
     resolve_gradient_method,
 )
@@ -38,6 +38,8 @@ class QuantumLayer(LayerSpecMixin):
     records provenance, while to_spec()/checkpoint() retain the full source.
     execution_method='pauli' compiles exact real expectation arithmetic with
     pauli_options growth limits; native autodiff retains higher derivatives.
+    execution_method='planned' factors readouts and selects exact local engines;
+    execution_plan exposes choices, provenance and bounded reference checks.
     """
 
     def __init__(
@@ -60,6 +62,7 @@ class QuantumLayer(LayerSpecMixin):
         reduce_readout=False,
         execution_method="auto",
         pauli_options=None,
+        planning_options=None,
     ):
         from ..ir import integer
 
@@ -84,17 +87,19 @@ class QuantumLayer(LayerSpecMixin):
             circuit, self.observables, enabled=reduce_readout, backend=backend
         )
         self.execution_method = execution_method
-        self.pauli_plan = prepare_pauli(
+        self.execution_plan = prepare_execution(
             circuit,
             self.observables,
             method=execution_method,
             options=pauli_options,
+            planning_options=planning_options,
             backend=backend,
             limits={"max_qubits": max_qubits, "max_memory_mb": max_memory_mb},
             checkpoint_interval=checkpoint_interval,
         )
+        self.pauli_plan = self.execution_plan if execution_method == "pauli" else None
         self.checkpoint_interval = _checkpoint_interval(circuit, backend, checkpoint_interval)
-        if backend == "jax" and self.pauli_plan is None:
+        if backend == "jax" and self.execution_plan is None:
             if circuit.has_effects:
                 from ..density import _planning_limit
                 from ..density import _resource_check as density_check
@@ -121,7 +126,9 @@ class QuantumLayer(LayerSpecMixin):
         self.gradient_chunk_size = integer(gradient_chunk_size, "gradient_chunk_size", 2)
         self.circuit = circuit
         self._active_parameters = frozenset(
-            circuit.parameters if self.pauli_plan is None else self.pauli_plan.active_parameters
+            circuit.parameters
+            if self.execution_plan is None
+            else self.execution_plan.active_parameters
         )
         self._has_removed_parameters = len(self._active_parameters) < len(
             self.input_parameters + self.weight_parameters
@@ -244,8 +251,8 @@ class QuantumLayer(LayerSpecMixin):
             if name in self._active_parameters
         )
         result = (
-            self.pauli_plan.evaluate(bindings, backend="jax", like=weights, batch_shape=shape)
-            if self.pauli_plan is not None
+            self.execution_plan.evaluate(bindings, backend="jax", like=weights, batch_shape=shape)
+            if self.execution_plan is not None
             else expectations(
                 self.circuit,
                 self.observables,

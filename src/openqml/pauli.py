@@ -25,6 +25,7 @@ _CLIFFORD = frozenset("id x y z h s sdg sx sxdg cx cy cz swap iswap".split())
 _ROTATIONS = {"rx": "X", "ry": "Y", "rz": "Z", "p": "Z", "rxx": "X", "ryy": "Y", "rzz": "Z"}
 _BASIS = _CLIFFORD | _ROTATIONS.keys()
 _UNARY = frozenset({"sin", "cos", "tan", "exp", "log", "sqrt"})
+_LEAVES = frozenset({"const", "param", "factor"})
 
 
 def _limit(code, message, location="circuit"):
@@ -207,15 +208,13 @@ class _Arena:
             if index not in reached:
                 reached.add(index)
                 node = self.nodes[index]
-                if node[0] not in {"const", "param"}:
+                if node[0] not in _LEAVES:
                     pending.extend(node[1:])
         remap, nodes = {}, []
         for index in sorted(reached):
             node = self.nodes[index]
             remap[index] = len(nodes)
-            nodes.append(
-                node if node[0] in {"const", "param"} else (node[0], *(remap[i] for i in node[1:]))
-            )
+            nodes.append(node if node[0] in _LEAVES else (node[0], *(remap[i] for i in node[1:])))
         return tuple(nodes), tuple(remap[i] for i in roots)
 
 
@@ -429,72 +428,83 @@ class PauliPlan:
         excluding caller data, output arrays and framework autodiff retention.
         No evaluator is compiled implicitly and no numerical values are cached.
         """
-        bindings = {} if bindings is None else bindings
-        if not isinstance(bindings, Mapping):
-            raise ValidationError("Pauli bindings require a name mapping.")
-        if set(bindings) - self._source_parameters or set(self.active_parameters) - set(bindings):
-            raise ValidationError(
-                "Pauli bindings must cover active circuit symbols without unknown names."
-            )
-        if not isinstance(backend, str) or backend not in {"numpy", "torch", "jax"}:
-            raise ValidationError("Pauli evaluation requires numpy, torch or jax.")
-        if backend == "numpy":
-            clean = {}
-            for name, value in bindings.items():
-                array = np.asarray(value)
-                if array.dtype.kind not in "iuf" or not np.isfinite(array).all():
-                    raise ValidationError("Pauli bindings must be finite real scalars or arrays.")
-                clean[name] = array.astype(float, copy=True)
-            bindings = clean
-        if like is None and backend != "numpy":
-            like = next((v for v in bindings.values() if hasattr(v, "dtype")), None)
-        ops = _TensorOps(backend, like)
-        for value in bindings.values():
-            dtype = getattr(value, "dtype", None)
-            kind = getattr(dtype, "kind", None)
-            if (
-                isinstance(value, (bool, complex, str, bytes))
-                or getattr(dtype, "is_complex", False)
-                or (kind is not None and kind not in "iuf")
-                or (backend == "torch" and dtype == ops.xp.bool)
-            ):
-                raise ValidationError("Pauli bindings must be real numeric values.")
-        local = {n: ops.array(v, real_value=True) for n, v in bindings.items()}
-        try:
-            shape = np.broadcast_shapes(*(tuple(v.shape) for v in local.values()))
-            if batch_shape is not None:
-                target = tuple(integer(n, "batch dimension") for n in batch_shape)
-                shape = np.broadcast_shapes(shape, target)
-        except (TypeError, ValueError) as exc:
-            raise ValidationError(
-                "Pauli parameter batch shapes cannot be broadcast together."
-            ) from exc
+        ops, local, shape = _prepare_bindings(
+            bindings, backend, like, batch_shape, self._source_parameters, self.active_parameters
+        )
         if (len(self._nodes) + 8) * 8 * max(1, math.prod(shape)) > self.max_memory_mb * 2**20:
             raise ResourceError(
                 "Pauli arithmetic exceeds max_memory_mb; reduce the batch or use batch_chunk_size."
             )
-        values = []
-        for node in self._nodes:
-            name = node[0]
-            if name == "const":
-                value = ops.array(node[1], real_value=True)
-            elif name == "param":
-                value = local[node[1]]
-            elif name in _UNARY:
-                value = getattr(ops.xp, name)(values[node[1]])
-            elif name == "mul":
-                value = values[node[1]] * values[node[2]]
-            elif name == "div":
-                value = values[node[1]] / values[node[2]]
-            elif name == "pow":
-                value = values[node[1]] ** values[node[2]]
-            else:
-                value = values[node[1]] + values[node[2]]
-            values.append(value)
-        outputs = tuple(ops.xp.broadcast_to(values[i], shape) for i in self._roots)
-        result = (
-            ops.xp.stack(outputs, dim=-1) if backend == "torch" else ops.xp.stack(outputs, axis=-1)
+        return _evaluate_program(self._nodes, self._roots, local, ops, shape)
+
+
+def _prepare_bindings(bindings, backend, like, batch_shape, source_parameters, active_parameters):
+    bindings = {} if bindings is None else bindings
+    if not isinstance(bindings, Mapping):
+        raise ValidationError("Pauli bindings require a name mapping.")
+    if set(bindings) - source_parameters or set(active_parameters) - set(bindings):
+        raise ValidationError(
+            "Pauli bindings must cover active circuit symbols without unknown names."
         )
-        if backend == "numpy" and not np.isfinite(result).all():
-            raise ValidationError("Pauli expectations exceed finite real precision.")
-        return result
+    if not isinstance(backend, str) or backend not in {"numpy", "torch", "jax"}:
+        raise ValidationError("Pauli evaluation requires numpy, torch or jax.")
+    if backend == "numpy":
+        clean = {}
+        for name, value in bindings.items():
+            array = np.asarray(value)
+            if array.dtype.kind not in "iuf" or not np.isfinite(array).all():
+                raise ValidationError("Pauli bindings must be finite real scalars or arrays.")
+            clean[name] = array.astype(float, copy=True)
+        bindings = clean
+    if like is None and backend != "numpy":
+        like = next((v for v in bindings.values() if hasattr(v, "dtype")), None)
+    ops = _TensorOps(backend, like)
+    for value in bindings.values():
+        dtype = getattr(value, "dtype", None)
+        kind = getattr(dtype, "kind", None)
+        if (
+            isinstance(value, (bool, complex, str, bytes))
+            or getattr(dtype, "is_complex", False)
+            or (kind is not None and kind not in "iuf")
+            or (backend == "torch" and dtype == ops.xp.bool)
+        ):
+            raise ValidationError("Pauli bindings must be real numeric values.")
+    local = {n: ops.array(v, real_value=True) for n, v in bindings.items()}
+    try:
+        shape = np.broadcast_shapes(*(tuple(v.shape) for v in local.values()))
+        if batch_shape is not None:
+            target = tuple(integer(n, "batch dimension") for n in batch_shape)
+            shape = np.broadcast_shapes(shape, target)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("Pauli parameter batch shapes cannot be broadcast together.") from exc
+    return ops, local, shape
+
+
+def _evaluate_program(nodes, roots, local, ops, shape, factors=()):
+    values = []
+    for node in nodes:
+        name = node[0]
+        if name == "const":
+            value = ops.array(node[1], real_value=True)
+        elif name == "param":
+            value = local[node[1]]
+        elif name == "factor":
+            value = factors[node[1]]
+        elif name in _UNARY:
+            value = getattr(ops.xp, name)(values[node[1]])
+        elif name == "mul":
+            value = values[node[1]] * values[node[2]]
+        elif name == "div":
+            value = values[node[1]] / values[node[2]]
+        elif name == "pow":
+            value = values[node[1]] ** values[node[2]]
+        else:
+            value = values[node[1]] + values[node[2]]
+        values.append(value)
+    outputs = tuple(ops.xp.broadcast_to(values[i], shape) for i in roots)
+    result = (
+        ops.xp.stack(outputs, dim=-1) if ops.backend == "torch" else ops.xp.stack(outputs, axis=-1)
+    )
+    if ops.backend == "numpy" and not np.isfinite(result).all():
+        raise ValidationError("Pauli expectations exceed finite real precision.")
+    return result

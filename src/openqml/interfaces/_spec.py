@@ -142,16 +142,24 @@ def prepare_readout(circuit, observables, *, enabled, backend):
     return plan.circuit, plan.observables, plan
 
 
-def prepare_pauli(circuit, observables, *, method, options, backend, limits, checkpoint_interval):
+def prepare_execution(
+    circuit, observables, *, method, options, planning_options, backend, limits, checkpoint_interval
+):
     """Compile only for an explicit native expectation evaluation choice."""
-    if not isinstance(method, str) or method not in {"auto", "pauli"}:
-        raise ValidationError("execution_method must be auto or pauli.")
-    if options is not None and (method != "pauli" or not isinstance(options, Mapping)):
-        raise ValidationError("pauli_options requires execution_method='pauli' and a mapping.")
+    if not isinstance(method, str) or method not in {"auto", "pauli", "planned"}:
+        raise ValidationError("execution_method must be auto, pauli or planned.")
+    if options is not None and (
+        method not in {"pauli", "planned"} or not isinstance(options, Mapping)
+    ):
+        raise ValidationError("pauli_options requires pauli/planned execution and a mapping.")
+    if planning_options is not None and (
+        method != "planned" or not isinstance(planning_options, Mapping)
+    ):
+        raise ValidationError("planning_options requires execution_method='planned' and a mapping.")
     if method == "auto":
         return None
     if not isinstance(backend, str) or backend not in {"torch", "jax"}:
-        raise ValidationError("Pauli layers require a native torch or jax backend.")
+        raise ValidationError("Compiled expectation layers require a native torch or jax backend.")
     if checkpoint_interval is not None:
         raise ValidationError("checkpoint_interval requires the default dense execution method.")
     from ..errors import ResourceError
@@ -160,10 +168,19 @@ def prepare_pauli(circuit, observables, *, method, options, backend, limits, che
 
     maximum = integer(limits["max_qubits"], "max_qubits", 1)
     if circuit.num_qubits > maximum:
-        raise ResourceError("Pauli circuit width exceeds max_qubits; set an explicit source limit.")
+        raise ResourceError("Circuit width exceeds max_qubits; set an explicit source limit.")
     settings = {} if options is None else dict(options)
     if set(settings) - {"max_terms", "max_nodes", "max_work", "max_operations"}:
         raise ValidationError("Unknown Pauli compilation option.")
+    if method == "planned":
+        from ..execution import ExpectationPlan
+
+        planning = {} if planning_options is None else dict(planning_options)
+        if set(planning) - {"max_groups", "max_dense_qubits", "max_planning_work"}:
+            raise ValidationError("Unknown expectation planning option.")
+        return ExpectationPlan(
+            circuit, observables, max_memory_mb=limits["max_memory_mb"], **settings, **planning
+        )
     return PauliPlan(circuit, observables, max_memory_mb=limits["max_memory_mb"], **settings)
 
 

@@ -27,6 +27,7 @@ from .errors import (
     ResourceError,
     ValidationError,
 )
+from .execution import ExecutionGroup, ExpectationCheck, ExpectationPlan
 from .frontends import FrameworkAdapter, list_formats, register_adapter, unregister_adapter
 from .gradients import (
     parameter_shift,
@@ -51,6 +52,9 @@ from .templates import data_reuploading, hardware_efficient
 __version__ = "0.3.0a8"
 
 __all__ = [
+    "ExpectationCheck",
+    "ExpectationPlan",
+    "ExecutionGroup",
     "PauliPlan",
     "ReadoutPlan",
     "plan_readout",

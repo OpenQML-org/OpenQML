@@ -17,7 +17,7 @@ For a source checkout, use `python -m pip install '.[all,dev]'`.
 
 Use one optimizer for classical parameters and quantum weights, with broadcast batches, input gradients and portable checkpoints.
 
-Compose blocks and trained values with `spec.compose(...)` and `checkpoint.compose(...)`, using explicit sharing maps. `spec.reparameterize(...)` ties symbols or builds nonlinear encoders; `spec.bind(...)` and `checkpoint.freeze(...)` embed constants for transfer learning.
+Compose blocks and weights with `spec.compose(...)` and `checkpoint.compose(...)`. `spec.reparameterize(...)` ties symbols or builds nonlinear encoders; `spec.bind(...)` and `checkpoint.freeze(...)` embed constants.
 
 ```python
 import torch
@@ -40,7 +40,9 @@ JAX exposes `layer(weights, inputs)`; Flax uses standard parameter trees and Opt
 
 For unitary simulation, `backend="numpy", gradient_method="adjoint"` reuses bounded batches. VJPs use reverse sweeps; JVPs propagate one tangent state. `AdjointPlan` accepts named array columns and retains state vectors independent of gate count.
 
-`execution_method="pauli"` on native PyTorch/JAX/Flax layers compiles supported unitary expectations into shared real arithmetic, retaining higher derivatives without state vectors. `PauliPlan` also evaluates NumPy arrays. `pauli_options` bounds frontier terms, graph nodes, propagation work and operations; exhaustion raises diagnostics, without approximate truncation. Growth can be exponential. `max_qubits` remains explicit, and memory checks cover primal arithmetic, excluding autodiff retention.
+`execution_method="pauli"` compiles supported unitary expectations into real arithmetic without state vectors. `PauliPlan` also evaluates NumPy arrays. `pauli_options` bounds symbolic growth; exhaustion raises diagnostics without approximate truncation. Growth can be exponential.
+
+`execution_method="planned"` factors each readout, shares local queries and parameter graphs, and selects exact Pauli or dense engines per block. `ExpectationPlan` exposes source provenance, candidate costs and rejection reasons. `plan.verify(...)` checks a concrete binding against bounded full-source execution through NumPy, Qiskit, Cirq or PennyLane. `planning_options` bounds total search, groups and dense width. Native PyTorch/JAX/Flax retain higher derivatives and source checkpoints; working-memory limits exclude autodiff retention. Selection uses a static cost heuristic.
 
 ## Circuit interoperability
 
@@ -60,9 +62,7 @@ Plans report resources, required extras and deferred synthesis. Conversion, `Qua
 
 IR readers check byte, operation, nesting, expression and matrix budgets before constructing circuits. Import settings belong in `source_options`; portable layer and checkpoint readers accept matching matrix limits.
 
-IR binding and renaming reuse validated immutable matrix payloads.
-
-`reduce_readout=True` removes gates outside a unitary readout's causal cone and compacts wires. `plan_readout(circuit, observables)` reports resources, provenance and remapped readouts. Both readout reduction and Pauli compilation preserve declared expectations from the all-zero state; shapes and checkpoints retain source ownership with zero gradients for eliminated symbols. Full-program export retains the source circuit. These passes reject channels, measurements and feedback.
+IR binding and renaming reuse immutable matrix payloads. `reduce_readout=True` compacts causal cones; `plan_readout(...)` exposes wire/operation maps. Compiled expectation methods preserve declared readouts from the all-zero state, retain source ownership and reject effects. Full-program export retains the source circuit.
 
 The IR preserves parameter expressions, wire order, supported channels, measurements and classical branches. General runtime classical computation, pulse schedules and some native control flow remain outside the portable subset. Simulator execution has explicit resource budgets.
 
