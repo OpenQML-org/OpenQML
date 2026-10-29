@@ -42,8 +42,9 @@ jobs:
       - run: python -m pip install ".[dev]" --report install-report.json
       - run: python -m pip check
       - run: python -m openqml doctor --check-imports --sizes --output environment-report.json
-      - run: python -m pytest -q tests/test_public_api.py tests/test_backends.py tests/test_providers.py tests/test_shared_readouts.py tests/test_conversion_plan.py tests/test_resource_audit.py tests/test_source_boundaries.py tests/test_resource_profiles.py tests/test_environment_report.py tests/test_scientific_scale.py
+      - run: python -m pytest -q tests/test_public_api.py tests/test_backends.py tests/test_providers.py tests/test_shared_readouts.py tests/test_conversion_plan.py tests/test_resource_audit.py tests/test_source_boundaries.py tests/test_resource_profiles.py tests/test_environment_report.py tests/test_scientific_scale.py tests/test_semantic_compiler.py tests/test_adaptive_execution.py
       - run: python benchmarks/scientific_scale.py --output scientific-report.json
+      - run: python benchmarks/compiler_execution_audit.py --seeds 4 --dense-qubits 22 --output compiler-execution-report.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -52,3 +53,4 @@ jobs:
             install-report.json
             environment-report.json
             scientific-report.json
+            compiler-execution-report.json

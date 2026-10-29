@@ -1,36 +1,27 @@
 # OpenQML
 
-OpenQML adds trainable quantum layers to PyTorch and JAX models and converts supported circuits between Qiskit, PennyLane, Cirq and OpenQASM through a shared intermediate representation.
+OpenQML adds trainable quantum layers to PyTorch and JAX models and compiles supported quantum circuits across Qiskit, PennyLane, Cirq and OpenQASM with explicit semantic checks.
 
-## Install
+## Install and use
 
 ```bash
 python -m pip install openqml
 ```
 
-This installs PyTorch, JAX, Flax, Optax, Qiskit, PennyLane, Cirq, Aer and OpenQASM tooling. All supported integrations are included by default and load when accessed.
-
-## One OpenQML import
+All supported integrations are included and load on access through one namespace.
 
 ```python
 import openqml as oq
 
 circuit = oq.Circuit(2).ry(oq.Parameter("theta"), 0).cx(0, 1)
-value = oq.expectation(circuit, oq.PauliString("ZI"), {"theta": 0.4})
-qasm = oq.convert(circuit, target="openqasm3").value
-restored = oq.convert(qasm, source="openqasm3", target="ir").value
+compiled = oq.compile_verified(circuit, target="openqasm3")
+plan = oq.plan_execution(circuit, (oq.PauliString("ZI"),))
+values = plan.evaluate({"theta": 0.4})
 ```
 
-Core operations use the `oq` namespace. Framework integrations load only when accessed:
+Native APIs are available through `oq.torch`, `oq.jax`, `oq.flax`, `oq.optax`, `oq.numpy` and the SDK namespaces, including `oq.qiskit`, `oq.pennylane`, `oq.cirq` and `oq.qiskit_aer`.
 
-| Namespace | Use |
-| --- | --- |
-| `oq.torch` | Quantum layers and native PyTorch APIs |
-| `oq.jax`, `oq.flax`, `oq.optax` | Quantum layers, JIT, gradients and optimizers |
-| `oq.qiskit`, `oq.cirq`, `oq.pennylane`, `oq.qiskit_aer` | Native SDKs and simulation |
-| `oq.numpy`, `oq.sympy`, `oq.openqasm3` | Arrays, symbolic expressions and OpenQASM tooling |
-
-## Hybrid training
+## Hybrid learning
 
 ```python
 import openqml as oq
@@ -47,56 +38,48 @@ loss.backward()
 optimizer.step()
 ```
 
-One optimizer updates the classical and quantum parameters. For JAX, construct `oq.jax.QuantumLayer`, initialize weights with `layer.init(key)`, then call `layer(weights, inputs)`. Native tensor backends support higher derivatives; numerical bridges provide first-order JVPs and VJPs.
+One optimizer updates classical and quantum weights. JAX layers use `layer.init(key)` and `layer(weights, inputs)`; Flax and Optax are supported. Native tensor/Pauli execution preserves higher derivatives. Numerical SDK and MPS bridges provide first-order JVPs and VJPs.
 
-Prepared plans share symbolic work and duplicate readouts. Native readouts preserve higher derivatives; `oq.ShiftPlan` streams numerical products and reuses points only for declared deterministic backends. Job batches and constant caches are bounded.
+## Verifiable circuit compilation
 
-## Circuit interoperability
+| API | Guarantee |
+| --- | --- |
+| `oq.prove_equivalence(a, b)` | Bounded algebraic equivalence for supported normal forms and all defined parameter bindings |
+| `oq.compile_verified(c, target=...)` | Exports with an algebraic certificate; refuses unproved conversions |
+| `oq.plan_conversion(...).verify(mode="native")` | Independent target-runtime comparison over a complete input basis at explicit bindings |
+| `oq.semantic_coverage()` | Representative framework/IR feature matrix and diagnostics |
 
-Convert supported SDK circuit objects, IR, JSON and OpenQASM with `oq.convert(program, target="ir")`. Inspect `oq.plan_conversion(...)`, its `semantic_scope` and diagnostics before export. `plan.verify(...)` performs bounded numerical checks at selected bindings.
+The proof kernel uses affine Boolean phase polynomials, exact word rewrites and optional projective Clifford conjugation. Strict mode compares global phase. Projective mode explicitly ignores it. Stored floating constants remain exact binary rationals; SDK rounding or unsupported identities can leave a conversion **unproved**, which does not establish inequivalence. Certificates cover the adapter's IR interpretation; native runtime checks remain separate.
 
-Arbitrary Python programs and their third-party dependencies are outside automatic conversion. `oq.inspect_python(text)` scans source without executing it and always marks whole-program conversion unsupported. It reports control flow, custom-instruction clues, opaque imports, noise/hardware context and analysis-budget limits. A completed scan does not prove runtime validity. `QuantumProgram.from_callable` executes the supplied factory and captures its returned circuit only.
+Arbitrary Python programs are outside automatic translation. `oq.inspect_python(text)` diagnoses source without executing it. Dynamic control, custom matrices and noise require supported IR representations. External noise models, pulse calibrations and hardware context are diagnosed rather than silently preserved.
 
-Dynamic control and custom instructions require a supported IR/adapter representation. Represent noise explicitly as supported IR channels. External noise models, backend configuration and pulse calibrations are not carried over; unsupported context produces diagnostics.
+## Adaptive execution
 
-## Resources and scientific scope
+`oq.plan_execution(...)` reports its method, rejected candidates and memory admission before execution. Existing numerical APIs also accept `backend="auto"`.
 
-Dense defaults remain **20 qubits and 256 MiB**; conversion/preparation defaults generally allow **100,000 operations**. Operation counts constrain program processing, while dense quantum storage grows exponentially:
+| Method | Admission |
+| --- | --- |
+| Stabilizer | Named Clifford gates and bounded tableau storage |
+| Pauli | Bounded exact symbolic propagation of declared readouts |
+| OpenQML MPS | Nearest-neighbor one/two-wire circuits; planned full-SVD dimensions, no singular-value truncation |
+| Dense vector/density | Memory-derived capacity, including classical branches |
+| CUDA dense | Explicit dense device preference and sufficient available GPU memory |
 
-| Qubits | One complex128 state vector |
+Direct vector execution and quantum layers have no fixed 20-qubit ceiling. The default vector budget remains 256 MiB; `max_qubits` is an optional additional cap. Four complex128 buffers per row require:
+
+| Qubits | Working budget |
 | ---: | ---: |
-| 20 | 16 MiB |
-| 30 | 16 GiB |
-| 40 | 16 TiB |
+| 22 | 256 MiB |
+| 24 | 1 GiB |
+| 26 | 4 GiB |
 
-`oq.estimate_resources(circuit)` reports storage and policy eligibility without allocating states. The budget model reserves four state buffers per batch row; local matrices, autodiff tapes, backend workspace and density branches have separate costs. `oq.ExecutionOptions.for_statevector(...)` derives an opt-in limit from an explicit budget.
+Adaptive plans default to one quarter of observed host/container availability, capped at 4 GiB. Autodiff tapes and backend costs still matter; admission models are not process RSS limits. Difficult non-Clifford, noisy and highly entangled circuits can exhaust every method.
 
-For suitable structured circuits, use `oq.PauliPlan` or `oq.ExpectationPlan` to evaluate declared readouts from the all-zero state. Layers support `execution_method="pauli"` or `"planned"` with an explicit source-width limit. Exact propagation can still exceed its term/work budgets and will fail explicitly.
+## Evidence and installation cost
 
-| Validated structured case | Qubits | Readouts |
-| --- | ---: | --- |
-| GHZ chain with a variable phase | 1,024 | Global correlations |
-| Crossed Bell pairs | 1,024 | Global X/Z correlations |
-| Connected square cluster graph | 256 | Local and checkerboard stabilizers |
+The [compiler/execution audit](https://github.com/OpenQML-org/OpenQML/blob/main/benchmarks/results/compiler_execution_cpu.json) records randomized differential checks, symbolic certificates, a 1,024-qubit Clifford case, independently checked 128-qubit non-Clifford MPS readouts and measured dense execution. These are representation-specific results, not general large-qubit simulation guarantees.
 
-The [scale audit](https://github.com/OpenQML-org/OpenQML/blob/main/benchmarks/results/scientific_cpu.json) records analytical checks at four bindings, small dense references, source fingerprints and approximate RSS observations. Tests cover native first/second derivatives and structured hybrid training. These results concern specific families and readouts, rather than generic simulation at those widths. A separate 100,000-operation IR check performs no quantum simulation; a growth-limit case verifies explicit rejection.
-
-Use `oq.CircuitBuilder(...).build()` for long construction loops; immutable `Circuit.append()` copies its tuple. Catch `oq.OpenQMLError` or a named subclass.
-
-## Installation and platform evidence
-
-The complete dependency bundle has a substantial installation cost. One [measured Linux environment](https://github.com/OpenQML-org/OpenQML/blob/main/benchmarks/results/installation_linux.json) contained **6.39 GiB** of logical runtime files across 97 distributions, excluding pip/build caches. Sizes and selected binaries vary by platform. Intel macOS automatically selects NumPy 1.x to match its available PyTorch wheel.
-
-`oq.environment_report(check_imports=True, include_sizes=True)` reports dependency conflicts, isolated imports, the Torch/NumPy bridge and installed file sizes. It installs nothing and does not establish accelerator compatibility.
-
-| Validated CPU CI target | Python | Checks |
-| --- | --- | --- |
-| Linux x86_64 | 3.10, 3.11, 3.12 | Full suite and package build |
-| Windows x86_64 | 3.12 | Default installation, backends, conversions, gradients and diagnostics |
-| macOS Apple Silicon | 3.12 | Same portability checks |
-| macOS Intel | 3.11 | Same portability checks |
-
-[CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml) archives resolved dependencies, environment reports and scientific checks. Other combinations and CUDA/Metal/ROCm execution remain unverified. Linux RSS measurements are approximate call windows; cold imports/compilation are reported separately from warm execution.
+[CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml) covers Linux, Windows and both macOS architectures. GPU execution requires suitable hardware and is skipped on CPU runners. The full SDK bundle is substantial: one [measured Linux installation](https://github.com/OpenQML-org/OpenQML/blob/main/benchmarks/results/installation_linux.json) occupies about 6.39 GiB. `oq.environment_report(check_imports=True, include_sizes=True)` reports actual dependencies, compatibility and footprint.
 
 ## Architecture
 
