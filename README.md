@@ -19,6 +19,8 @@ Use one optimizer for classical parameters and quantum weights. Layers support a
 
 Compose reusable quantum blocks with `spec.compose(...)` and trained values with `checkpoint.compose(...)`. Explicit input/weight sharing maps preserve ownership; independent symbols receive separate namespaces.
 
+Use `spec.reparameterize(...)` to tie imported symbols or build nonlinear encoders with explicit input/weight ownership. `spec.bind(...)` fixes numeric values; `checkpoint.freeze(...)` embeds selected trained weights in the IR for portable transfer learning.
+
 ```python
 import torch
 from openqml.interfaces.torch import QuantumLayer

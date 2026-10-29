@@ -451,6 +451,43 @@ class Circuit:
     def with_global_phase(self, phase) -> Circuit:
         return replace(self, global_phase=expression(phase))
 
+    def substitute(self, mapping) -> Circuit:
+        """Replace named symbols simultaneously with real scalars or expressions.
+
+        Unmapped symbols remain unchanged. Replacements are applied once, so
+        swapping names is safe and replacement expressions are not rewritten.
+        Branch bodies and their global phases follow the same substitution.
+        """
+        from .parameters import parameter_name
+
+        if not isinstance(mapping, Mapping):
+            raise ValidationError("Parameter substitutions require a name mapping.")
+        names = {parameter_name(name) for name in mapping}
+        unknown = names - set(self.parameters)
+        if unknown:
+            raise ValidationError(f"Unknown substitution parameters: {sorted(unknown)}.")
+        mapping = {name: expression(value) for name, value in mapping.items()}
+
+        def rewrite(body):
+            operations = []
+            for op in body.operations:
+                params = tuple(p.substitute(mapping) for p in op.params)
+                blocks = tuple(rewrite(block) for block in op.blocks)
+                changed = params != op.params or any(
+                    new is not old for new, old in zip(blocks, op.blocks, strict=True)
+                )
+                # Keep unchanged matrices/channels intact instead of repeating
+                # their potentially expensive validation during symbol rewrites.
+                operations.append(replace(op, params=params, blocks=blocks) if changed else op)
+            phase = body.global_phase.substitute(mapping)
+            if phase == body.global_phase and all(
+                new is old for new, old in zip(operations, body.operations, strict=True)
+            ):
+                return body
+            return replace(body, operations=tuple(operations), global_phase=phase)
+
+        return rewrite(self)
+
     def bind(self, bindings: Mapping[str, float], *, partial: bool = False) -> Circuit:
         unknown = set(bindings) - set(self.parameters)
         missing = set(self.parameters) - set(bindings)
