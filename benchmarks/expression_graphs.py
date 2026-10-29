@@ -155,9 +155,9 @@ def worker(args):
     samples = []
     for _ in range(args.repetitions):
         start = time.perf_counter()
-        values = [run() for _ in range(args.iterations)]
+        outputs = [run() for _ in range(args.iterations)]
         elapsed = (time.perf_counter() - start) / args.iterations
-        for actual in values:
+        for actual in outputs:
             np.testing.assert_allclose(actual, reference, atol=1e-10, rtol=1e-10)
         samples.append(elapsed)
 
