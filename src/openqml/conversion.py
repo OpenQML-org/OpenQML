@@ -280,6 +280,20 @@ class ConversionPlan:
     def compatible(self):
         return not any(d.severity == "error" for d in self.diagnostics)
 
+    @property
+    def semantic_scope(self):
+        """A compatible plan covers circuit IR, not its surrounding Python runtime."""
+        return {
+            "unit": "circuit",
+            "python_program": "not_converted",
+            "dynamic_control": "representable_IR_subset_only",
+            "custom_instructions": "supported_definition_matrix_or_adapter_required",
+            "noise": "explicit_supported_IR_channels_only",
+            "external_backend_configuration": "not_preserved",
+            "hardware_calibrations": "not_preserved",
+            "numerical_verification": "not_run_by_planning",
+        }
+
     def raise_for_errors(self):
         if not self.compatible:
             raise ConversionError(self.diagnostics)
@@ -293,6 +307,7 @@ class ConversionPlan:
             "source_format": self.source_format,
             "target_format": self.target_format,
             "compatible": self.compatible,
+            "semantic_scope": self.semantic_scope,
             "preparation_complete": self.preparation_complete,
             "required_extras": list(self.required_extras),
             "required_integrations": list(self.required_integrations),
@@ -425,10 +440,40 @@ def plan_conversion(
         program = value if bindings is None else value.bind(bindings)
         value, source, bindings = program.native, program.framework, None
         source_options = dict(program.import_options) | dict(source_options or {})
+    if source == "python" and "python" not in list_formats():
+        from .inspection import inspect_python
+
+        inspect_python(value, **(source_options or {})).raise_for_errors()
     if source is None:
         source = detect_framework(value)
     source, target = _format(source), _format(target)
     source_options = {} if source_options is None else dict(source_options)
+    if source in BUILTIN_FORMATS:
+        context = set(source_options) & {
+            "noise_model",
+            "backend",
+            "calibrations",
+            "execution_context",
+            "hardware_options",
+        }
+        if context:
+            raise ConversionError(
+                tuple(
+                    Diagnostic(
+                        "EXTERNAL_EXECUTION_CONTEXT_UNSUPPORTED",
+                        "Circuit conversion does not preserve external noise, calibration or "
+                        "backend context. Represent supported channels/control explicitly in IR.",
+                        f"source_options.{name}",
+                    )
+                    for name in sorted(context)
+                )
+            )
+        if source == "qiskit" and getattr(value, "calibrations", None):
+            raise conversion_error(
+                "HARDWARE_CALIBRATION_UNSUPPORTED",
+                "Native pulse calibrations cannot be represented by circuit IR.",
+                "calibrations",
+            )
     # Bound expansion inside built-in frontends, before their returned IR exists.
     # Custom adapters retain their declared option contracts and the final check.
     if source in BUILTIN_FORMATS and source != "ir":

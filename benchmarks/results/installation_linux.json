@@ -1,0 +1,532 @@
+{
+  "schema": "openqml.environment_report",
+  "python": "3.12.14",
+  "implementation": "CPython",
+  "system": "Linux",
+  "machine": "x86_64",
+  "status": "ok",
+  "scope": "observed_environment_not_universal_compatibility",
+  "isolated_import_checks": true,
+  "runtime_probe_coverage": [
+    "imports",
+    "Torch_NumPy_bridge"
+  ],
+  "accelerator_execution_checked": false,
+  "dependency_count": 97,
+  "dependencies": {
+    "absl-py": {
+      "status": "installed",
+      "version": "2.5.1"
+    },
+    "aiofiles": {
+      "status": "installed",
+      "version": "25.1.0"
+    },
+    "antlr4-python3-runtime": {
+      "status": "installed",
+      "version": "4.13.2"
+    },
+    "appdirs": {
+      "status": "installed",
+      "version": "1.4.4"
+    },
+    "attrs": {
+      "status": "installed",
+      "version": "26.1.0"
+    },
+    "autograd": {
+      "status": "installed",
+      "version": "1.8.0"
+    },
+    "autoray": {
+      "status": "installed",
+      "version": "0.8.4"
+    },
+    "cachetools": {
+      "status": "installed",
+      "version": "7.2.6"
+    },
+    "certifi": {
+      "status": "installed",
+      "version": "2026.10.23"
+    },
+    "charset-normalizer": {
+      "status": "installed",
+      "version": "3.5.2"
+    },
+    "cirq-core": {
+      "status": "installed",
+      "version": "1.7.0"
+    },
+    "contourpy": {
+      "status": "installed",
+      "version": "1.4.0"
+    },
+    "cuda-bindings": {
+      "status": "installed",
+      "version": "13.4.4"
+    },
+    "cuda-pathfinder": {
+      "status": "installed",
+      "version": "1.8.4"
+    },
+    "cuda-toolkit": {
+      "status": "installed",
+      "version": "13.0.3.0"
+    },
+    "cycler": {
+      "status": "installed",
+      "version": "0.12.1"
+    },
+    "diastatic-malt": {
+      "status": "installed",
+      "version": "2.15.3"
+    },
+    "dill": {
+      "status": "installed",
+      "version": "0.4.1"
+    },
+    "duet": {
+      "status": "installed",
+      "version": "0.2.9"
+    },
+    "etils": {
+      "status": "installed",
+      "version": "1.14.0"
+    },
+    "filelock": {
+      "status": "installed",
+      "version": "4.2.4"
+    },
+    "flax": {
+      "status": "installed",
+      "version": "0.12.12"
+    },
+    "fonttools": {
+      "status": "installed",
+      "version": "4.68.0"
+    },
+    "fsspec": {
+      "status": "installed",
+      "version": "2026.9.0"
+    },
+    "gast": {
+      "status": "installed",
+      "version": "0.7.0"
+    },
+    "humanize": {
+      "status": "installed",
+      "version": "4.16.0"
+    },
+    "idna": {
+      "status": "installed",
+      "version": "3.20"
+    },
+    "jax": {
+      "status": "installed",
+      "version": "0.12.0.1"
+    },
+    "jaxlib": {
+      "status": "installed",
+      "version": "0.12.0.1"
+    },
+    "jinja2": {
+      "status": "installed",
+      "version": "3.1.6"
+    },
+    "kiwisolver": {
+      "status": "installed",
+      "version": "1.5.1"
+    },
+    "markdown-it-py": {
+      "status": "installed",
+      "version": "4.2.0"
+    },
+    "markupsafe": {
+      "status": "installed",
+      "version": "3.0.4"
+    },
+    "matplotlib": {
+      "status": "installed",
+      "version": "3.11.2"
+    },
+    "mdurl": {
+      "status": "installed",
+      "version": "0.1.2"
+    },
+    "ml-dtypes": {
+      "status": "installed",
+      "version": "0.6.0"
+    },
+    "mpmath": {
+      "status": "installed",
+      "version": "1.3.0"
+    },
+    "msgpack": {
+      "status": "installed",
+      "version": "1.2.4"
+    },
+    "networkx": {
+      "status": "installed",
+      "version": "3.7"
+    },
+    "numpy": {
+      "status": "installed",
+      "version": "2.5.4"
+    },
+    "nvidia-cublas": {
+      "status": "installed",
+      "version": "13.1.1.3"
+    },
+    "nvidia-cuda-cupti": {
+      "status": "installed",
+      "version": "13.0.85"
+    },
+    "nvidia-cuda-nvrtc": {
+      "status": "installed",
+      "version": "13.0.88"
+    },
+    "nvidia-cuda-runtime": {
+      "status": "installed",
+      "version": "13.0.96"
+    },
+    "nvidia-cudnn-cu13": {
+      "status": "installed",
+      "version": "9.24.0.43"
+    },
+    "nvidia-cufft": {
+      "status": "installed",
+      "version": "12.0.0.61"
+    },
+    "nvidia-cufile": {
+      "status": "installed",
+      "version": "1.15.1.6"
+    },
+    "nvidia-curand": {
+      "status": "installed",
+      "version": "10.4.0.35"
+    },
+    "nvidia-cusolver": {
+      "status": "installed",
+      "version": "12.0.4.66"
+    },
+    "nvidia-cusparse": {
+      "status": "installed",
+      "version": "12.6.3.3"
+    },
+    "nvidia-cusparselt-cu13": {
+      "status": "installed",
+      "version": "0.8.1"
+    },
+    "nvidia-nccl-cu13": {
+      "status": "installed",
+      "version": "2.30.7"
+    },
+    "nvidia-nvjitlink": {
+      "status": "installed",
+      "version": "13.4.92"
+    },
+    "nvidia-nvshmem-cu13": {
+      "status": "installed",
+      "version": "3.4.5"
+    },
+    "nvidia-nvtx": {
+      "status": "installed",
+      "version": "13.0.85"
+    },
+    "openqasm3": {
+      "status": "installed",
+      "version": "1.0.1"
+    },
+    "openqml": {
+      "status": "installed",
+      "version": "0.3.0a13"
+    },
+    "opt-einsum": {
+      "status": "installed",
+      "version": "3.4.0"
+    },
+    "optax": {
+      "status": "installed",
+      "version": "0.2.8"
+    },
+    "orbax-checkpoint": {
+      "status": "installed",
+      "version": "0.12.8"
+    },
+    "packaging": {
+      "status": "installed",
+      "version": "26.3"
+    },
+    "pandas": {
+      "status": "installed",
+      "version": "3.0.6"
+    },
+    "pennylane": {
+      "status": "installed",
+      "version": "0.45.1"
+    },
+    "pennylane-lightning": {
+      "status": "installed",
+      "version": "0.45.0"
+    },
+    "pillow": {
+      "status": "installed",
+      "version": "13.0.0"
+    },
+    "prometheus-client": {
+      "status": "installed",
+      "version": "0.26.0"
+    },
+    "protobuf": {
+      "status": "installed",
+      "version": "7.36.2"
+    },
+    "psutil": {
+      "status": "installed",
+      "version": "7.2.2"
+    },
+    "pygments": {
+      "status": "installed",
+      "version": "2.21.0"
+    },
+    "pyparsing": {
+      "status": "installed",
+      "version": "3.3.3"
+    },
+    "python-dateutil": {
+      "status": "installed",
+      "version": "3.0.0"
+    },
+    "pyyaml": {
+      "status": "installed",
+      "version": "6.0.3"
+    },
+    "qiskit": {
+      "status": "installed",
+      "version": "2.6.1"
+    },
+    "qiskit-aer": {
+      "status": "installed",
+      "version": "0.18.2"
+    },
+    "qiskit-qasm3-import": {
+      "status": "installed",
+      "version": "0.6.0"
+    },
+    "requests": {
+      "status": "installed",
+      "version": "2.34.2"
+    },
+    "rich": {
+      "status": "installed",
+      "version": "15.0.0"
+    },
+    "rustworkx": {
+      "status": "installed",
+      "version": "0.18.1"
+    },
+    "scipy": {
+      "status": "installed",
+      "version": "1.18.1"
+    },
+    "scipy-openblas32": {
+      "status": "installed",
+      "version": "0.3.34.237.2"
+    },
+    "setuptools": {
+      "status": "installed",
+      "version": "84.2.1"
+    },
+    "simplejson": {
+      "status": "installed",
+      "version": "4.2.0"
+    },
+    "six": {
+      "status": "installed",
+      "version": "1.17.0"
+    },
+    "stevedore": {
+      "status": "installed",
+      "version": "5.9.1"
+    },
+    "sympy": {
+      "status": "installed",
+      "version": "1.14.0"
+    },
+    "tensorstore": {
+      "status": "installed",
+      "version": "0.1.86"
+    },
+    "termcolor": {
+      "status": "installed",
+      "version": "3.3.0"
+    },
+    "tomlkit": {
+      "status": "installed",
+      "version": "0.15.2"
+    },
+    "torch": {
+      "status": "installed",
+      "version": "2.14.1"
+    },
+    "tqdm": {
+      "status": "installed",
+      "version": "4.70.1"
+    },
+    "treescope": {
+      "status": "installed",
+      "version": "0.1.10"
+    },
+    "triton": {
+      "status": "installed",
+      "version": "3.8.0"
+    },
+    "typing-extensions": {
+      "status": "installed",
+      "version": "4.16.0"
+    },
+    "tzdata": {
+      "status": "installed",
+      "version": "2026.5"
+    },
+    "urllib3": {
+      "status": "installed",
+      "version": "2.8.0"
+    },
+    "uvloop": {
+      "status": "installed",
+      "version": "0.23.0"
+    },
+    "zipp": {
+      "status": "installed",
+      "version": "4.1.2"
+    }
+  },
+  "integrations": {
+    "numpy": {
+      "status": "installed",
+      "version": "2.5.4",
+      "import": {
+        "status": "ok",
+        "checks": [
+          "import"
+        ]
+      }
+    },
+    "torch": {
+      "status": "installed",
+      "version": "2.14.1",
+      "import": {
+        "status": "ok",
+        "checks": [
+          "import",
+          "numpy_array_bridge"
+        ]
+      }
+    },
+    "jax": {
+      "status": "installed",
+      "version": "0.12.0.1",
+      "import": {
+        "status": "ok",
+        "checks": [
+          "import"
+        ]
+      }
+    },
+    "flax": {
+      "status": "installed",
+      "version": "0.12.12",
+      "import": {
+        "status": "ok",
+        "checks": [
+          "import"
+        ]
+      }
+    },
+    "optax": {
+      "status": "installed",
+      "version": "0.2.8",
+      "import": {
+        "status": "ok",
+        "checks": [
+          "import"
+        ]
+      }
+    },
+    "qiskit": {
+      "status": "installed",
+      "version": "2.6.1",
+      "import": {
+        "status": "ok",
+        "checks": [
+          "import"
+        ]
+      }
+    },
+    "qiskit_aer": {
+      "status": "installed",
+      "version": "0.18.2",
+      "import": {
+        "status": "ok",
+        "checks": [
+          "import"
+        ]
+      }
+    },
+    "pennylane": {
+      "status": "installed",
+      "version": "0.45.1",
+      "import": {
+        "status": "ok",
+        "checks": [
+          "import"
+        ]
+      }
+    },
+    "cirq": {
+      "status": "installed",
+      "version": "1.7.0",
+      "import": {
+        "status": "ok",
+        "checks": [
+          "import"
+        ]
+      }
+    },
+    "openqasm3": {
+      "status": "installed",
+      "version": "1.0.1",
+      "import": {
+        "status": "ok",
+        "checks": [
+          "import"
+        ]
+      }
+    },
+    "sympy": {
+      "status": "installed",
+      "version": "1.14.0",
+      "import": {
+        "status": "ok",
+        "checks": [
+          "import"
+        ]
+      }
+    }
+  },
+  "installed_footprint": {
+    "scope": "logical_runtime_dependency_files",
+    "bytes": 6856112177,
+    "file_paths_counted": 44079,
+    "missing_recorded_paths": 0,
+    "excludes": [
+      "pip_cache",
+      "build_cache",
+      "unrelated_distributions"
+    ]
+  },
+  "diagnostics": [],
+  "source_sha256": "b7c70e611ca1b3bb228d6602f627bcc85d092fa223f1aef10100303ff39a0748"
+}
