@@ -19,6 +19,7 @@ def from_cirq(
     measurement_map=None,
     max_matrix_qubits=10,
     max_operations=100_000,
+    max_depth=64,
     max_condition_bits=10,
 ) -> Circuit:
     from ..ir import integer
@@ -26,6 +27,7 @@ def from_cirq(
 
     integer(max_matrix_qubits, "max_matrix_qubits", 1)
     integer(max_operations, "max_operations")
+    integer(max_depth, "max_depth")
     integer(max_condition_bits, "max_condition_bits")
     # Bound both truth-table width and recursive IR depth, even if a caller
     # supplies an enormous operation budget.
@@ -122,6 +124,7 @@ def from_cirq(
                         qubit_order=order,
                         max_matrix_qubits=max_matrix_qubits,
                         max_operations=available,
+                        max_depth=max_depth,
                         max_condition_bits=max_condition_bits,
                     )
 
@@ -131,6 +134,7 @@ def from_cirq(
                     keys,
                     max_bits=max_condition_bits,
                     max_operations=max_operations - work + 1,
+                    max_depth=max_depth,
                     location=location,
                 )
                 operations.extend(lowered.operations)

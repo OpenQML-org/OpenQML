@@ -360,9 +360,9 @@ def plan_conversion(
     """Import and prepare a conversion; report all known target incompatibilities."""
     from .program import QuantumProgram, detect_framework
 
-    integer(max_operations, "max_operations", 1)
-    integer(max_depth, "max_depth")
-    integer(max_output_statements, "max_output_statements", 1)
+    max_operations = integer(max_operations, "max_operations", 1)
+    max_depth = integer(max_depth, "max_depth")
+    max_output_statements = integer(max_output_statements, "max_output_statements", 1)
     if type(optimize) is not bool:
         raise ValidationError("optimize must be a boolean.")
     try:
@@ -382,6 +382,11 @@ def plan_conversion(
         source = detect_framework(value)
     source, target = _format(source), _format(target)
     source_options = {} if source_options is None else dict(source_options)
+    # Bound expansion inside built-in frontends, before their returned IR exists.
+    # Custom adapters retain their declared option contracts and the final check.
+    if source in BUILTIN_FORMATS and source != "ir":
+        for name, bound in (("max_operations", max_operations), ("max_depth", max_depth)):
+            source_options[name] = min(integer(source_options.get(name, bound), name), bound)
     frontend_notes = ()
     program = None
     if source == "ir":
@@ -401,10 +406,6 @@ def plan_conversion(
         options = dict(source_options)
         if "max_source_bytes" in options:
             options["max_bytes"] = options.pop("max_source_bytes")
-        for name, bound in (("max_operations", max_operations), ("max_depth", max_depth)):
-            if name in options:
-                integer(options[name], name)
-            options[name] = min(options.get(name, bound), bound)
         circuit = Circuit.from_json(value, **options)
     elif source.startswith("openqasm"):
         from .adapters.openqasm import from_openqasm

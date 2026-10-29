@@ -1,6 +1,7 @@
 """Retie imported quantum symbols and freeze trained weights for hybrid learning.
 
 Run with --interface numpy (default), torch or jax.
+Add --gradient-method adjoint for reversible NumPy simulator differentiation.
 """
 
 import argparse
@@ -30,8 +31,11 @@ def build_checkpoint():
     return trained.freeze(["bias"])
 
 
-def run(interface):
+def run(interface, gradient_method="auto"):
     checkpoint = LayerCheckpoint.from_json(build_checkpoint().to_json())
+    options = (
+        {} if gradient_method == "auto" else {"backend": "numpy", "gradient_method": "adjoint"}
+    )
     print("Trainable quantum weights:", checkpoint.spec.weight_parameters)
     if interface == "numpy":
         x, g = 0.4, checkpoint.bindings["gain"]
@@ -41,13 +45,28 @@ def run(interface):
         bias = float(np.float32(0.1))
         np.testing.assert_allclose(result, [np.cos(np.sin(x) + x * g + g**2 + bias)])
         print("Adapted quantum readout:", result)
+        if gradient_method == "adjoint":
+            from openqml import adjoint_vjp
+
+            print(
+                "Adjoint weight gradient:",
+                adjoint_vjp(
+                    checkpoint.spec.circuit,
+                    checkpoint.spec.observables,
+                    [{"feature": x, "gain": g}],
+                    [[1.0]],
+                    parameters=checkpoint.spec.weight_parameters,
+                ),
+            )
     elif interface == "torch":
         import torch
 
         from openqml.interfaces.torch import QuantumLayer
 
         torch.manual_seed(3)
-        model = torch.nn.Sequential(torch.nn.Linear(2, 1), QuantumLayer.from_checkpoint(checkpoint))
+        model = torch.nn.Sequential(
+            torch.nn.Linear(2, 1), QuantumLayer.from_checkpoint(checkpoint, **options)
+        )
         optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
         for _ in range(3):
             optimizer.zero_grad()
@@ -62,7 +81,7 @@ def run(interface):
 
         from openqml.interfaces.jax import QuantumLayer
 
-        layer, weights = QuantumLayer.from_checkpoint(checkpoint)
+        layer, weights = QuantumLayer.from_checkpoint(checkpoint, **options)
         params = {"quantum": weights, "encoder": jnp.full((2, 1), 0.1)}
 
         def loss(p):
@@ -82,4 +101,6 @@ def run(interface):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--interface", choices=("numpy", "torch", "jax"), default="numpy")
-    run(parser.parse_args().interface)
+    parser.add_argument("--gradient-method", choices=("auto", "adjoint"), default="auto")
+    args = parser.parse_args()
+    run(args.interface, args.gradient_method)
