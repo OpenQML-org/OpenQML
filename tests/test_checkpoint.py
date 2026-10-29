@@ -4,6 +4,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+import openqml as oq
 from openqml import (
     Circuit,
     Hamiltonian,
@@ -222,7 +223,7 @@ def test_trained_torch_weights_restore_in_jax_flax_and_back_with_gradients():
     checkpoint = LayerCheckpoint.from_json(layer.checkpoint().to_json())
     y = layer(x)
     dw, dx = torch.autograd.grad(y.sum(), (layer.weights, x))
-    with jax.enable_x64():
+    with oq.jax.enable_x64():
         jl, jw = JaxLayer.from_checkpoint(checkpoint, optimize=True)
         jx = jnp.asarray(x.detach().numpy())
         np.testing.assert_allclose(jax.jit(jl)(jw, jx), y.detach().numpy(), atol=1e-12)
@@ -244,7 +245,7 @@ def test_trained_torch_weights_restore_in_jax_flax_and_back_with_gradients():
 
 
 def test_jax_precision_requires_explicit_cast_and_flax_checks_destination():
-    jax = pytest.importorskip("jax")
+    pytest.importorskip("jax")
     import jax.numpy as jnp
 
     pytest.importorskip("flax")
@@ -252,7 +253,7 @@ def test_jax_precision_requires_explicit_cast_and_flax_checks_destination():
     from openqml.interfaces.jax import QuantumLayer as JaxLayer
 
     checkpoint = LayerCheckpoint(spec(), [0.2, 0.3, 0.4], "float64")
-    with jax.enable_x64(False):
+    with oq.jax.enable_x64(False):
         with pytest.raises(ValidationError, match="x64"):
             JaxLayer.from_checkpoint(checkpoint)
         with pytest.raises(ValidationError, match="x64"):

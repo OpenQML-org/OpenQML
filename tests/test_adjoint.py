@@ -5,6 +5,7 @@ import weakref
 import numpy as np
 import pytest
 
+import openqml as oq
 from openqml import (
     Circuit,
     ClassicalCondition,
@@ -345,7 +346,7 @@ def test_jax_adjoint_jit_broadcasts_directional_products_and_vmap():
 
     from openqml.interfaces.jax import QuantumLayer
 
-    with jax.enable_x64():
+    with oq.jax.enable_x64():
         layer, _ = QuantumLayer.from_checkpoint(
             adapted_checkpoint(),
             optimize=True,
@@ -383,7 +384,7 @@ def test_flax_adjoint_classical_weight_generator_uses_one_optax_tree():
 
     from openqml.interfaces.flax import QuantumLayer
 
-    with jax.enable_x64():
+    with oq.jax.enable_x64():
         checkpoint = adapted_checkpoint().freeze(["unused"])
         module, variables = QuantumLayer.from_checkpoint(
             checkpoint, backend="numpy", gradient_method="adjoint"
