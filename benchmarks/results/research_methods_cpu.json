@@ -1,0 +1,75 @@
+{
+  "schema": "openqml.research_methods_audit",
+  "openqml": "0.4.0",
+  "python": "3.12.14",
+  "system": "Linux",
+  "machine": "x86_64",
+  "scope": "selected_reproducible_regressions_not_industry_leadership_or_exclusive_moat",
+  "results": {
+    "geometry": {
+      "parameters": 12,
+      "metric_products": 9,
+      "solve_seconds": 0.028511059000038586,
+      "explicit_solve_max_error": 6.017408793468348e-14,
+      "residual_norm": 6.494912186716358e-16,
+      "matrix_constructed_by_solver": false,
+      "scope": "pure_state_CPU_statevector_not_hardware_or_mixed_state_metric"
+    },
+    "adaptive_measurement": {
+      "total_budget": 6000,
+      "pilot_per_group": 64,
+      "fixed_group_shots": {
+        "X": 3000,
+        "Z": 3000
+      },
+      "production_group_shots": {
+        "X": 5339,
+        "Z": 533
+      },
+      "conditional_true_total_variance_fixed": 0.0003333333333333333,
+      "conditional_true_total_variance_adaptive": 0.00018730099269526128,
+      "pilot_reused_in_reported_mean": false,
+      "scope": "Z_eigenstate_case_not_a_universal_variance_improvement"
+    },
+    "correlated_shadows": {
+      "canonical_XX_single_shot_variance": 7.9999999999999964,
+      "regularized_reference_XX_single_shot_variance": 0.02000000000000335,
+      "dual_reconstruction_residual": 2.2066453602636532e-15,
+      "production_values": [
+        0.9866146452075555,
+        1.0210976249380628
+      ],
+      "production_standard_errors": [
+        0.03333838202993111,
+        0.016585051810636096
+      ],
+      "pilot_selected_blocks": [
+        [
+          0,
+          1
+        ]
+      ],
+      "scope": "exact_variance_case_uses_known_Bell_reference; acquisition_uses_independent_pilot",
+      "full_paper_benchmarks_reproduced": false
+    },
+    "truncated_mps": {
+      "qubits": 10,
+      "bond_cap": 2,
+      "actual_max_bond": 2,
+      "state_distance_bound": 0.00029923179301798815,
+      "readout_errors": [
+        4.1125902683347704e-10,
+        1.1249168793692199e-07
+      ],
+      "readout_bounds": [
+        0.0005984635860359763,
+        0.0005984635860359763
+      ],
+      "workspace_admission_bytes": 39424,
+      "full_SVD_cap_2_admitted": false,
+      "full_SVD_cap_2_reason": "Full-SVD bond dimension exceeds max_bond_dimension.",
+      "floating_point_roundoff_included_in_bound": false,
+      "scope": "weakly_entangling_nearest_neighbor_unitary_case"
+    }
+  }
+}

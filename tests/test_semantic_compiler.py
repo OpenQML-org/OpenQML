@@ -31,6 +31,9 @@ def random_circuit(seed, width=3, gates=18):
 @pytest.mark.parametrize("seed", range(8))
 @pytest.mark.parametrize("target", ("qiskit", "cirq", "pennylane", "openqasm2", "openqasm3"))
 def test_random_circuit_roundtrips_against_independent_native_runtimes(seed, target):
+    pytest.importorskip("qiskit" if target.startswith("openqasm") else target)
+    if target == "openqasm3":
+        pytest.importorskip("qiskit_qasm3_import")
     source = random_circuit(seed)
     bindings = {"theta": 0.319}
     plan = oq.plan_conversion(source, target=target)
@@ -44,6 +47,8 @@ def test_random_circuit_roundtrips_against_independent_native_runtimes(seed, tar
 
 @pytest.mark.parametrize("target", ("ir", "json", "qiskit", "cirq", "openqasm3"))
 def test_certified_symbolic_export_includes_all_bindings_and_phase(target):
+    if target in {"qiskit", "cirq"}:
+        pytest.importorskip(target)
     angle = oq.Parameter("theta")
     source = oq.Circuit(3).h(2).rz(angle, 0).cp(angle / 2, 0, 1).swap(1, 2)
     certified = oq.compile_verified(source, target=target)

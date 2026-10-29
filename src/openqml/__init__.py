@@ -1,11 +1,12 @@
 """Hybrid quantum learning and explicit circuit interoperability.
 
 Install once with ``python -m pip install openqml`` and import as
-``import openqml as oq``. All integrations load only when accessed.
+``import openqml as oq``. Optional integrations load only when accessed.
 """
 
 from importlib import import_module as _import_module
 
+from ._dependencies import install_hint as _install_hint
 from ._scheduling import ExecutionBatch, ReadoutRoute
 from .adaptive import AdaptivePlan, ExecutionCandidate, plan_execution
 from .adjoint import AdjointPlan, adjoint_jvp, adjoint_vjp
@@ -38,6 +39,7 @@ from .errors import (
 )
 from .execution import ExecutionGroup, ExpectationCheck, ExpectationPlan
 from .frontends import FrameworkAdapter, list_formats, register_adapter, unregister_adapter
+from .geometry import NaturalGradientResult, QuantumMetricPlan, quantum_metric
 from .gradients import (
     ShiftPlan,
     parameter_shift,
@@ -48,10 +50,18 @@ from .gradients import (
 from .inspection import PythonSourceReport, inspect_python
 from .ir import Circuit, CircuitBuilder, ClassicalCondition, Operation
 from .layers import LayerCheckpoint, LayerSpec
-from .measurement import EstimateResult, MeasurementPlan, ShotBackend, estimate, measurement_plan
+from .measurement import (
+    AdaptiveEstimateResult,
+    EstimateResult,
+    MeasurementPlan,
+    ShotBackend,
+    estimate,
+    estimate_adaptive,
+    measurement_plan,
+)
 from .mps import MPSBackend
 from .observables import Hamiltonian, PauliString, z_observables
-from .optimization import OptimizationResult, optimize
+from .optimization import CertifiedOptimization, OptimizationResult, optimize, optimize_verified
 from .parameters import Expression, Parameter
 from .pauli import PauliPlan
 from .planning import DensityPlan, plan_density
@@ -66,8 +76,10 @@ from .semantics import (
     prove_equivalence,
     semantic_coverage,
 )
+from .shadows import ShadowEstimate, shadow_estimate
 from .simulator import ExecutionResult, execute, expectation, expectations, sample, statevector
 from .templates import data_reuploading, hardware_efficient
+from .truncated_mps import MPSApproximation, TruncatedMPSBackend
 from .verification import ConversionCheck
 
 _LAZY_MODULES = {
@@ -91,7 +103,7 @@ def __getattr__(name):
             module = _import_module(_LAZY_MODULES[name], __name__)
         except ImportError as exc:
             raise MissingDependencyError(
-                f"Cannot load {name}. Run: python -m pip install openqml."
+                f"Cannot load {name}. Run: {_install_hint(name)}."
             ) from exc
         globals()[name] = module
         return module
@@ -102,9 +114,20 @@ def __dir__():
     return sorted(set(globals()) | _LAZY_MODULES.keys())
 
 
-__version__ = "0.3.0a14"
+__version__ = "0.4.0"
 
 __all__ = [
+    "CertifiedOptimization",
+    "optimize_verified",
+    "ShadowEstimate",
+    "shadow_estimate",
+    "MPSApproximation",
+    "TruncatedMPSBackend",
+    "AdaptiveEstimateResult",
+    "estimate_adaptive",
+    "QuantumMetricPlan",
+    "NaturalGradientResult",
+    "quantum_metric",
     "AdaptivePlan",
     "MPSBackend",
     "ExecutionCandidate",

@@ -120,7 +120,7 @@ def test_multi_qubit_synthesis_is_declared_instead_of_claiming_final_resources(m
     reject_sdks(monkeypatch)
     plan = plan_conversion(Circuit(2).unitary(np.eye(4), 0, 1), target="openqasm3")
     assert plan.compatible and not plan.preparation_complete
-    assert plan.required_integrations == ("qiskit",) and plan.required_extras == ()
+    assert plan.required_integrations == ("qiskit",) and plan.required_extras == ("qiskit",)
     assert plan.to_dict()["prepared_resources"] is None
     assert [d.code for d in plan.diagnostics] == ["MATRIX_SYNTHESIS_REQUIRED"]
     assert plan.diagnostics[0].location == "operations[0]"

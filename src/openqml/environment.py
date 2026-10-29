@@ -11,6 +11,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion
 
+from ._dependencies import install_hint
 from .errors import ValidationError
 
 _INTEGRATIONS = {
@@ -66,8 +67,8 @@ def _probe_import(module, timeout):
     )
 
 
-def environment_report(*, check_imports=False, include_sizes=False, import_timeout=60):
-    """Report the installed default dependency closure; never install or update anything.
+def environment_report(*, check_imports=False, include_sizes=False, import_timeout=60, extras=()):
+    """Report core or explicitly selected extras; never install or update anything.
 
     Import probes run in separate processes. Optional byte counts cover logical
     files in the runtime dependency closure, deduplicated by resolved path;
@@ -78,8 +79,26 @@ def environment_report(*, check_imports=False, include_sizes=False, import_timeo
         raise ValidationError("Report flags must be booleans.")
     if type(import_timeout) not in {int, float} or not 0 < import_timeout <= 600:
         raise ValidationError("import_timeout must be positive and at most 600 seconds.")
+    if isinstance(extras, str) or not isinstance(extras, (tuple, list, set, frozenset)):
+        raise ValidationError("extras must be a collection of installation extra names.")
+    allowed = {
+        "all",
+        "torch",
+        "jax",
+        "flax",
+        "qiskit",
+        "aer",
+        "qasm",
+        "pennylane",
+        "cirq",
+        "symbolic",
+        "dev",
+    }
+    if any(not isinstance(e, str) or e not in allowed for e in extras):
+        raise ValidationError("Unknown installation extra in extras.")
+    selected_extras = frozenset(extras)
     distributions, requested, dependencies, diagnostics = {}, {}, {}, []
-    pending = [("openqml", frozenset())]
+    pending = [("openqml", selected_extras)]
     while pending:
         name, extras = pending.pop()
         key = canonicalize_name(name)
@@ -145,17 +164,20 @@ def environment_report(*, check_imports=False, include_sizes=False, import_timeo
             pending.append((requirement.name, frozenset(requirement.extras)))
     integrations = {}
     for package, module in _INTEGRATIONS.items():
-        entry = dependencies.get(package, {"status": "missing"})
-        if package not in dependencies:
-            diagnostics.append(
-                {
-                    "code": "DEFAULT_INTEGRATION_NOT_DECLARED",
-                    "integration": module,
-                    "severity": "error",
-                }
-            )
-        integrations[module] = dict(entry)
-        if check_imports:
+        entry = dependencies.get(package)
+        required = entry is not None
+        if entry is None:
+            try:
+                installed = metadata.distribution(package)
+                entry = {"status": "installed", "version": installed.version}
+            except metadata.PackageNotFoundError:
+                entry = {"status": "not_installed"}
+        integrations[module] = {
+            **entry,
+            "required": required,
+            "install_command": install_hint(module),
+        }
+        if check_imports and entry["status"] == "installed":
             probe = _probe_import(module, import_timeout)
             integrations[module]["import"] = probe
             if probe["status"] != "ok":
@@ -163,7 +185,7 @@ def environment_report(*, check_imports=False, include_sizes=False, import_timeo
                     {
                         "code": "INTEGRATION_RUNTIME_PROBE_FAILED",
                         "integration": module,
-                        "severity": "error",
+                        "severity": "error" if required else "warning",
                     }
                 )
     footprint = None
@@ -191,6 +213,10 @@ def environment_report(*, check_imports=False, include_sizes=False, import_timeo
             "missing_recorded_paths": missing,
             "excludes": ["pip_cache", "build_cache", "unrelated_distributions"],
         }
+    probes = [entry["import"] for entry in integrations.values() if "import" in entry]
+    probe_coverage = ["imports"] if probes else []
+    if any("numpy_array_bridge" in p.get("checks", p.get("requested_checks", ())) for p in probes):
+        probe_coverage.append("Torch_NumPy_bridge")
     return {
         "schema": "openqml.environment_report",
         "python": platform.python_version(),
@@ -199,8 +225,9 @@ def environment_report(*, check_imports=False, include_sizes=False, import_timeo
         "machine": platform.machine(),
         "status": "error" if any(d["severity"] == "error" for d in diagnostics) else "ok",
         "scope": "observed_environment_not_universal_compatibility",
+        "selected_extras": sorted(selected_extras),
         "isolated_import_checks": check_imports,
-        "runtime_probe_coverage": ["imports", "Torch_NumPy_bridge"] if check_imports else [],
+        "runtime_probe_coverage": probe_coverage,
         "accelerator_execution_checked": False,
         "dependency_count": len(dependencies),
         "dependencies": dict(sorted(dependencies.items())),

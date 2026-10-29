@@ -203,9 +203,14 @@ def test_noise_and_feedback_are_budgeted_as_density_not_assumed_clifford():
         oq.plan_execution(c, obs, max_memory_mb=0)
 
 
-def test_rejected_explicit_width_limit_is_inspectable():
+def test_rejected_explicit_width_limit_is_inspectable(monkeypatch):
+    monkeypatch.setattr(
+        "openqml.adaptive._available_memory",
+        lambda: pytest.fail("Memory must not be probed for an already rejected width"),
+    )
     plan = oq.plan_execution(oq.Circuit(50), (oq.PauliString("Z" * 50),), max_qubits=40)
     assert not plan.supported and "max_qubits" in plan.to_dict()["candidates"][0]["reason"]
+    assert plan.memory_policy == "not_queried_after_explicit_width_rejection"
 
 
 def test_mps_reversed_wire_order_and_opaque_two_site_matrix_match_dense():

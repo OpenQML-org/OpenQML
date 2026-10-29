@@ -9,7 +9,9 @@ try:
 except ImportError as exc:
     from ..errors import MissingDependencyError
 
-    raise MissingDependencyError("Cannot load Flax. Run: python -m pip install openqml.") from exc
+    raise MissingDependencyError(
+        'Cannot load Flax. Run: python -m pip install "openqml[flax]".'
+    ) from exc
 
 from ._spec import LayerSpecMixin
 from .jax import QuantumLayer as FunctionalLayer

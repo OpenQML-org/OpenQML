@@ -8,7 +8,9 @@ try:
 except ImportError as exc:
     from ..errors import MissingDependencyError
 
-    raise MissingDependencyError("Cannot load JAX. Run: python -m pip install openqml.") from exc
+    raise MissingDependencyError(
+        'Cannot load JAX. Run: python -m pip install "openqml[jax]".'
+    ) from exc
 
 from ..errors import ValidationError
 from ..parameters import real as _real

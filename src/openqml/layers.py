@@ -129,6 +129,12 @@ class LayerSpec:
         )
         return spec
 
+    def metric_plan(self, *, max_qubits=None, max_memory_mb=256):
+        """Prepare pure-state geometry in this layer's ordered weight coordinates."""
+        from .geometry import QuantumMetricPlan
+
+        return QuantumMetricPlan(self.circuit, self.weight_parameters, max_qubits, max_memory_mb)
+
     def reparameterize(self, mapping, *, input_parameters, weight_parameters):
         """Retie or transform symbols through the IR with explicit new ownership.
 
