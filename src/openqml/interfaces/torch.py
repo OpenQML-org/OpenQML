@@ -15,8 +15,8 @@ from ..simulator import _checkpoint_interval, _resource_check, expectations
 from ._spec import (
     LayerSpecMixin,
     broadcast_batch_shape,
-    prepare_adjoint,
     prepare_execution,
+    prepare_gradients,
     prepare_layer,
     prepare_readout,
     resolve_gradient_method,
@@ -147,7 +147,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
         self.gradient_method = resolve_gradient_method(
             circuit, backend, gradient_method, self.limits
         )
-        self.adjoint_plan = prepare_adjoint(self)
+        self.adjoint_plan, self.shift_plan = prepare_gradients(self)
         dtype = torch.get_default_dtype() if dtype is None else dtype
         if dtype not in {torch.float32, torch.float64}:
             raise ValidationError("QuantumLayer requires float32 or float64 weights.")

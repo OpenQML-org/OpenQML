@@ -15,6 +15,13 @@ from .ir import UNITARY_GATES, Circuit, integer
 
 @dataclass(frozen=True)
 class BackendCapabilities:
+    """Execution features, including an explicit contract for expectation reuse.
+
+    deterministic_expectations means identical bound circuits and options have
+    identical readouts independent of batch composition or execution order.
+    Sampling and stateful estimators leave it disabled.
+    """
+
     gates: frozenset[str] = UNITARY_GATES
     max_qubits: int | None = None
     native_expectations: bool = False
@@ -25,6 +32,7 @@ class BackendCapabilities:
     reset: bool = False
     classical_control: bool = False
     measurement_expectations: bool = False
+    deterministic_expectations: bool = False
 
     def __post_init__(self):
         if any(
@@ -38,6 +46,7 @@ class BackendCapabilities:
                 self.reset,
                 self.classical_control,
                 self.measurement_expectations,
+                self.deterministic_expectations,
             )
         ):
             raise ValidationError("Backend capability flags must be booleans.")
@@ -139,7 +148,7 @@ def check_effects(circuit, device, *, expectation=False):
 @dataclass(frozen=True)
 class _LocalBackend:
     name: str
-    capabilities: BackendCapabilities = BackendCapabilities()
+    capabilities: BackendCapabilities = BackendCapabilities(deterministic_expectations=True)
 
     def run(self, circuit, *, options):
         from .simulator import _external_state, statevector
@@ -178,11 +187,15 @@ _REGISTRY["numpy"] = _LocalBackend(
         classical_control=True,
         mid_circuit_measurements=True,
         measurement_expectations=True,
+        deterministic_expectations=True,
     ),
 )
 for _name in ("qiskit", "pennylane", "cirq"):
     _REGISTRY[_name] = _LocalBackend(
-        _name, BackendCapabilities(density_matrix=True, channels=True, reset=True)
+        _name,
+        BackendCapabilities(
+            density_matrix=True, channels=True, reset=True, deterministic_expectations=True
+        ),
     )
 _LOCK = RLock()
 
