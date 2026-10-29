@@ -3,6 +3,27 @@ on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
 jobs:
+  core:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install only the core and test runner
+        run: python -m pip install . pytest
+      - run: python -m pip check
+      - name: Exercise exact conversion without framework dependencies
+        run: python -m pytest -q tests/test_research_methods.py tests/test_exact_instrument.py tests/test_public_api.py tests/test_environment_report.py tests/test_conversion_preparation.py tests/test_ir.py tests/test_simulator.py tests/test_qasm_feedback.py
+      - run: python -m openqml doctor --report --check-imports --sizes --output core-environment.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: core-installation-${{ runner.os }}
+          path: core-environment.json
   full:
     runs-on: ubuntu-latest
     strategy:
@@ -16,7 +37,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Select CPU PyTorch for the CI runner
         run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-      - run: python -m pip install ".[dev]"
+      - run: python -m pip install ".[all,dev]"
       - run: python -m pytest -q
       - run: ruff check .
       - run: ruff format --check .
@@ -39,12 +60,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m pip install ".[dev]" --report install-report.json
+      - run: python -m pip install ".[all,dev]" --report install-report.json
       - run: python -m pip check
-      - run: python -m openqml doctor --check-imports --sizes --output environment-report.json
-      - run: python -m pytest -q tests/test_public_api.py tests/test_backends.py tests/test_providers.py tests/test_shared_readouts.py tests/test_conversion_plan.py tests/test_resource_audit.py tests/test_source_boundaries.py tests/test_resource_profiles.py tests/test_environment_report.py tests/test_scientific_scale.py tests/test_semantic_compiler.py tests/test_adaptive_execution.py
+      - run: python -m openqml doctor --extra all --check-imports --sizes --output environment-report.json
+      - run: python -m pytest -q tests/test_research_methods.py tests/test_public_api.py tests/test_backends.py tests/test_providers.py tests/test_shared_readouts.py tests/test_conversion_plan.py tests/test_resource_audit.py tests/test_source_boundaries.py tests/test_resource_profiles.py tests/test_environment_report.py tests/test_scientific_scale.py tests/test_semantic_compiler.py tests/test_adaptive_execution.py
       - run: python benchmarks/scientific_scale.py --output scientific-report.json
       - run: python benchmarks/compiler_execution_audit.py --seeds 4 --dense-qubits 22 --output compiler-execution-report.json
+      - run: python benchmarks/research_methods.py --output research-report.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -54,3 +76,4 @@ jobs:
             environment-report.json
             scientific-report.json
             compiler-execution-report.json
+            research-report.json

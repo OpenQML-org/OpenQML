@@ -127,6 +127,31 @@ class OptimizationResult:
         return tuple(notes)
 
 
+@dataclass(frozen=True)
+class CertifiedOptimization:
+    optimization: OptimizationResult
+    proof: object
+
+    @property
+    def circuit(self):
+        return self.optimization.circuit
+
+
+def optimize_verified(circuit, *, proof_options=None, **optimization_options):
+    """Return an optimization only when its exact IR semantics are proved.
+
+    Unproved numeric angle identities and exhausted proof budgets are explicit.
+    This opt-in check does not change the ordinary optimization API or certify
+    hardware-dependent gate/noise context.
+    """
+    from .semantics import prove_equivalence
+
+    optimized = optimize(circuit, **optimization_options)
+    proof = prove_equivalence(circuit, optimized.circuit, **dict(proof_options or {}))
+    proof.raise_for_errors()
+    return CertifiedOptimization(optimized, proof)
+
+
 def optimize(circuit, *, max_operations=100_000, max_depth=64, max_passes=4):
     """Fold known guards, merge stable adjacent decisions, then simplify gates.
 

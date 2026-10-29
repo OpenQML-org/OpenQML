@@ -62,7 +62,8 @@ def test_isolated_probe_contains_import_failure_and_checks_real_numpy_bridge(mon
     monkeypatch.setenv("PYTHONPATH", str(tmp_path))
     result = environment._probe_import("broken_sdk", 10)
     assert result["status"] == "error" and result["returncode"] == 7
-    assert environment._probe_import("torch", 60)["checks"] == ["import", "numpy_array_bridge"]
+    if environment.metadata.packages_distributions().get("torch"):
+        assert environment._probe_import("torch", 60)["checks"] == ["import", "numpy_array_bridge"]
 
 
 @pytest.mark.parametrize(
@@ -81,9 +82,46 @@ def test_environment_options_are_validated(kwargs):
 
 def test_observed_environment_and_report_cli_are_machine_readable(tmp_path):
     report = oq.environment_report()
-    assert report["status"] == "ok" and report["dependency_count"] >= 11
+    assert report["status"] == "ok" and report["dependency_count"] == 4
     assert report["scope"] == "observed_environment_not_universal_compatibility"
     target = tmp_path / "environment.json"
     assert main(["doctor", "--report", "--output", str(target)]) == 0
-    assert json.loads(target.read_text())["integrations"]["torch"]["status"] == "installed"
+    torch = json.loads(target.read_text())["integrations"]["torch"]
+    assert not torch["required"]
+    assert "openqml[torch]" in torch["install_command"]
     assert main(["doctor", "--report", "--output", str(target)]) == 2
+
+
+def test_missing_optional_integrations_are_healthy_and_selected_extras_are_required(monkeypatch):
+    packages = {
+        "openqml": SimpleNamespace(
+            version="1", requires=["numpy", "torch; extra == 'torch'"], files=[]
+        ),
+        "numpy": SimpleNamespace(version="1", requires=[], files=[]),
+    }
+
+    def distribution(name):
+        if name not in packages:
+            raise PackageNotFoundError(name)
+        return packages[name]
+
+    monkeypatch.setattr(environment.metadata, "distribution", distribution)
+    monkeypatch.setattr(environment, "_INTEGRATIONS", {"numpy": "numpy", "torch": "torch"})
+    core = oq.environment_report()
+    assert core["status"] == "ok"
+    assert core["integrations"]["torch"]["status"] == "not_installed"
+    assert not core["integrations"]["torch"]["required"]
+    monkeypatch.setattr(
+        environment, "_probe_import", lambda module, timeout: {"status": "ok", "checks": ["import"]}
+    )
+    assert oq.environment_report(check_imports=True)["runtime_probe_coverage"] == ["imports"]
+    selected = oq.environment_report(extras=("torch",))
+    assert selected["status"] == "error"
+    assert selected["integrations"]["torch"]["required"]
+    assert selected["selected_extras"] == ["torch"]
+
+
+@pytest.mark.parametrize("extras", ["all", ["unknown"], [False]])
+def test_invalid_extra_selections_are_rejected(extras):
+    with pytest.raises(oq.ValidationError):
+        oq.environment_report(extras=extras)

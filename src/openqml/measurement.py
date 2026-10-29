@@ -8,6 +8,7 @@ from .backends import BackendCapabilities, ExecutionOptions, get_backend
 from .errors import BackendError, ValidationError
 from .ir import integer
 from .observables import Hamiltonian, PauliString
+from .parameters import real
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,7 @@ class EstimateResult:
     covariance: np.ndarray  # covariance of the estimated means, batch by observables^2
     shots_per_group: tuple[int, ...]
     plan: MeasurementPlan
+    group_sample_variances: np.ndarray | None = None
 
     @property
     def standard_errors(self):
@@ -164,6 +166,7 @@ def estimate(
     max_qubits=None,
     max_memory_mb=256,
     max_branches=256,
+    shots_per_group=None,
 ):
     """Sample grouped readouts with a total shot budget per original input circuit.
 
@@ -179,13 +182,20 @@ def estimate(
     get_backend(backend)
     plan = measurement_plan(observables)
     allocation = plan.allocate(shots)
+    if shots_per_group is not None:
+        allocation = tuple(integer(n, "group shots", 2) for n in shots_per_group)
+        if len(allocation) != len(plan.groups) or (allocation and sum(allocation) != shots):
+            raise ValidationError("Group allocations must match the plan and total shot budget.")
     circuits = _bound(circuits, bindings)
     if any(c.num_qubits != plan.num_qubits for c in circuits):
         raise ValidationError("Estimate requires circuits of the observable width.")
     values = np.broadcast_to(plan.constants, (len(circuits), plan.num_observables)).copy()
     covariance = np.zeros((len(circuits), plan.num_observables, plan.num_observables))
+    group_variances = np.zeros((len(circuits), len(plan.groups)))
     streams = np.random.SeedSequence(seed).spawn(len(plan.groups))
-    for group, count, stream in zip(plan.groups, allocation, streams, strict=True):
+    for group_index, (group, count, stream) in enumerate(
+        zip(plan.groups, allocation, streams, strict=True)
+    ):
         offsets = {}
         for row, c in enumerate(circuits):
             offsets.setdefault(c.num_clbits, []).append((row, _rotate(c, group.basis)))
@@ -207,7 +217,117 @@ def estimate(
                 mean, cov = _statistics(result.counts, group, plan.num_qubits, count)
                 values[row] += mean
                 covariance[row] += cov
-    return EstimateResult(values, covariance, allocation, plan)
+                group_variances[row, group_index] = max(0.0, np.trace(cov) * count)
+    return EstimateResult(values, covariance, allocation, plan, group_variances)
+
+
+@dataclass(frozen=True)
+class AdaptiveEstimateResult:
+    """Independent production estimate; pilot samples inform allocation only."""
+
+    production: EstimateResult
+    pilot_shots_per_group: tuple[int, ...]
+    allocation_variances: tuple[float, ...]
+
+    @property
+    def values(self):
+        return self.production.values
+
+    @property
+    def covariance(self):
+        return self.production.covariance
+
+    @property
+    def standard_errors(self):
+        return self.production.standard_errors
+
+    @property
+    def shots_per_circuit(self):
+        return self.production.shots_per_circuit + sum(self.pilot_shots_per_group)
+
+    @property
+    def execution_count(self):
+        return self.production.execution_count * (2 if self.pilot_shots_per_group else 1)
+
+
+def estimate_adaptive(
+    circuits,
+    observables,
+    bindings=None,
+    *,
+    shots=1024,
+    pilot_shots=16,
+    variance_floor=0.01,
+    backend="numpy",
+    seed=None,
+    max_qubits=None,
+    max_memory_mb=256,
+    max_branches=256,
+):
+    """Allocate production shots by pilot covariance (Neyman allocation).
+
+    The objective is the sum of output variances, averaged across batch rows.
+    A positive bounded-score floor prevents zero pilot variance from starving
+    a group. Independent production samples preserve conditional unbiasedness;
+    pilot samples are NOT reused in the reported mean or covariance.
+    This is an ideal-sampler allocation method, not hardware error mitigation or
+    the full Bayesian/qudit AQUIRE algorithm (arXiv:2605.00682).
+    """
+    from .batch import _bound
+
+    shots, pilot_shots = integer(shots, "shots", 1), integer(pilot_shots, "pilot_shots", 2)
+    variance_floor = real(variance_floor)
+    if not np.isfinite(variance_floor) or not 0 < variance_floor <= 1:
+        raise ValidationError("variance_floor must lie in (0, 1].")
+    observables = tuple(observables)
+    plan = measurement_plan(observables)
+    plan.allocate(shots)  # Validate the total budget before pilot execution.
+    groups = len(plan.groups)
+    bound = _bound(circuits, bindings)
+    options = dict(
+        backend=backend,
+        max_qubits=max_qubits,
+        max_memory_mb=max_memory_mb,
+        max_branches=max_branches,
+    )
+    if not groups:
+        return AdaptiveEstimateResult(
+            estimate(bound, observables, shots=shots, seed=seed, **options), (), ()
+        )
+    production_shots = shots - groups * pilot_shots
+    if production_shots < 2 * groups:
+        raise ValidationError(
+            "Total shots must cover pilot shots and at least two production shots per group."
+        )
+    streams = np.random.SeedSequence(seed).spawn(2)
+    pilot = estimate(
+        bound,
+        observables,
+        shots=groups * pilot_shots,
+        shots_per_group=(pilot_shots,) * groups,
+        seed=int(streams[0].generate_state(1)[0]),
+        **options,
+    )
+    bounds = np.asarray([np.square(np.abs(g.coefficients).sum(axis=1)).sum() for g in plan.groups])
+    variance = np.maximum(pilot.group_sample_variances.mean(axis=0), variance_floor * bounds)
+    if not np.isfinite(variance).all() or not np.any(variance > 0):
+        raise ValidationError("Adaptive measurement variance exceeds finite precision.")
+    importance = np.sqrt(variance)
+    quota = (production_shots - 2 * groups) * importance / importance.sum()
+    allocation = np.floor(quota).astype(np.int64) + 2
+    remaining = production_shots - int(allocation.sum())
+    allocation[np.argsort(-(quota - np.floor(quota)), kind="stable")[:remaining]] += 1
+    production = estimate(
+        bound,
+        observables,
+        shots=production_shots,
+        shots_per_group=tuple(int(n) for n in allocation),
+        seed=int(streams[1].generate_state(1)[0]),
+        **options,
+    )
+    return AdaptiveEstimateResult(
+        production, (pilot_shots,) * groups, tuple(float(v) for v in variance)
+    )
 
 
 @dataclass(frozen=True)

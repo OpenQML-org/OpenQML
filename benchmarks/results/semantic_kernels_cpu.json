@@ -1,0 +1,303 @@
+{
+  "schema": "openqml.semantic_kernel_audit",
+  "python": "3.12.14",
+  "system": "Linux",
+  "machine": "x86_64",
+  "quantum_sdk_required": false,
+  "numeric_simulation_used_for_proofs": false,
+  "scope": "selected_regression_cases_not_general_compiler_coverage",
+  "large_wire_case": "128 independent active one-wire factors and 896 idle wires; not a connected 1024-qubit proof",
+  "cases": [
+    {
+      "case": "strict_operator_identity",
+      "expected_proven": true,
+      "elapsed_seconds": 0.0019183419999535545,
+      "proof": {
+        "scope": "IR_algebraic_equivalence",
+        "parameter_domain": "all_real_bindings_where_expressions_are_defined",
+        "numeric_constants": "exact_stored_binary_rationals",
+        "requires_valid_IR_parameters": true,
+        "coefficient_limit_bits": 4096,
+        "named_gate_angles": "mathematical_pi",
+        "global_phase": "compared",
+        "classical_initialization": "all_zero",
+        "classical_outputs": "all_final_bits",
+        "target_execution_checked": false,
+        "inconclusive_is_inequivalent": false,
+        "proven": true,
+        "method": "factored_operator_kernel",
+        "semantics": "unitary",
+        "source_fingerprint": "1e9e6749f3556085f364812e59b397d7210ae43f288a17b9aacf2cbc4052f3c0",
+        "target_fingerprint": "f28e98d55661c38805896ec2f9069ee84731c0591748470c880066dd2f6590f4",
+        "parameters": [],
+        "checked_operations": 4,
+        "work": 101,
+        "normal_form_fingerprint": "8d154a6677c71e4ad56b9e8b1db8dfe1402295d0a595afda7ef909a77d74fa01",
+        "diagnostics": []
+      }
+    },
+    {
+      "case": "strict_global_phase_mutation",
+      "expected_proven": false,
+      "elapsed_seconds": 0.00015885400011939055,
+      "proof": {
+        "scope": "IR_algebraic_equivalence",
+        "parameter_domain": "all_real_bindings_where_expressions_are_defined",
+        "numeric_constants": "exact_stored_binary_rationals",
+        "requires_valid_IR_parameters": true,
+        "coefficient_limit_bits": 4096,
+        "named_gate_angles": "mathematical_pi",
+        "global_phase": "compared",
+        "classical_initialization": "all_zero",
+        "classical_outputs": "all_final_bits",
+        "target_execution_checked": false,
+        "inconclusive_is_inequivalent": false,
+        "proven": false,
+        "method": "inconclusive",
+        "semantics": "unitary",
+        "source_fingerprint": "1e9e6749f3556085f364812e59b397d7210ae43f288a17b9aacf2cbc4052f3c0",
+        "target_fingerprint": "1d629b753a58644c7a404c2c49d6747969a59dfc9fee11de674d8e6a7865865d",
+        "parameters": [],
+        "checked_operations": 4,
+        "work": 10,
+        "normal_form_fingerprint": null,
+        "diagnostics": [
+          {
+            "code": "SEMANTIC_PROOF_INCONCLUSIVE",
+            "message": "Supported exact normal forms did not establish equivalence; this is not evidence of inequivalence.",
+            "location": "circuit",
+            "severity": "error",
+            "hint": "Use bounded native differential checks at explicit bindings, or retain a supported exact rewrite path."
+          }
+        ]
+      }
+    },
+    {
+      "case": "reset_vs_overwritten_feedback",
+      "expected_proven": true,
+      "elapsed_seconds": 0.0005783839999367046,
+      "proof": {
+        "scope": "IR_algebraic_equivalence",
+        "parameter_domain": "all_real_bindings_where_expressions_are_defined",
+        "numeric_constants": "exact_stored_binary_rationals",
+        "requires_valid_IR_parameters": true,
+        "coefficient_limit_bits": 4096,
+        "named_gate_angles": "mathematical_pi",
+        "global_phase": "unobservable_for_quantum_instruments",
+        "classical_initialization": "all_zero",
+        "classical_outputs": "all_final_bits",
+        "target_execution_checked": false,
+        "inconclusive_is_inequivalent": false,
+        "proven": true,
+        "method": "factored_density_kernel",
+        "semantics": "quantum_instrument",
+        "source_fingerprint": "6543d18ad2b7aa983831a0cae0f20527f4fb0e340a7c5b61739e4f41a52da484",
+        "target_fingerprint": "3ac6a2ba92a77f052dd8d7410389cd48b594b0ed2d36c27e55a9fbce0f4b48cb",
+        "parameters": [],
+        "checked_operations": 5,
+        "work": 93,
+        "normal_form_fingerprint": "7b64aa9aeeb6f37b4048474b593130f0abf782832a569c3d375bc2397198a347",
+        "diagnostics": []
+      }
+    },
+    {
+      "case": "final_record_mutation",
+      "expected_proven": false,
+      "elapsed_seconds": 0.00013849399988430378,
+      "proof": {
+        "scope": "IR_algebraic_equivalence",
+        "parameter_domain": "all_real_bindings_where_expressions_are_defined",
+        "numeric_constants": "exact_stored_binary_rationals",
+        "requires_valid_IR_parameters": true,
+        "coefficient_limit_bits": 4096,
+        "named_gate_angles": "mathematical_pi",
+        "global_phase": "unobservable_for_quantum_instruments",
+        "classical_initialization": "all_zero",
+        "classical_outputs": "all_final_bits",
+        "target_execution_checked": false,
+        "inconclusive_is_inequivalent": false,
+        "proven": false,
+        "method": "inconclusive",
+        "semantics": "quantum_instrument",
+        "source_fingerprint": "6543d18ad2b7aa983831a0cae0f20527f4fb0e340a7c5b61739e4f41a52da484",
+        "target_fingerprint": "a954651de10f7465bebc8379d583ba0987c306a92ab5f7709b80856cef90772e",
+        "parameters": [],
+        "checked_operations": 4,
+        "work": 56,
+        "normal_form_fingerprint": null,
+        "diagnostics": [
+          {
+            "code": "SEMANTIC_PROOF_INCONCLUSIVE",
+            "message": "Supported exact normal forms did not establish equivalence; this is not evidence of inequivalence.",
+            "location": "circuit",
+            "severity": "error",
+            "hint": "Use bounded native differential checks at explicit bindings, or retain a supported exact rewrite path."
+          }
+        ]
+      }
+    },
+    {
+      "case": "symbolic_stochastic_composition",
+      "expected_proven": true,
+      "elapsed_seconds": 0.005786122000017713,
+      "proof": {
+        "scope": "IR_algebraic_equivalence",
+        "parameter_domain": "all_real_bindings_where_expressions_are_defined",
+        "numeric_constants": "exact_stored_binary_rationals",
+        "requires_valid_IR_parameters": true,
+        "coefficient_limit_bits": 4096,
+        "named_gate_angles": "mathematical_pi",
+        "global_phase": "unobservable_for_quantum_instruments",
+        "classical_initialization": "all_zero",
+        "classical_outputs": "all_final_bits",
+        "target_execution_checked": false,
+        "inconclusive_is_inequivalent": false,
+        "proven": true,
+        "method": "factored_density_kernel",
+        "semantics": "quantum_instrument",
+        "source_fingerprint": "268ffac06b667e0796c2ab7a45acaf3158f7badd3d9427109bad9eb8ddfb8b36",
+        "target_fingerprint": "d2482cba0501dc33a2b64e33e145c2149a58b8ef36c1c0ef03f80bbad7502170",
+        "parameters": [
+          "p",
+          "q"
+        ],
+        "checked_operations": 3,
+        "work": 597,
+        "normal_form_fingerprint": "1315404d4a464366fcdfb8b11e3d9a60350846db06dd9afe90ffa5dcceaf9915",
+        "diagnostics": []
+      }
+    },
+    {
+      "case": "symbolic_controlled_rotation",
+      "expected_proven": true,
+      "elapsed_seconds": 0.026607884999975795,
+      "proof": {
+        "scope": "IR_algebraic_equivalence",
+        "parameter_domain": "all_real_bindings_where_expressions_are_defined",
+        "numeric_constants": "exact_stored_binary_rationals",
+        "requires_valid_IR_parameters": true,
+        "coefficient_limit_bits": 4096,
+        "named_gate_angles": "mathematical_pi",
+        "global_phase": "unobservable_for_quantum_instruments",
+        "classical_initialization": "all_zero",
+        "classical_outputs": "all_final_bits",
+        "target_execution_checked": false,
+        "inconclusive_is_inequivalent": false,
+        "proven": true,
+        "method": "factored_density_kernel",
+        "semantics": "quantum_instrument",
+        "source_fingerprint": "b63a84240326a37dde88578dea38570aa6bc5590cbf56eb4e1ceae21fd5ababe",
+        "target_fingerprint": "839f96db117924ee99a4443aa7b354d1d4aa3ad9a72503e9654b36fc63deb830",
+        "parameters": [
+          "p"
+        ],
+        "checked_operations": 6,
+        "work": 3656,
+        "normal_form_fingerprint": "ed946f0ace14e6128857e09e2e6cce86eb3b73e1cc53bf8d5a21771869b7c9be",
+        "diagnostics": []
+      }
+    },
+    {
+      "case": "symbolic_rotation_sign_mutation",
+      "expected_proven": false,
+      "elapsed_seconds": 0.019541432000096393,
+      "proof": {
+        "scope": "IR_algebraic_equivalence",
+        "parameter_domain": "all_real_bindings_where_expressions_are_defined",
+        "numeric_constants": "exact_stored_binary_rationals",
+        "requires_valid_IR_parameters": true,
+        "coefficient_limit_bits": 4096,
+        "named_gate_angles": "mathematical_pi",
+        "global_phase": "unobservable_for_quantum_instruments",
+        "classical_initialization": "all_zero",
+        "classical_outputs": "all_final_bits",
+        "target_execution_checked": false,
+        "inconclusive_is_inequivalent": false,
+        "proven": false,
+        "method": "inconclusive",
+        "semantics": "quantum_instrument",
+        "source_fingerprint": "b63a84240326a37dde88578dea38570aa6bc5590cbf56eb4e1ceae21fd5ababe",
+        "target_fingerprint": "1488946ac6e95358c8129a51c8cbef9660f652ea4d026100b87642d8aa76c5d5",
+        "parameters": [
+          "p"
+        ],
+        "checked_operations": 6,
+        "work": 2740,
+        "normal_form_fingerprint": null,
+        "diagnostics": [
+          {
+            "code": "SEMANTIC_PROOF_INCONCLUSIVE",
+            "message": "Supported exact normal forms did not establish equivalence; this is not evidence of inequivalence.",
+            "location": "circuit",
+            "severity": "error",
+            "hint": "Use bounded native differential checks at explicit bindings, or retain a supported exact rewrite path."
+          }
+        ]
+      }
+    },
+    {
+      "case": "coherence_mutation",
+      "expected_proven": false,
+      "elapsed_seconds": 0.0007199730000593263,
+      "proof": {
+        "scope": "IR_algebraic_equivalence",
+        "parameter_domain": "all_real_bindings_where_expressions_are_defined",
+        "numeric_constants": "exact_stored_binary_rationals",
+        "requires_valid_IR_parameters": true,
+        "coefficient_limit_bits": 4096,
+        "named_gate_angles": "mathematical_pi",
+        "global_phase": "unobservable_for_quantum_instruments",
+        "classical_initialization": "all_zero",
+        "classical_outputs": "all_final_bits",
+        "target_execution_checked": false,
+        "inconclusive_is_inequivalent": false,
+        "proven": false,
+        "method": "inconclusive",
+        "semantics": "quantum_instrument",
+        "source_fingerprint": "b189849f4f8a27bf0178333e199d08fa9e87c16580814091531470bc6e063951",
+        "target_fingerprint": "dd779525c862aefef07265ed2ed97c6defd2563242ebcd5dca26c8bf4f4821be",
+        "parameters": [],
+        "checked_operations": 1,
+        "work": 73,
+        "normal_form_fingerprint": null,
+        "diagnostics": [
+          {
+            "code": "SEMANTIC_PROOF_INCONCLUSIVE",
+            "message": "Supported exact normal forms did not establish equivalence; this is not evidence of inequivalence.",
+            "location": "circuit",
+            "severity": "error",
+            "hint": "Use bounded native differential checks at explicit bindings, or retain a supported exact rewrite path."
+          }
+        ]
+      }
+    },
+    {
+      "case": "1024_wires_128_independent_single_wire_components",
+      "expected_proven": true,
+      "elapsed_seconds": 0.16715462399997705,
+      "proof": {
+        "scope": "IR_algebraic_equivalence",
+        "parameter_domain": "all_real_bindings_where_expressions_are_defined",
+        "numeric_constants": "exact_stored_binary_rationals",
+        "requires_valid_IR_parameters": true,
+        "coefficient_limit_bits": 4096,
+        "named_gate_angles": "mathematical_pi",
+        "global_phase": "unobservable_for_quantum_instruments",
+        "classical_initialization": "all_zero",
+        "classical_outputs": "all_final_bits",
+        "target_execution_checked": false,
+        "inconclusive_is_inequivalent": false,
+        "proven": true,
+        "method": "factored_density_kernel",
+        "semantics": "quantum_instrument",
+        "source_fingerprint": "b6e1b2afc1143c576a3f00a2f9b341f62be646de262281f7beb530ed516d5ee8",
+        "target_fingerprint": "fd27bc57037c9e1fcd5bc40f4e32716de0716496e16a778d4b648617c17c2782",
+        "parameters": [],
+        "checked_operations": 640,
+        "work": 98562,
+        "normal_form_fingerprint": "4cbf51ea787869c422e48bf5bf83f8b92de56eef8a0d07a5182279159d2c62ac",
+        "diagnostics": []
+      }
+    }
+  ]
+}

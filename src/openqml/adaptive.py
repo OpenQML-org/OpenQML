@@ -256,10 +256,14 @@ def plan_execution(
     )
     if terms * (1 + circuit.num_qubits) > max_work:
         raise ResourceError("Readout descriptions exceed max_work.")
-    budget, policy = _budget(max_memory_mb)
+    explicit_width = max_qubits is not None and circuit.num_qubits > max_qubits
+    budget, policy = (
+        (0.0, "not_queried_after_explicit_width_rejection")
+        if explicit_width and max_memory_mb is None
+        else _budget(max_memory_mb)
+    )
     candidates, selected, pauli, runner, mps_profile = [], None, None, None, None
     deferred_stabilizer = False
-    explicit_width = max_qubits is not None and circuit.num_qubits > max_qubits
     if explicit_width:
         candidates.append(
             ExecutionCandidate(method, False, "Source exceeds the explicit max_qubits limit.")

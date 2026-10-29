@@ -1,6 +1,7 @@
 import importlib
 from numbers import Real
 
+from .._dependencies import install_hint
 from ..errors import MissingDependencyError, ValidationError, conversion_error
 from ..parameters import Expression, Parameter, expression, node, real
 
@@ -9,9 +10,7 @@ def dependency(module, extra):
     try:
         return importlib.import_module(module)
     except ImportError as exc:
-        raise MissingDependencyError(
-            f"Cannot load {extra}. Run: python -m pip install openqml."
-        ) from exc
+        raise MissingDependencyError(f"Cannot load {extra}. Run: {install_hint(extra)}.") from exc
 
 
 def numeric(value, location="parameter"):

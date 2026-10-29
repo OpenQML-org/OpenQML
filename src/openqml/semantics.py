@@ -121,7 +121,15 @@ class EquivalenceProof:
             "requires_valid_IR_parameters": True,
             "coefficient_limit_bits": 4096,
             "named_gate_angles": "mathematical_pi",
-            "global_phase": "compared" if self.semantics != "projective_unitary" else "ignored",
+            "global_phase": (
+                "unobservable_for_quantum_instruments"
+                if self.semantics == "quantum_instrument"
+                else "ignored"
+                if self.semantics == "projective_unitary"
+                else "compared"
+            ),
+            "classical_initialization": "all_zero",
+            "classical_outputs": "all_final_bits",
             "target_execution_checked": False,
             "inconclusive_is_inequivalent": False,
             **asdict(self),
@@ -438,6 +446,7 @@ def prove_equivalence(
     max_operations=100_000,
     max_terms=100_000,
     max_work=2_000_000,
+    max_component_qubits=6,
 ):
     """Prove a supported identity for every binding; never promote a numeric check.
 
@@ -446,11 +455,17 @@ def prove_equivalence(
     syntax. Failure is inconclusive, including differently normalized but equal
     circuits. phase_sensitive=False additionally enables projective Clifford
     proofs, which intentionally do not certify a circuit's global phase.
+    Effectful programs use factored exact density kernels with initially zero
+    classical storage. All final bits and the full quantum output are retained.
+    Each connected component has an explicit width/term/work budget.
     """
     if type(phase_sensitive) is not bool:
         raise ValidationError("phase_sensitive must be a boolean.")
     for value, label in ((max_terms, "max_terms"), (max_work, "max_work")):
         integer(value, label, 1)
+    integer(max_component_qubits, "max_component_qubits", 1)
+    if max_component_qubits > 8:
+        raise ValidationError("max_component_qubits must be at most 8.")
     for circuit in (source, target):
         _check_circuit_limits(circuit, max_operations=max_operations)
         if circuit.num_qubits > min(integer(max_qubits, "max_qubits", 1), 8192):
@@ -475,6 +490,15 @@ def prove_equivalence(
         )
     elif source == target:
         method, normal = "structural_identity", (source.num_qubits, _fingerprint(source))
+    elif source.has_effects or target.has_effects:
+        from ._exact_instrument import instrument_form
+
+        normal, cost = instrument_form(
+            source, target, max_terms, max_work - work, max_component_qubits
+        )
+        work += cost
+        if normal is not None:
+            method = "factored_density_kernel"
     elif not source.has_effects and not target.has_effects:
         methods = [("phase_polynomial", _phase_form), ("algebraic_word", _word)]
         for name, builder in methods:
@@ -504,6 +528,16 @@ def prove_equivalence(
             work += cost
             if left is not None and left == right:
                 method, normal = "clifford_conjugation", left
+        if normal is None:
+            from ._exact_instrument import instrument_form, operator_form
+
+            builder = operator_form if phase_sensitive else instrument_form
+            normal, cost = builder(source, target, max_terms, max_work - work, max_component_qubits)
+            work += cost
+            if normal is not None:
+                method = (
+                    "factored_operator_kernel" if phase_sensitive else "factored_projective_kernel"
+                )
     if normal is None:
         notes.append(
             Diagnostic(
@@ -580,13 +614,22 @@ def semantic_coverage():
             "phase_polynomial",
             "algebraic_word",
             "projective_clifford_conjugation",
+            "factored_density_kernel",
+            "factored_operator_kernel",
+            "factored_projective_kernel",
         ],
         "rows": rows,
     }
 
 
 def _certify_plan(
-    plan, *, phase_sensitive=True, max_terms=100_000, max_work=2_000_000, source_options=None
+    plan,
+    *,
+    phase_sensitive=True,
+    max_terms=100_000,
+    max_work=2_000_000,
+    max_component_qubits=6,
+    source_options=None,
 ):
     from .compiler import rename_parameters
     from .conversion import plan_conversion
@@ -611,6 +654,7 @@ def _certify_plan(
         max_operations=plan.max_operations,
         max_terms=max_terms,
         max_work=max_work,
+        max_component_qubits=max_component_qubits,
     )
     proof.raise_for_errors()
     return CertifiedConversion(exported.value, proof, plan.source_format, plan.target_format)
@@ -623,6 +667,7 @@ def compile_verified(
     phase_sensitive=True,
     max_terms=100_000,
     max_work=2_000_000,
+    max_component_qubits=6,
     **conversion_options,
 ):
     """Export only when the imported artifact has an algebraic IR certificate.
@@ -638,4 +683,5 @@ def compile_verified(
         phase_sensitive=phase_sensitive,
         max_terms=max_terms,
         max_work=max_work,
+        max_component_qubits=max_component_qubits,
     )

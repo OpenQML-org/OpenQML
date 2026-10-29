@@ -1,10 +1,13 @@
 include README.md LICENSE
-recursive-include docs *.svg
+recursive-include docs *.svg *.md
 prune examples
 recursive-include tests *.py
 recursive-include benchmarks *.py
 include benchmarks/results/scientific_cpu.json
 include benchmarks/results/installation_linux.json
 include benchmarks/results/compiler_execution_cpu.json
+include benchmarks/results/core_installation_linux.json
+include benchmarks/results/semantic_kernels_cpu.json
+include benchmarks/results/research_methods_cpu.json
 recursive-include .github/workflows *.yml
 global-exclude *.py[cod] __pycache__ .DS_Store

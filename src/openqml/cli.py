@@ -36,6 +36,9 @@ def main(argv=None):
     )
     doctor.add_argument("--output", type=Path)
     doctor.add_argument("--force", action="store_true")
+    doctor.add_argument(
+        "--extra", action="append", default=[], help="Check a selected installation extra"
+    )
     python = commands.add_parser(
         "inspect-python", help="Inspect source without executing or translating it"
     )
@@ -103,9 +106,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "doctor":
-            if args.report or args.check_imports or args.sizes or args.output:
+            if args.report or args.check_imports or args.sizes or args.output or args.extra:
                 report = environment_report(
-                    check_imports=args.check_imports, include_sizes=args.sizes
+                    check_imports=args.check_imports, include_sizes=args.sizes, extras=args.extra
                 )
                 text = json.dumps(report, indent=2) + "\n"
                 if args.output:

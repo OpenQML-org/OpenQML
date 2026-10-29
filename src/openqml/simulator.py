@@ -81,7 +81,7 @@ class _TensorOps:
                 raise ValidationError(f"Unknown tensor backend: {backend!r}.")
         except ImportError as exc:
             raise MissingDependencyError(
-                f"Cannot load {backend}. Run: python -m pip install openqml."
+                f'Cannot load {backend}. Run: python -m pip install "openqml[{backend}]".'
             ) from exc
 
     def array(self, value, *, real_value=False):
