@@ -641,10 +641,7 @@ class ExpectationPlan:
             "cost_model": "static_scalar_work",
             "estimated_work": _program_work(self._coefficient_nodes)
             + len(self._nodes)
-            + sum(
-                len(batch.parameter_slots) * batch.estimated_work_per_lane
-                for batch in self.dense_batches
-            ),
+            + sum(batch.estimated_work for batch in self.dense_batches),
             "planning_work": self.planning_work,
             "working_bytes_per_row": self.working_bytes_per_row,
             "factor_count": self.factor_count,
@@ -695,7 +692,6 @@ class ExpectationPlan:
                 "reduce the batch or use batch_chunk_size."
             )
         factors = [None] * self.factor_count
-        context = like if like is not None else ops.array(0.0, real_value=True)
         coefficients = (
             _evaluate_program(self._coefficient_nodes, self._coefficient_roots, local, ops, shape)
             if self._coefficient_roots
@@ -705,7 +701,7 @@ class ExpectationPlan:
             if group.pauli_plan is not None:
                 for slot, factor in zip(group.program_indices, group.factor_indices, strict=True):
                     factors[factor] = coefficients[..., slot]
-        _evaluate_dense(self, coefficients, factors, ops, shape, context)
+        _evaluate_dense(self, coefficients, factors, ops, shape)
         return _evaluate_program(self._nodes, self._roots, local, ops, shape, factors)
 
     def verify(

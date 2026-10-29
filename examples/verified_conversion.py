@@ -2,7 +2,7 @@
 
 import argparse
 
-from openqml import Circuit, ClassicalCondition, Parameter, plan_conversion
+from openqml import Circuit, ClassicalCondition, ConversionError, Parameter, plan_conversion
 
 
 def main():
@@ -12,6 +12,7 @@ def main():
         choices=("json", "openqasm2", "openqasm3", "qiskit", "cirq", "pennylane", "all"),
         default="json",
     )
+    parser.add_argument("--mode", choices=("roundtrip", "native", "both"), default="roundtrip")
     args = parser.parse_args()
     targets = (
         ("json", "openqasm2", "openqasm3", "qiskit", "cirq", "pennylane")
@@ -32,12 +33,21 @@ def main():
                 codes = ", ".join(d.code for d in plan.diagnostics if d.severity == "error")
                 print(f"{target}: {name}: unsupported ({codes})")
                 continue
-            check = plan.verify(basis_chunk_size=3)
-            check.raise_for_errors()
-            print(
-                f"{target}: {check.semantics}: checked {check.checked_inputs} inputs, "
-                f"{check.checked_entries} entries"
-            )
+            for mode in ("roundtrip", "native") if args.mode == "both" else (args.mode,):
+                try:
+                    check = plan.verify(basis_chunk_size=3, mode=mode)
+                except ConversionError as exc:
+                    if mode != "native" or any(
+                        d.code != "NATIVE_VERIFICATION_UNSUPPORTED" for d in exc.diagnostics
+                    ):
+                        raise
+                    print(f"{target}: {name}: native scope unsupported")
+                    continue
+                check.raise_for_errors()
+                print(
+                    f"{target}: {mode}: {check.semantics}: checked {check.checked_inputs} inputs, "
+                    f"{check.checked_entries} entries"
+                )
 
 
 if __name__ == "__main__":

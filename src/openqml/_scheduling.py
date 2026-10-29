@@ -11,6 +11,8 @@ import json
 import math
 from dataclasses import dataclass, field, replace
 
+import numpy as np
+
 from .ir import Circuit
 from .observables import PauliString
 from .parameters import Parameter
@@ -19,10 +21,41 @@ from .parameters import Parameter
 def _matrix_key(matrix):
     if matrix is None:
         return None
-    # Normalize signed zero because it compares equal in exact Python keys.
-    return tuple(
-        tuple(((z.real or 0.0).hex(), (z.imag or 0.0).hex()) for z in row) for row in matrix
-    )
+    # Compare complete canonical payloads, never just their digest. A compact
+    # binary snapshot avoids millions of per-entry Python strings for matrices.
+    values = np.array(matrix, dtype="<c16", copy=True, order="C")
+    parts = values.view("<f8")
+    parts[parts == 0] = 0.0
+    return values.tobytes()
+
+
+def _template_id(key):
+    digest = hashlib.sha256(b"openqml.dense_template\0")
+    digest.update(str(key[0]).encode() + b"\0")
+    for name, qubits, params, matrix in key[1]:
+        header = json.dumps((name, qubits, params), separators=(",", ":")).encode()
+        digest.update(len(header).to_bytes(8, "big"))
+        digest.update(header)
+        digest.update(b"\0" if matrix is None else b"\1" + len(matrix).to_bytes(8, "big"))
+        if matrix is not None:
+            digest.update(matrix)
+    return digest.hexdigest()
+
+
+@dataclass(frozen=True)
+class ReadoutRoute:
+    """One local Pauli readout, only the lanes requesting it, and source factors."""
+
+    readout_index: int
+    lanes: tuple[int, ...]
+    factor_indices: tuple[tuple[int, ...], ...]
+
+    def to_dict(self):
+        return {
+            "readout_index": self.readout_index,
+            "lanes": list(self.lanes),
+            "factor_indices": [list(v) for v in self.factor_indices],
+        }
 
 
 @dataclass(frozen=True, eq=False)
@@ -46,6 +79,15 @@ class ExecutionBatch:
     factor_maps: tuple[tuple[tuple[int, int], ...], ...]
     working_bytes_per_lane: int
     estimated_work_per_lane: int
+    readout_routes: tuple[ReadoutRoute, ...] = ()
+
+    @property
+    def estimated_work(self):
+        gate_work = len(self.parameter_slots) * sum(
+            1 << len(op.qubits) for op in self.circuit.operations
+        )
+        queries = sum(len(route.lanes) for route in self.readout_routes)
+        return 2 * (1 << self.circuit.num_qubits) * (gate_work + queries)
 
     def to_dict(self):
         return {
@@ -58,6 +100,10 @@ class ExecutionBatch:
             "factor_maps": [[list(p) for p in lane] for lane in self.factor_maps],
             "working_bytes_per_lane": self.working_bytes_per_lane,
             "estimated_work_per_lane": self.estimated_work_per_lane,
+            "estimated_work": self.estimated_work,
+            "readout_routes": [r.to_dict() for r in self.readout_routes],
+            "requested_readout_pairs": sum(len(r.lanes) for r in self.readout_routes),
+            "unrouted_readout_pairs": len(self.parameter_slots) * len(self.observables),
         }
 
 
@@ -109,31 +155,42 @@ def _schedule_dense(groups, charge):
     for key, template in templates.items():
         readouts = tuple(PauliString(p) for p in template["readouts"])
         circuit, lanes = template["circuit"], template["lanes"]
-        charge(len(lanes) * (len(readouts) + len(template["names"])))
+        charge(len(lanes) * len(template["names"]) + sum(len(v[1]) for v in lanes.values()))
+        routes = {}
+        for lane, (_, destinations) in enumerate(lanes.values()):
+            for factor, readout in destinations:
+                routes.setdefault(readout, {}).setdefault(lane, []).append(factor)
+        routes = tuple(
+            ReadoutRoute(readout, tuple(values), tuple(tuple(v) for v in values.values()))
+            for readout, values in routes.items()
+        )
         work = (
             2
             * (1 << circuit.num_qubits)
             * (len(readouts) + sum(1 << len(op.qubits) for op in circuit.operations))
         )
-        digest = hashlib.sha256(json.dumps(key, separators=(",", ":")).encode()).hexdigest()
         batches.append(
             ExecutionBatch(
-                digest,
+                _template_id(key),
                 circuit,
                 template["names"],
                 readouts,
                 tuple(lanes),
                 tuple(tuple(v[0]) for v in lanes.values()),
                 tuple(tuple(v[1]) for v in lanes.values()),
-                template["bytes"] + 16 * len(readouts) + 8 * len(template["names"]),
+                template["bytes"]
+                + 32 * (1 << circuit.num_qubits)
+                + 16 * len(readouts)
+                + 8 * len(template["names"]),
                 work,
+                routes,
             )
         )
     return tuple(batches)
 
 
-def _evaluate_dense(plan, coefficients, factors, ops, shape, context):
-    from .simulator import expectations
+def _evaluate_dense(plan, coefficients, factors, ops, shape):
+    from .simulator import _evolve_unitary, _expectation_from_state, _initial_state
 
     rows = max(1, math.prod(shape))
     available = plan._memory_bytes - plan._retained_bytes_per_row * rows
@@ -142,6 +199,14 @@ def _evaluate_dense(plan, coefficients, factors, ops, shape, context):
             plan.max_dense_batch,
             max(1, int(available // (batch.working_bytes_per_lane * rows))),
         )
+        # Bucket static destinations once, so small runtime packs do not scan
+        # every unrelated readout route. No bindings or tensors enter metadata.
+        packed = [{} for _ in range(0, len(batch.parameter_slots), width)]
+        for route in batch.readout_routes:
+            for lane, destinations in zip(route.lanes, route.factor_indices, strict=True):
+                packed[lane // width].setdefault(route.readout_index, []).append(
+                    (lane % width, destinations)
+                )
         for start in range(0, len(batch.parameter_slots), width):
             lanes = batch.parameter_slots[start : start + width]
             # Keep a singleton on the ordinary path to avoid unnecessary stacks.
@@ -161,30 +226,36 @@ def _evaluate_dense(plan, coefficients, factors, ops, shape, context):
                         else ops.xp.stack(arrays, axis=0)
                     )
                 local_shape = (len(lanes),) + shape
-            values = expectations(
-                batch.circuit,
-                batch.observables,
+            # Prepared templates have zero phase and validated local operands.
+            # The plan preflights rows and every pack against its working budget.
+            state = _evolve_unitary(
+                _initial_state(batch.circuit.num_qubits, local_shape, ops),
+                batch.circuit.operations,
                 bindings,
-                backend=ops.backend,
-                like=context,
-                batch_shape=local_shape,
-                max_qubits=plan.max_dense_qubits,
-                max_memory_mb=plan.max_memory_mb,
+                batch.circuit.num_qubits,
+                ops,
+                None,
             )
-            copy = any(
-                len({r for _, r in destinations}) < len(batch.observables)
-                for destinations in batch.factor_maps[start : start + len(lanes)]
-            )
-            for offset in range(len(lanes)):
-                local = values if len(lanes) == 1 else values[offset]
-                destinations = batch.factor_maps[start + offset]
-                selected = {}
-                for factor, readout in destinations:
-                    if readout not in selected:
-                        value = local[..., readout]
-                        # A sparse destination must not retain the entire union
-                        # of lane/readout arrays through an eager slice view.
-                        if copy:
-                            value = value.clone() if ops.backend == "torch" else ops.xp.copy(value)
-                        selected[readout] = value
-                    factors[factor] = selected[readout]
+            for readout, active in packed[start // width].items():
+                selected = state
+                single = len(active) == 1
+                if single and len(lanes) > 1:
+                    selected = state[active[0][0]]
+                elif len(active) < len(lanes):
+                    indices = tuple(lane for lane, _ in active)
+                    selected = (
+                        ops.xp.index_select(
+                            state, 0, ops.xp.tensor(indices, dtype=ops.xp.long, device=ops.device)
+                        )
+                        if ops.backend == "torch"
+                        else ops.xp.take(state, ops.xp.asarray(indices), axis=0)
+                    )
+                values = _expectation_from_state(
+                    selected, batch.observables[readout], batch.circuit.num_qubits, ops
+                )
+                for offset, (_, destinations) in enumerate(active):
+                    value = values if single else values[offset]
+                    for factor in destinations:
+                        factors[factor] = value
+                del selected, values
+            del state, bindings

@@ -260,6 +260,19 @@ def _evolve_unitary(state, operations, bindings, num_qubits, ops, checkpoint_int
     return state
 
 
+def _initial_state(num_qubits, shape, ops):
+    """Allocate a zero input after the caller has checked its working budget."""
+    if ops.backend == "torch":
+        state = ops.xp.zeros(2**num_qubits, dtype=ops.dtype, device=ops.device)
+        state[0] = 1
+    elif ops.backend == "jax":
+        state = ops.xp.zeros(2**num_qubits, dtype=ops.dtype).at[0].set(1)
+    else:
+        state = np.zeros(2**num_qubits, dtype=complex)
+        state[0] = 1
+    return ops.xp.broadcast_to(state, shape + (2**num_qubits,))
+
+
 def statevector(
     circuit: Circuit,
     bindings: Mapping[str, Any] | None = None,
@@ -318,15 +331,7 @@ def statevector(
     except ValueError as exc:
         raise ValidationError("Parameter batch shapes cannot be broadcast together.") from exc
     _resource_check(circuit, max_qubits, max_memory_mb, math.prod(shape))
-    if backend == "torch":
-        state = ops.xp.zeros(2**circuit.num_qubits, dtype=ops.dtype, device=ops.device)
-        state[0] = 1
-    elif backend == "jax":
-        state = ops.xp.zeros(2**circuit.num_qubits, dtype=ops.dtype).at[0].set(1)
-    else:
-        state = np.zeros(2**circuit.num_qubits, dtype=complex)
-        state[0] = 1
-    state = ops.xp.broadcast_to(state, shape + (2**circuit.num_qubits,))
+    state = _initial_state(circuit.num_qubits, shape, ops)
     state = _evolve_unitary(
         state, circuit.operations, bindings, circuit.num_qubits, ops, checkpoint_interval
     )
