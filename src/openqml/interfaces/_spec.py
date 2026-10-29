@@ -166,9 +166,10 @@ def prepare_execution(
     from ..ir import integer
     from ..pauli import PauliPlan
 
-    maximum = integer(limits["max_qubits"], "max_qubits", 1)
-    if circuit.num_qubits > maximum:
-        raise ResourceError("Circuit width exceeds max_qubits; set an explicit source limit.")
+    if limits["max_qubits"] is not None:
+        maximum = integer(limits["max_qubits"], "max_qubits", 1)
+        if circuit.num_qubits > maximum:
+            raise ResourceError("Circuit width exceeds the explicit max_qubits limit.")
     settings = {} if options is None else dict(options)
     if set(settings) - {"max_terms", "max_nodes", "max_work", "max_operations"}:
         raise ValidationError("Unknown Pauli compilation option.")

@@ -11,14 +11,16 @@ from .planning import _record_plan
 
 
 def _resource_check(circuit, max_qubits, max_memory_mb, batch_size=1, branches=1):
-    integer(max_qubits, "max_qubits", 1)
+    if max_qubits is not None:
+        integer(max_qubits, "max_qubits", 1)
     budget = real(max_memory_mb)
     if budget <= 0:
         raise ValidationError("max_memory_mb must be positive.")
-    capacity = math.floor(
-        (math.log2(budget) + 20 - 6 - math.log2(max(1, batch_size)) - math.log2(branches)) / 2
-    )
-    if circuit.num_qubits > min(max_qubits, capacity):
+    numerator, denominator = budget.as_integer_ratio()
+    capacity = ((numerator << 20) // denominator) >> (2 * circuit.num_qubits + 6)
+    if max(1, batch_size) * branches > capacity or (
+        max_qubits is not None and circuit.num_qubits > max_qubits
+    ):
         raise ResourceError(
             "Density simulation exceeds the qubit/working-memory budget (4**n per branch)."
         )
@@ -28,11 +30,11 @@ def _planning_limit(circuit, max_qubits, max_memory_mb, batch_size=1, max_branch
     """Bound metadata enumeration by memory before allocating branch-key sets."""
     integer(max_branches, "max_branches", 1)
     _resource_check(circuit, max_qubits, max_memory_mb, batch_size)
-    log_capacity = math.log2(real(max_memory_mb)) + 14 - 2 * circuit.num_qubits
-    log_capacity -= math.log2(max(1, batch_size))
-    if math.log2(max_branches) <= log_capacity:
-        return max_branches
-    return max(1, int(2**log_capacity))
+    numerator, denominator = real(max_memory_mb).as_integer_ratio()
+    capacity = ((numerator << 20) // (denominator * 64 * max(1, batch_size))) >> (
+        2 * circuit.num_qubits
+    )
+    return max(1, min(max_branches, capacity))
 
 
 def _probability(value, ops):

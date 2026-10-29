@@ -52,7 +52,13 @@ class ResourceEstimate:
 
 
 def estimate_resources(
-    circuit, *, batch_size=1, max_qubits=20, max_memory_mb=256, max_operations=100_000, max_depth=64
+    circuit,
+    *,
+    batch_size=1,
+    max_qubits=None,
+    max_memory_mb=256,
+    max_operations=100_000,
+    max_depth=64,
 ):
     """Estimate dense storage without constructing a state or declaring solver feasibility.
 

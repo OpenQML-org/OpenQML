@@ -60,7 +60,7 @@ class BackendCapabilities:
 
 @dataclass(frozen=True)
 class ExecutionOptions:
-    max_qubits: int | None = 20
+    max_qubits: int | None = None
     max_memory_mb: float = 256
     seed: int | None = None
     max_branches: int = 256
@@ -69,7 +69,7 @@ class ExecutionOptions:
     def for_statevector(cls, max_memory_mb, *, batch_size=1, max_qubits=None, seed=None):
         """Derive an explicit width cap from four complex128 state buffers per row.
 
-        Defaults stay fixed and reproducible. This opt-in policy sizes a dense
+        This policy sizes a dense
         unitary workload; density branches, local matrices and autodiff tapes
         have separate costs. Every execution still checks its actual resources.
         """
@@ -198,7 +198,19 @@ class _LocalBackend:
 
 
 _BUILTIN_NAMES = frozenset(
-    {"numpy", "qiskit", "pennylane", "cirq", "aer", "aer-mps", "aer-density", "cirq-density"}
+    {
+        "numpy",
+        "qiskit",
+        "pennylane",
+        "cirq",
+        "aer",
+        "aer-mps",
+        "aer-density",
+        "aer-stabilizer",
+        "cirq-density",
+        "auto",
+        "mps",
+    }
 )
 _REGISTRY = {name: _LocalBackend(name) for name in ("numpy", "qiskit", "pennylane", "cirq")}
 _REGISTRY["numpy"] = _LocalBackend(
@@ -280,7 +292,20 @@ def get_backend(backend: str | StatevectorBackend) -> StatevectorBackend:
     if not isinstance(backend, str):
         return _validate_backend(backend)
     with _LOCK:
-        if backend not in _REGISTRY and backend in {"aer", "aer-mps", "aer-density"}:
+        if backend not in _REGISTRY and backend == "mps":
+            from .mps import MPSBackend
+
+            _REGISTRY[backend] = MPSBackend()
+        elif backend not in _REGISTRY and backend == "auto":
+            from .adaptive import AdaptiveBackend
+
+            _REGISTRY[backend] = AdaptiveBackend()
+        elif backend not in _REGISTRY and backend in {
+            "aer",
+            "aer-mps",
+            "aer-density",
+            "aer-stabilizer",
+        }:
             from .aer import AerBackend
 
             _REGISTRY[backend] = AerBackend(
@@ -290,6 +315,8 @@ def get_backend(backend: str | StatevectorBackend) -> StatevectorBackend:
                     if backend == "aer-mps"
                     else "density_matrix"
                     if backend == "aer-density"
+                    else "stabilizer"
+                    if backend == "aer-stabilizer"
                     else "statevector"
                 ),
             )

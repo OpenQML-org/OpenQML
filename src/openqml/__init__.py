@@ -7,6 +7,7 @@ Install once with ``python -m pip install openqml`` and import as
 from importlib import import_module as _import_module
 
 from ._scheduling import ExecutionBatch, ReadoutRoute
+from .adaptive import AdaptivePlan, ExecutionCandidate, plan_execution
 from .adjoint import AdjointPlan, adjoint_jvp, adjoint_vjp
 from .aer import AerBackend
 from .backends import (
@@ -48,6 +49,7 @@ from .inspection import PythonSourceReport, inspect_python
 from .ir import Circuit, CircuitBuilder, ClassicalCondition, Operation
 from .layers import LayerCheckpoint, LayerSpec
 from .measurement import EstimateResult, MeasurementPlan, ShotBackend, estimate, measurement_plan
+from .mps import MPSBackend
 from .observables import Hamiltonian, PauliString, z_observables
 from .optimization import OptimizationResult, optimize
 from .parameters import Expression, Parameter
@@ -57,6 +59,13 @@ from .program import QuantumProgram, as_circuit
 from .providers import CirqDensityBackend, QiskitEstimatorBackend, QiskitSamplerBackend
 from .readout import ReadoutPlan, plan_readout
 from .resources import ResourceEstimate, estimate_resources
+from .semantics import (
+    CertifiedConversion,
+    EquivalenceProof,
+    compile_verified,
+    prove_equivalence,
+    semantic_coverage,
+)
 from .simulator import ExecutionResult, execute, expectation, expectations, sample, statevector
 from .templates import data_reuploading, hardware_efficient
 from .verification import ConversionCheck
@@ -93,9 +102,18 @@ def __dir__():
     return sorted(set(globals()) | _LAZY_MODULES.keys())
 
 
-__version__ = "0.3.0a13"
+__version__ = "0.3.0a14"
 
 __all__ = [
+    "AdaptivePlan",
+    "MPSBackend",
+    "ExecutionCandidate",
+    "plan_execution",
+    "CertifiedConversion",
+    "EquivalenceProof",
+    "compile_verified",
+    "prove_equivalence",
+    "semantic_coverage",
     "environment_report",
     "PythonSourceReport",
     "inspect_python",

@@ -371,6 +371,25 @@ class ConversionPlan:
             mode=mode,
         )
 
+    def certify(
+        self, *, phase_sensitive=True, max_terms=100_000, max_work=2_000_000, source_options=None
+    ):
+        """Export with an exact algebraic certificate or raise if unproved.
+
+        This checks the adapter's imported artifact semantics. Native runtime
+        differential verification remains a separate ``verify(mode='native')``
+        check at selected bindings.
+        """
+        from .semantics import _certify_plan
+
+        return _certify_plan(
+            self,
+            phase_sensitive=phase_sensitive,
+            max_terms=max_terms,
+            max_work=max_work,
+            source_options=source_options,
+        )
+
     def export(self):
         """Export exactly this plan, refusing every reported incompatibility."""
         self.raise_for_errors()

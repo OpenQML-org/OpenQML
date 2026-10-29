@@ -220,7 +220,7 @@ def test_opt_in_statevector_policy_uses_memory_budget_without_relaxing_it(
     options = oq.ExecutionOptions.for_statevector(budget, batch_size=batch, max_qubits=cap, seed=7)
     assert options.max_qubits == expected and options.max_memory_mb == budget and options.seed == 7
     assert 4 * 16 * batch * 2**expected <= budget * 2**20
-    assert oq.ExecutionOptions().max_qubits == 20 and oq.ExecutionOptions().max_memory_mb == 256
+    assert oq.ExecutionOptions().max_qubits is None and oq.ExecutionOptions().max_memory_mb == 256
 
 
 @pytest.mark.parametrize(
