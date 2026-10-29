@@ -5,6 +5,7 @@ from dataclasses import FrozenInstanceError
 import numpy as np
 import pytest
 
+import openqml as oq
 from openqml import (
     AdjointPlan,
     Circuit,
@@ -298,7 +299,7 @@ def test_jax_compiled_calls_use_new_bindings_with_one_prepared_plan(monkeypatch)
 
     from openqml.interfaces.jax import QuantumLayer
 
-    with jax.enable_x64():
+    with oq.jax.enable_x64():
         x, w = Parameter("x"), Parameter("w")
         layer = QuantumLayer(
             Circuit(1).ry(x * w + w**2, 0),

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 try:
+    import flax as _flax
     import flax.linen as nn
     import jax.numpy as jnp
 except ImportError as exc:
     from ..errors import MissingDependencyError
 
-    raise MissingDependencyError("Install openqml[flax] for Linen modules.") from exc
+    raise MissingDependencyError("Cannot load Flax. Run: python -m pip install openqml.") from exc
 
 from ._spec import LayerSpecMixin
 from .jax import QuantumLayer as FunctionalLayer
@@ -152,3 +153,12 @@ class QuantumAdapter(nn.Module):
             name="projection",
         )(quantum)
         return inputs + delta
+
+
+def __getattr__(name):
+    """Expose native Flax APIs alongside the quantum Linen modules."""
+    return getattr(_flax, name)
+
+
+def __dir__():
+    return sorted(set(globals()) | set(dir(_flax)))

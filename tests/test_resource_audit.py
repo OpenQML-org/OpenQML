@@ -295,7 +295,7 @@ def test_precision_worker_scope_restores_prior_state_even_on_error(previous):
             raise RuntimeError("worker failed")
         return jax.config.x64_enabled
 
-    with jax.enable_x64(previous):
+    with oq.jax.enable_x64(previous):
         assert worker(SimpleNamespace(interface="jax")) is True
         assert jax.config.x64_enabled is previous
         with pytest.raises(RuntimeError):

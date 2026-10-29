@@ -17,7 +17,6 @@ from .errors import (
     ValidationError,
 )
 from .ir import UNITARY_GATES, Circuit, integer
-from .observables import Hamiltonian, PauliString
 from .parameters import real
 
 _I = np.eye(2, dtype=complex)
@@ -82,7 +81,7 @@ class _TensorOps:
                 raise ValidationError(f"Unknown tensor backend: {backend!r}.")
         except ImportError as exc:
             raise MissingDependencyError(
-                f"Install openqml[{backend}] to use this backend."
+                f"Cannot load {backend}. Run: python -m pip install openqml."
             ) from exc
 
     def array(self, value, *, real_value=False):
@@ -385,7 +384,7 @@ def statevector(
 
 
 @lru_cache(maxsize=32)
-def _pauli_plan(paulis):
+def _cached_pauli_plan(paulis):
     size = 2 ** len(paulis)
     indices = np.arange(size, dtype=np.int64)
     flip = sum(1 << (len(paulis) - q - 1) for q, p in enumerate(paulis) if p in "XY")
@@ -395,6 +394,12 @@ def _pauli_plan(paulis):
         if p in "YZ":
             phase *= 1 - 2 * ((source >> (len(paulis) - q - 1)) & 1)
     return source, phase
+
+
+def _pauli_plan(paulis):
+    # At most three MiB of NumPy payloads, independent of simulation width.
+    factory = _cached_pauli_plan if len(paulis) <= 12 else _cached_pauli_plan.__wrapped__
+    return factory(paulis)
 
 
 @lru_cache(maxsize=32)
@@ -412,41 +417,71 @@ def _torch_pauli_plan(paulis, device, dtype):
     # wrappers escape into a global device cache (including cold-cache Hessians).
     # Unknown PyTorch internals fall back to uncached tensor construction.
     active = getattr(torch._C, "_are_functorch_transforms_active", None)
-    if active is None or active():
+    if len(paulis) > 12 or active is None or active():
         return _torch_cached_pauli_plan.__wrapped__(paulis, device, dtype)
     return _torch_cached_pauli_plan(paulis, device, dtype)
 
 
+def _numpy_pauli_expectation(state, paulis):
+    """Contract a wide word through approximately one MiB of transient tiles."""
+    width, size = len(paulis), state.shape[-1]
+    rows = max(1, math.prod(state.shape[:-1]))
+    tile = max(1, min(size, (1 << 20) // (64 * rows + 48)))
+    flip = sum(1 << (width - q - 1) for q, p in enumerate(paulis) if p in "XY")
+    sign = sum(1 << (width - q - 1) for q, p in enumerate(paulis) if p in "YZ")
+    result = np.zeros(state.shape[:-1], dtype=state.real.dtype)
+    for start in range(0, size, tile):
+        end = min(size, start + tile)
+        source = np.arange(start, end, dtype=np.int64) ^ flip
+        parity = source & sign
+        for shift in (32, 16, 8, 4, 2, 1):
+            parity ^= parity >> shift
+        phase = (1 - 2 * (parity & 1)) * (1j ** paulis.count("Y"))
+        product = np.conj(state[..., start:end]) * state[..., source]
+        product *= phase
+        result += np.real(product.sum(axis=-1))
+    return result
+
+
+def _pauli_expectation(state, paulis, num_qubits, ops):
+    if ops.backend == "numpy" and num_qubits > 12:
+        return _numpy_pauli_expectation(state, paulis)
+    capture = ops.backend == "torch" and getattr(ops.xp.compiler, "is_compiling", lambda: False)()
+    if ops.backend != "numpy" and (capture or num_qubits > 12):
+        kwargs = {"device": ops.device} if ops.backend == "torch" else {}
+        index = ops.xp.arange(state.shape[-1], **kwargs)
+        flip = sum(1 << (num_qubits - q - 1) for q, p in enumerate(paulis) if p in "XY")
+        index = index ^ flip
+        phase = ops.xp.ones(state.shape[-1], dtype=ops.dtype, **kwargs) * (1j ** paulis.count("Y"))
+        for q, p in enumerate(paulis):
+            if p in "YZ":
+                phase = phase * (1 - 2 * ((index >> (num_qubits - q - 1)) & 1))
+    elif ops.backend == "torch":
+        index, phase = _torch_pauli_plan(paulis, ops.device, ops.dtype)
+    else:
+        index, phase = _pauli_plan(paulis)
+        index, phase = ops.xp.asarray(index), ops.array(phase)
+    transformed = (
+        ops.xp.index_select(state, -1, index) if ops.backend == "torch" else state[..., index]
+    ) * phase
+    return ops.real((ops.conj(state) * transformed).sum(axis=-1))
+
+
+def _expectations_from_state(state, observables, num_qubits, ops):
+    from ._readouts import _evaluate_readouts
+
+    return _evaluate_readouts(
+        observables,
+        num_qubits,
+        ops,
+        state[..., 0],
+        lambda: state.real * state.real + state.imag * state.imag,
+        lambda word: _pauli_expectation(state, word, num_qubits, ops),
+    )
+
+
 def _expectation_from_state(state, observable, num_qubits, ops):
-    terms = observable.terms if isinstance(observable, Hamiltonian) else (observable,)
-    total = ops.real(state[..., 0]) * 0
-    for term in terms:
-        if not isinstance(term, PauliString) or len(term.paulis) != num_qubits:
-            raise ValidationError("Observable width must equal the circuit's qubit count.")
-        if ops.backend == "torch":
-            if getattr(ops.xp.compiler, "is_compiling", lambda: False)():
-                # Keep graph capture entirely in tensor operations. Eager mode
-                # still reuses cached device plans without recomputing indices.
-                size = state.shape[-1]
-                index = ops.xp.arange(size, device=ops.device)
-                flip = sum(
-                    1 << (num_qubits - q - 1) for q, p in enumerate(term.paulis) if p in "XY"
-                )
-                index = index ^ flip
-                phase = ops.xp.ones(size, dtype=ops.dtype, device=ops.device) * (
-                    1j ** term.paulis.count("Y")
-                )
-                for q, p in enumerate(term.paulis):
-                    if p in "YZ":
-                        phase = phase * (1 - 2 * ((index >> (num_qubits - q - 1)) & 1))
-            else:
-                index, phase = _torch_pauli_plan(term.paulis, ops.device, ops.dtype)
-            transformed = ops.xp.index_select(state, -1, index) * phase
-        else:
-            index, phase = _pauli_plan(term.paulis)
-            transformed = state[..., ops.xp.asarray(index)] * ops.array(phase)
-        total = total + term.coefficient * ops.real((ops.conj(state) * transformed).sum(axis=-1))
-    return total
+    return _expectations_from_state(state, (observable,), num_qubits, ops)[..., 0]
 
 
 def expectation(
@@ -528,18 +563,13 @@ def expectations(
     if not observables:
         raise ValidationError("At least one observable is required.")
     if circuit.has_effects and isinstance(backend, str) and backend in {"numpy", "torch", "jax"}:
-        from .density import density_matrix, expectation_from_density
+        from .density import _expectations_from_density, density_matrix
 
         rho = density_matrix(
             circuit, bindings, backend=backend, like=like, max_branches=max_branches, **limits
         )
         ops = _TensorOps(backend, rho.real if like is None else like)
-        values = [expectation_from_density(rho, ob, circuit.num_qubits, ops) for ob in observables]
-        return (
-            ops.xp.stack(tuple(values), dim=-1)
-            if backend == "torch"
-            else ops.xp.stack(tuple(values), axis=-1)
-        )
+        return _expectations_from_density(rho, observables, circuit.num_qubits, ops)
     if not (isinstance(backend, str) and backend in {"numpy", "torch", "jax"}):
         from .backends import get_backend
 
@@ -558,29 +588,18 @@ def expectations(
         if circuit.has_effects or (
             device.capabilities.density_matrix and not callable(getattr(device, "run", None))
         ):
-            from .density import density_matrix, expectation_from_density
+            from .density import _expectations_from_density, density_matrix
 
             rho = density_matrix(
                 circuit, bindings, backend=backend, max_branches=max_branches, **limits
             )
-            return np.asarray(
-                [
-                    expectation_from_density(rho, ob, circuit.num_qubits, _TensorOps())
-                    for ob in observables
-                ]
-            )
+            return _expectations_from_density(rho, observables, circuit.num_qubits, _TensorOps())
     state = statevector(circuit, bindings, backend=backend, like=like, **limits)
     tensor_backend = (
         backend if isinstance(backend, str) and backend in {"torch", "jax"} else "numpy"
     )
     ops = _TensorOps(tensor_backend, state.real if like is None else like)
-    values = [_expectation_from_state(state, ob, circuit.num_qubits, ops) for ob in observables]
-    # Real stacking preserves the layer output dtype.
-    return (
-        ops.xp.stack(tuple(values), dim=-1)
-        if ops.backend == "torch"
-        else ops.xp.stack(tuple(values), axis=-1)
-    )
+    return _expectations_from_state(state, observables, circuit.num_qubits, ops)
 
 
 @dataclass(frozen=True)

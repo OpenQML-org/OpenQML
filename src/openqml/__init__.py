@@ -1,7 +1,7 @@
 """Hybrid quantum learning and explicit circuit interoperability.
 
-Import once as ``import openqml as oq``. Optional integrations are available
-through ``oq.torch``, ``oq.jax`` and ``oq.flax`` and load only when accessed.
+Install once with ``python -m pip install openqml`` and import as
+``import openqml as oq``. All integrations load only when accessed.
 """
 
 from importlib import import_module as _import_module
@@ -58,22 +58,39 @@ from .simulator import ExecutionResult, execute, expectation, expectations, samp
 from .templates import data_reuploading, hardware_efficient
 from .verification import ConversionCheck
 
-_INTERFACE_NAMES = frozenset({"torch", "jax", "flax"})
+_LAZY_MODULES = {
+    "torch": ".interfaces.torch",
+    "jax": ".interfaces.jax",
+    "flax": ".interfaces.flax",
+    "numpy": "numpy",
+    "optax": "optax",
+    "qiskit": "qiskit",
+    "pennylane": "pennylane",
+    "cirq": "cirq",
+    "qiskit_aer": "qiskit_aer",
+    "openqasm3": "openqasm3",
+    "sympy": "sympy",
+}
 
 
 def __getattr__(name):
-    if name in _INTERFACE_NAMES:
-        module = _import_module(f".interfaces.{name}", __name__)
+    if name in _LAZY_MODULES:
+        try:
+            module = _import_module(_LAZY_MODULES[name], __name__)
+        except ImportError as exc:
+            raise MissingDependencyError(
+                f"Cannot load {name}. Run: python -m pip install openqml."
+            ) from exc
         globals()[name] = module
         return module
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def __dir__():
-    return sorted(set(globals()) | _INTERFACE_NAMES)
+    return sorted(set(globals()) | _LAZY_MODULES.keys())
 
 
-__version__ = "0.3.0a11"
+__version__ = "0.3.0a12"
 
 __all__ = [
     "ReadoutRoute",

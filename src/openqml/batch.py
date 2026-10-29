@@ -227,7 +227,7 @@ def expectations_batch(
     max_branches=256,
 ):
     from ._validation import invoke, validate_expectations
-    from .simulator import _expectation_from_state, _TensorOps
+    from .simulator import _expectations_from_state, _TensorOps
 
     options = ExecutionOptions(max_qubits, max_memory_mb, seed, max_branches)
     values = _bound(circuits, bindings)
@@ -266,19 +266,13 @@ def expectations_batch(
         elif any(c.has_effects for c in values) or (
             device.capabilities.density_matrix and not callable(getattr(device, "run", None))
         ):
-            from .density import expectation_from_density
+            from .density import _expectations_from_density
 
             rows, ops = [], _TensorOps()
             for group, states in _dense_densities(values, device, options):
                 stacked = np.stack(states)
                 rows.extend(
-                    np.stack(
-                        [
-                            expectation_from_density(stacked, ob, group[0].num_qubits, ops)
-                            for ob in observables
-                        ],
-                        axis=-1,
-                    )
+                    _expectations_from_density(stacked, observables, group[0].num_qubits, ops)
                 )
             output = np.asarray(rows)
         else:
@@ -287,21 +281,12 @@ def expectations_batch(
                 if len({c.num_qubits for c in group}) == 1:
                     stacked = np.stack(states)
                     rows.extend(
-                        np.stack(
-                            [
-                                _expectation_from_state(stacked, ob, group[0].num_qubits, ops)
-                                for ob in observables
-                            ],
-                            axis=-1,
-                        )
+                        _expectations_from_state(stacked, observables, group[0].num_qubits, ops)
                     )
                 else:
                     rows.extend(
                         [
-                            [
-                                _expectation_from_state(state, ob, c.num_qubits, ops)
-                                for ob in observables
-                            ]
+                            _expectations_from_state(state, observables, c.num_qubits, ops)
                             for c, state in zip(group, states, strict=True)
                         ]
                     )

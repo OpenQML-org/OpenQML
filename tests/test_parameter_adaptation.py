@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+import openqml as oq
 from openqml import (
     Circuit,
     ClassicalCondition,
@@ -344,7 +345,7 @@ def test_jax_reparameterized_broadcasts_jit_grad_and_native_curvature(backend):
 
     from openqml.interfaces.jax import QuantumLayer
 
-    with jax.enable_x64():
+    with oq.jax.enable_x64():
         layer = QuantumLayer.from_spec(
             adapted_spec(),
             backend=backend,
@@ -432,7 +433,7 @@ def test_partially_and_fully_frozen_checkpoints_transfer_into_jax_and_flax():
     from openqml.interfaces.flax import QuantumLayer as FlaxLayer
     from openqml.interfaces.jax import QuantumLayer
 
-    with jax.enable_x64():
+    with oq.jax.enable_x64():
         source = LayerCheckpoint(source_spec(), [0.2, -0.3], "float64")
         for checkpoint in (source.freeze(["alpha"]), source.freeze()):
             checkpoint = LayerCheckpoint.from_json(checkpoint.to_json())
