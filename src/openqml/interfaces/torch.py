@@ -17,6 +17,7 @@ from ._spec import (
     broadcast_batch_shape,
     prepare_adjoint,
     prepare_layer,
+    prepare_pauli,
     prepare_readout,
     resolve_gradient_method,
 )
@@ -31,6 +32,8 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
     NumPy unitary simulation also supports explicit first-order adjoint gradients.
     reduce_readout=True compacts the declared unitary readout cone; readout_plan
     records provenance, while to_spec()/checkpoint() retain the full source.
+    execution_method='pauli' compiles exact real expectation arithmetic with
+    pauli_options growth limits; native autodiff retains higher derivatives.
     """
 
     def __init__(
@@ -54,6 +57,8 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
         optimize=False,
         optimization_options=None,
         reduce_readout=False,
+        execution_method="auto",
+        pauli_options=None,
     ):
         super().__init__()
         from ..ir import integer
@@ -78,8 +83,18 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
         circuit, self.observables, self.readout_plan = prepare_readout(
             circuit, self.observables, enabled=reduce_readout, backend=backend
         )
+        self.execution_method = execution_method
+        self.pauli_plan = prepare_pauli(
+            circuit,
+            self.observables,
+            method=execution_method,
+            options=pauli_options,
+            backend=backend,
+            limits={"max_qubits": max_qubits, "max_memory_mb": max_memory_mb},
+            checkpoint_interval=checkpoint_interval,
+        )
         self.checkpoint_interval = _checkpoint_interval(circuit, backend, checkpoint_interval)
-        if backend == "torch":
+        if backend == "torch" and self.pauli_plan is None:
             if circuit.has_effects:
                 from ..density import _planning_limit
                 from ..density import _resource_check as density_check
@@ -105,7 +120,9 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
 
         self.gradient_chunk_size = integer(gradient_chunk_size, "gradient_chunk_size", 2)
         self.circuit = circuit
-        self._active_parameters = frozenset(circuit.parameters)
+        self._active_parameters = frozenset(
+            circuit.parameters if self.pauli_plan is None else self.pauli_plan.active_parameters
+        )
         self._has_removed_parameters = len(self._active_parameters) < len(
             self.input_parameters + self.weight_parameters
         )
@@ -245,14 +262,20 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
             for i, name in enumerate(self.weight_parameters)
             if name in self._active_parameters
         )
-        result = expectations(
-            self.circuit,
-            self.observables,
-            bindings,
-            backend="torch",
-            like=computation_weights,
-            batch_shape=shape,
-            **self.limits,
+        result = (
+            self.pauli_plan.evaluate(
+                bindings, backend="torch", like=computation_weights, batch_shape=shape
+            )
+            if self.pauli_plan is not None
+            else expectations(
+                self.circuit,
+                self.observables,
+                bindings,
+                backend="torch",
+                like=computation_weights,
+                batch_shape=shape,
+                **self.limits,
+            )
         )
         removed = self._has_removed_parameters
         if removed or not self.input_parameters:
