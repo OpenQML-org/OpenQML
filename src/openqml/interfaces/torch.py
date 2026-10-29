@@ -35,6 +35,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
         max_qubits=20,
         max_memory_mb=256,
         backend="torch",
+        batch_chunk_size=None,
         gradient_chunk_size=64,
         max_branches=256,
         optimize=False,
@@ -79,6 +80,9 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
             else:
                 _resource_check(circuit, max_qubits, max_memory_mb)
         self.execution_backend = backend
+        self.batch_chunk_size = (
+            None if batch_chunk_size is None else integer(batch_chunk_size, "batch_chunk_size", 1)
+        )
 
         self.gradient_chunk_size = integer(gradient_chunk_size, "gradient_chunk_size", 2)
         self.circuit = circuit
@@ -160,6 +164,14 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
                 )
                 + (inputs.sum() + self.weights.sum()) * 0
             ).to(output_dtype)
+        if self.batch_chunk_size is not None and flat.shape[0] > self.batch_chunk_size:
+            # Each call owns at most one chunk of simulator states. Autograd
+            # retains the required activations and accumulates shared weights.
+            return (
+                torch.cat([self(chunk) for chunk in flat.split(self.batch_chunk_size)], dim=0)
+                .reshape(*shape, len(self.observables))
+                .to(output_dtype)
+            )
         if self.execution_backend != "torch":
             return _ExternalQuantumFunction.apply(inputs, computation_weights, self).to(
                 output_dtype

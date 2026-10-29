@@ -1,5 +1,8 @@
 name: Publish distributions
 on:
+  push:
+    tags: ['v*']
+    branches: ['release/*']
   workflow_dispatch:
     inputs:
       index:
@@ -9,6 +12,9 @@ on:
         default: testpypi
 permissions:
   contents: read
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,14 +29,15 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - name: Verify public release tag
-        if: inputs.index == 'pypi'
+        if: github.event_name == 'push' || inputs.index == 'pypi'
         run: |
           python - <<'PY'
           import os, tomllib
           with open('pyproject.toml', 'rb') as stream:
               version = tomllib.load(stream)['project']['version']
-          if os.environ['GITHUB_REF'] != f'refs/tags/v{version}':
-              raise SystemExit('Public PyPI publication requires the matching version tag.')
+          allowed = {f'refs/tags/v{version}', f'refs/heads/release/{version}'}
+          if os.environ['GITHUB_REF'] not in allowed:
+              raise SystemExit('Public PyPI publication requires a matching version tag or release branch.')
           PY
       - run: python -m build
       - run: python -m twine check dist/*
@@ -42,7 +49,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     environment:
-      name: ${{ inputs.index }}
+      name: ${{ inputs.index || 'pypi' }}
     permissions:
       id-token: write
     steps:
@@ -51,10 +58,10 @@ jobs:
           name: distributions
           path: dist
       - name: Publish to TestPyPI
-        if: inputs.index == 'testpypi'
+        if: github.event_name == 'workflow_dispatch' && inputs.index == 'testpypi'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
       - name: Publish to PyPI
-        if: inputs.index == 'pypi'
+        if: github.event_name == 'push' || inputs.index == 'pypi'
         uses: pypa/gh-action-pypi-publish@release/v1

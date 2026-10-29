@@ -15,7 +15,7 @@ from .backends import (
 )
 from .batch import execute_batch, expectations_batch
 from .compiler import CircuitStats, circuit_stats, decompose, inverse, simplify
-from .conversion import ConversionResult, convert, diagnose
+from .conversion import ConversionPlan, ConversionResult, convert, diagnose, plan_conversion
 from .density import density_matrix
 from .errors import (
     BackendError,
@@ -43,11 +43,14 @@ from .planning import DensityPlan, plan_density
 from .program import QuantumProgram, as_circuit
 from .providers import CirqDensityBackend, QiskitEstimatorBackend, QiskitSamplerBackend
 from .simulator import ExecutionResult, execute, expectation, expectations, sample, statevector
-from .templates import hardware_efficient
+from .templates import data_reuploading, hardware_efficient
 
-__version__ = "0.3.0a7"
+__version__ = "0.3.0a8"
 
 __all__ = [
+    "ConversionPlan",
+    "plan_conversion",
+    "data_reuploading",
     "LayerCheckpoint",
     "OptimizationResult",
     "optimize",

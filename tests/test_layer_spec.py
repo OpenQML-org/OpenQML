@@ -157,7 +157,8 @@ def test_json_rejects_duplicate_nested_fields_invalid_text_and_byte_limits():
     with pytest.raises(ValidationError, match="max_bytes"):
         LayerSpec.from_json(text, max_bytes=len(text.encode()) - 1)
     assert LayerSpec.from_json(text, max_bytes=len(text.encode())) == specification()
-    unicode_spec = LayerSpec(Circuit(1).ry(Parameter("角度"), 0), ("角度",), ())
+    name = "\u89d2\u5ea6"
+    unicode_spec = LayerSpec(Circuit(1).ry(Parameter(name), 0), (name,), ())
     raw = json.dumps(unicode_spec.to_dict(), ensure_ascii=False)
     with pytest.raises(ValidationError, match="max_bytes"):
         LayerSpec.from_json(raw, max_bytes=len(raw))
