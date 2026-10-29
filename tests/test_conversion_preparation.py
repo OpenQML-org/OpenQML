@@ -104,12 +104,16 @@ def test_qasm2_preflight_rejects_phase_revealed_by_matrix_synthesis(monkeypatch)
     assert any(d.code == "GLOBAL_PHASE_UNSUPPORTED" for d in plan.diagnostics)
     with pytest.raises(ConversionError, match="GLOBAL_PHASE_UNSUPPORTED"):
         to_openqasm(circuit, version=2)
-    # A zero-phase X matrix is losslessly representable in both versions.
-    circuit = Circuit(1).unitary([[0, 1], [1, 0]], 0)
-    assert plan_conversion(circuit, target="openqasm2").compatible
-    np.testing.assert_allclose(
-        statevector(from_openqasm(to_openqasm(circuit, version=2))), [0, 1], atol=1e-12
-    )
+    # Anti-diagonal matrices have free Euler angles. Their phase can be
+    # preserved directly without introducing an unrepresentable phase field.
+    for matrix in (np.array([[0, 1], [1, 0]]), np.array([[0, -1j], [1j, 0]])):
+        circuit = Circuit(1).unitary(matrix, 0)
+        assert plan_conversion(circuit, target="openqasm2").compatible
+        restored = from_openqasm(to_openqasm(circuit, version=2))
+        for basis in (Circuit(1), Circuit(1).x(0)):
+            np.testing.assert_allclose(
+                statevector(basis.compose(restored)), matrix[:, len(basis.operations)], atol=1e-12
+            )
 
 
 def test_multi_qubit_synthesis_is_declared_instead_of_claiming_final_resources(monkeypatch):
