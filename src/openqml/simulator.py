@@ -348,11 +348,23 @@ def _pauli_plan(paulis):
 
 
 @lru_cache(maxsize=32)
-def _torch_pauli_plan(paulis, device, dtype):
+def _torch_cached_pauli_plan(paulis, device, dtype):
     import torch
 
     index, phase = _pauli_plan(paulis)
     return torch.as_tensor(index, device=device), torch.as_tensor(phase, dtype=dtype, device=device)
+
+
+def _torch_pauli_plan(paulis, device, dtype):
+    import torch
+
+    # Function transforms can wrap even constant factories. Never let those
+    # wrappers escape into a global device cache (including cold-cache Hessians).
+    # Unknown PyTorch internals fall back to uncached tensor construction.
+    active = getattr(torch._C, "_are_functorch_transforms_active", None)
+    if active is None or active():
+        return _torch_cached_pauli_plan.__wrapped__(paulis, device, dtype)
+    return _torch_cached_pauli_plan(paulis, device, dtype)
 
 
 def _expectation_from_state(state, observable, num_qubits, ops):
