@@ -151,15 +151,30 @@ class QuantumProgram:
             program.native, program.framework, **(dict(program.import_options) | options)
         )
 
-    def convert(self, target, *, bindings=None, optimize=False, optimization_options=None):
+    def convert(
+        self,
+        target,
+        *,
+        bindings=None,
+        source_options=None,
+        optimize=False,
+        optimization_options=None,
+        max_operations=100_000,
+        max_depth=64,
+        max_output_statements=100_000,
+    ):
         from .conversion import convert
 
         return convert(
             self,
             target=target,
             bindings=bindings,
+            source_options=source_options,
             optimize=optimize,
             optimization_options=optimization_options,
+            max_operations=max_operations,
+            max_depth=max_depth,
+            max_output_statements=max_output_statements,
         )
 
     def run(self, *, shots=1024, seed=None, **options):

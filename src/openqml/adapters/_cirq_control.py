@@ -13,7 +13,7 @@ from ..ir import Circuit, ClassicalCondition, Operation
 from ._common import dependency
 
 
-def lower_controls(operation, body, keys, *, max_bits, max_operations, location):
+def lower_controls(operation, body, keys, *, max_bits, max_operations, max_depth, location):
     cirq = dependency("cirq", "cirq")
     sp = dependency("sympy", "cirq")
     expressions = []
@@ -140,19 +140,25 @@ def lower_controls(operation, body, keys, *, max_bits, max_operations, location)
 
     def cost(values):
         if all(values):
-            return body_cost
+            return body_cost, 0
         if not any(values):
-            return 0
+            return 0, 0
         half = len(values) // 2
         left, right = values[:half], values[half:]
         if left == right:
             return cost(left)
-        return 1 + cost(left) + cost(right)
+        a, ad = cost(left)
+        b, bd = cost(right)
+        return 1 + a + b, 1 + max(ad, bd)
 
-    work = cost(table)
+    work, depth = cost(table)
     if work > max_operations:
         raise conversion_error(
             "EXPANSION_LIMIT", "Classical decision expansion exceeds max_operations.", location
+        )
+    if depth > max_depth:
+        raise conversion_error(
+            "CONTROL_DEPTH_LIMIT", "Classical decision expansion exceeds max_depth.", location
         )
     empty = Circuit(body.num_qubits)
     width = max(bits, default=-1) + 1

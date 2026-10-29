@@ -1,5 +1,6 @@
 """OpenQML: hybrid quantum learning and explicit circuit interoperability."""
 
+from .adjoint import adjoint_jvp, adjoint_vjp
 from .aer import AerBackend
 from .backends import (
     BackendCapabilities,
@@ -48,6 +49,8 @@ from .templates import data_reuploading, hardware_efficient
 __version__ = "0.3.0a8"
 
 __all__ = [
+    "adjoint_vjp",
+    "adjoint_jvp",
     "ConversionPlan",
     "plan_conversion",
     "data_reuploading",
