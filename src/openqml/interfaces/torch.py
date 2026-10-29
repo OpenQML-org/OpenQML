@@ -1,4 +1,4 @@
-"""PyTorch nn.Module quantum layer; gradients stay on the native device."""
+"""PyTorch quantum modules with native autodiff and external first-order transforms."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from ._spec import (
     prepare_readout,
     resolve_gradient_method,
 )
+from ._torch_ad import ExternalQuantumFunction as _ExternalQuantumFunction
 
 
 class QuantumLayer(LayerSpecMixin, nn.Module):
@@ -30,6 +31,9 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
     circuit holds executable IR and optimization holds the pass report.
     gradient_method='auto' retains native autodiff or numerical parameter shifts.
     NumPy unitary simulation also supports explicit first-order adjoint gradients.
+    External backends support torch.func jvp/vjp, jacfwd/jacrev and vmap. Products
+    stream without a full Jacobian; nonlinear higher derivatives require native
+    PyTorch execution.
     reduce_readout=True compacts the declared unitary readout cone; readout_plan
     records provenance, while to_spec()/checkpoint() retain the full source.
     execution_method='pauli' compiles exact real expectation arithmetic with
@@ -297,61 +301,6 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
         return (
             f"qubits={self.circuit.num_qubits}, inputs={len(self.input_parameters)}, "
             f"weights={len(self.weight_parameters)}, outputs={len(self.observables)}"
-        )
-
-
-class _ExternalQuantumFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, inputs, weights, layer):
-        import numpy as np
-
-        from ._spec import numeric_expectations
-
-        ctx.layer = layer
-        ctx.save_for_backward(inputs, weights)
-        ctx.save_for_forward(inputs, weights)
-        output = numeric_expectations(
-            layer, weights.detach().cpu().numpy(), inputs.detach().cpu().numpy()
-        )
-        shape = broadcast_batch_shape(weights, inputs)
-        output = np.asarray(output).reshape(shape + (len(layer.observables),))
-        return torch.as_tensor(output, dtype=inputs.dtype, device=inputs.device)
-
-    @staticmethod
-    def jvp(ctx, input_tangent, weight_tangent, _layer_tangent):
-        from ._spec import numeric_jvp
-
-        inputs, weights = ctx.saved_tensors
-        dx = torch.zeros_like(inputs) if input_tangent is None else input_tangent
-        dw = torch.zeros_like(weights) if weight_tangent is None else weight_tangent
-        value = numeric_jvp(
-            ctx.layer,
-            weights.detach().cpu().numpy(),
-            inputs.detach().cpu().numpy(),
-            dw.detach().cpu().numpy(),
-            dx.detach().cpu().numpy(),
-        )
-        return torch.as_tensor(value, dtype=inputs.dtype, device=inputs.device)
-
-    @staticmethod
-    @torch.autograd.function.once_differentiable
-    def backward(ctx, grad_output):
-        from ._spec import numeric_vjp
-
-        inputs, weights = ctx.saved_tensors
-        layer = ctx.layer
-        dw, dx = numeric_vjp(
-            layer,
-            weights.detach().cpu().numpy(),
-            inputs.detach().cpu().numpy(),
-            grad_output.detach().cpu().numpy(),
-            input_grad=ctx.needs_input_grad[0],
-            weight_grad=ctx.needs_input_grad[1],
-        )
-        return (
-            None if dx is None else torch.as_tensor(dx, dtype=inputs.dtype, device=inputs.device),
-            None if dw is None else torch.as_tensor(dw, dtype=weights.dtype, device=weights.device),
-            None,
         )
 
 
