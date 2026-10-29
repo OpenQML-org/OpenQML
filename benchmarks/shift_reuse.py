@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+from _precision import scoped_x64
 from planned_execution import source_hash
 
 
@@ -29,6 +30,7 @@ def leaves(value):
     return [value]
 
 
+@scoped_x64
 def worker(args):
     import openqml as oq
     import openqml.gradients as gradients
@@ -94,7 +96,6 @@ def worker(args):
 
             from openqml.interfaces.jax import QuantumLayer
 
-            jax.config.update("jax_enable_x64", True)
             api, array, axis, tanh, host = jax, jnp.asarray, "in_axes", jnp.tanh, np.asarray
             layer_options = {}
         start = time.perf_counter()

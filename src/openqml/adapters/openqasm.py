@@ -115,7 +115,7 @@ def _angle(text, symbols, location):
         raise conversion_error(
             "EXPRESSION_LIMIT", "Angle exceeds parser recursion limits.", location
         ) from exc
-    except (SyntaxError, ValueError, TypeError, OverflowError) as exc:
+    except (SyntaxError, ValueError, TypeError, OverflowError, ValidationError) as exc:
         raise conversion_error(
             "ANGLE_EXPRESSION",
             f"Unsupported angle expression: {text!r}.",

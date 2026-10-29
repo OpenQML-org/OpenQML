@@ -43,7 +43,7 @@ from .gradients import (
     parameter_shift_jvp,
     parameter_shift_vjp,
 )
-from .ir import Circuit, ClassicalCondition, Operation
+from .ir import Circuit, CircuitBuilder, ClassicalCondition, Operation
 from .layers import LayerCheckpoint, LayerSpec
 from .measurement import EstimateResult, MeasurementPlan, ShotBackend, estimate, measurement_plan
 from .observables import Hamiltonian, PauliString, z_observables
@@ -73,7 +73,7 @@ def __dir__():
     return sorted(set(globals()) | _INTERFACE_NAMES)
 
 
-__version__ = "0.3.0a10"
+__version__ = "0.3.0a11"
 
 __all__ = [
     "ReadoutRoute",
@@ -98,6 +98,7 @@ __all__ = [
     "DensityPlan",
     "plan_density",
     "Circuit",
+    "CircuitBuilder",
     "ClassicalCondition",
     "density_matrix",
     "DensityMatrixBackend",

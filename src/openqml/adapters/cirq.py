@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 
 import numpy as np
 
-from ..errors import ConversionError, conversion_error
+from ..errors import ConversionError, ValidationError, conversion_error
 from ..ir import CHANNEL_GATES, Circuit, Operation
 from ..parameters import Expression
 from ._common import bound_for_export, dependency, sympy_expression, to_sympy
@@ -45,7 +45,7 @@ def from_cirq(
             raise conversion_error("MEASUREMENT_MAP", "Use string keys and ordered bit sequences.")
         try:
             record = tuple(integer(bit, "measurement bit") for bit in record)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, ValidationError) as exc:
             raise conversion_error("MEASUREMENT_MAP", "Invalid measurement bit sequence.") from exc
         if not record or len(set(record)) != len(record):
             raise conversion_error(
