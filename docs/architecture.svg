@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="660" viewBox="0 0 1000 660" role="img" aria-labelledby="title description">
+  <title id="title">OpenQML project architecture</title>
+  <desc id="description">A single Python namespace exposes hybrid learning and program interchange. Both use a shared circuit IR, compilation and planning, execution backends, and differentiable results. Gradients feed back into the hybrid model.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+    <style>
+      text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; text-anchor: middle; }
+      .heading { font-size: 21px; font-weight: 650; fill: #0f172a; }
+      .detail { font-size: 14px; fill: #475569; }
+      .edge { fill: none; stroke: #64748b; stroke-width: 2; marker-end: url(#arrow); }
+      .card { fill: #fff; stroke: #cbd5e1; stroke-width: 1.5; }
+    </style>
+  </defs>
+  <rect width="1000" height="660" rx="20" fill="#f8fafc"/>
+  <g class="edge">
+    <path d="M 440 94 L 260 138"/>
+    <path d="M 560 94 L 740 138"/>
+    <path d="M 260 226 L 400 274"/>
+    <path d="M 740 226 L 600 274" marker-start="url(#arrow)"/>
+    <path d="M 400 362 L 260 410"/>
+    <path d="M 600 362 L 740 410"/>
+    <path d="M 440 454 L 560 454"/>
+    <path d="M 740 498 L 600 546"/>
+    <path d="M 250 590 H 58 Q 44 590 44 576 V 196 Q 44 182 58 182 H 80"/>
+  </g>
+  <text x="23" y="391" class="detail" transform="rotate(-90 23 391)">Training feedback</text>
+  <rect x="250" y="14" width="500" height="80" rx="14" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+  <text x="500" y="47" class="heading">import openqml as oq</text>
+  <text x="500" y="73" class="detail">One namespace; optional integrations load on access</text>
+  <rect x="80" y="138" width="360" height="88" rx="14" class="card"/>
+  <text x="260" y="168" class="heading">Hybrid learning</text>
+  <text x="260" y="191" class="detail">oq.torch · oq.jax · oq.flax</text>
+  <text x="260" y="212" class="detail">Generated weights; shared optimizers</text>
+  <rect x="560" y="138" width="360" height="88" rx="14" class="card"/>
+  <text x="740" y="168" class="heading">Program interchange</text>
+  <text x="740" y="191" class="detail">Qiskit · PennyLane · Cirq · OpenQASM</text>
+  <text x="740" y="212" class="detail">Import / export; compatibility diagnostics</text>
+  <rect x="250" y="274" width="500" height="88" rx="14" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.5"/>
+  <text x="500" y="307" class="heading">Shared circuit IR</text>
+  <text x="500" y="332" class="detail">Parameters · gates · observables · noise · classical branches</text>
+  <text x="500" y="352" class="detail">Source ownership and portable checkpoints</text>
+  <rect x="80" y="410" width="360" height="88" rx="14" class="card"/>
+  <text x="260" y="443" class="heading">Compilation and planning</text>
+  <text x="260" y="468" class="detail">Readout reduction; exact Pauli arithmetic</text>
+  <text x="260" y="488" class="detail">Dense grouping and bounded batches</text>
+  <rect x="560" y="410" width="360" height="88" rx="14" class="card"/>
+  <text x="740" y="443" class="heading">Execution backends</text>
+  <text x="740" y="468" class="detail">NumPy · native tensors · SDKs</text>
+  <text x="740" y="488" class="detail">Resource budgets and backend plugins</text>
+  <rect x="250" y="546" width="500" height="100" rx="14" fill="#f0fdfa" stroke="#5eead4" stroke-width="1.5"/>
+  <text x="500" y="580" class="heading">Results and differentiation</text>
+  <text x="500" y="605" class="detail">Expectations · samples · density / state vectors</text>
+  <text x="500" y="628" class="detail">Native autodiff; streamed JVP / VJP</text>
+</svg>
