@@ -9,7 +9,7 @@ except ImportError as exc:
     from ..errors import MissingDependencyError
 
     raise MissingDependencyError(
-        "Cannot load PyTorch. Run: python -m pip install openqml."
+        'Cannot load PyTorch. Run: python -m pip install "openqml[torch]".'
     ) from exc
 
 from ..errors import ValidationError

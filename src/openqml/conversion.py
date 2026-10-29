@@ -263,8 +263,8 @@ class ConversionPlan:
 
     @property
     def required_extras(self):
-        """Compatibility field: built-in integrations are default dependencies."""
-        return ()
+        """Installation extras needed to export, independent of current availability."""
+        return self.required_integrations
 
     @property
     def required_integrations(self):
@@ -372,7 +372,13 @@ class ConversionPlan:
         )
 
     def certify(
-        self, *, phase_sensitive=True, max_terms=100_000, max_work=2_000_000, source_options=None
+        self,
+        *,
+        phase_sensitive=True,
+        max_terms=100_000,
+        max_work=2_000_000,
+        max_component_qubits=6,
+        source_options=None,
     ):
         """Export with an exact algebraic certificate or raise if unproved.
 
@@ -387,6 +393,7 @@ class ConversionPlan:
             phase_sensitive=phase_sensitive,
             max_terms=max_terms,
             max_work=max_work,
+            max_component_qubits=max_component_qubits,
             source_options=source_options,
         )
 
@@ -688,7 +695,7 @@ def plan_conversion(
                 "Matrix synthesis uses Qiskit at export; final gate count and phase are deferred.",
                 _operation_location(path),
                 severity="info",
-                hint="Qiskit synthesis is included in the default OpenQML installation.",
+                hint='Install matrix synthesis with: python -m pip install "openqml[qiskit]".',
             )
             for path, op in circuit.walk_operations()
             if op.name == "unitary" and op.name in basis

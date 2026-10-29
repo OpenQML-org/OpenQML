@@ -1,0 +1,116 @@
+{
+  "schema": "openqml.environment_report",
+  "python": "3.12.14",
+  "implementation": "CPython",
+  "system": "Linux",
+  "machine": "x86_64",
+  "status": "ok",
+  "scope": "observed_environment_not_universal_compatibility",
+  "selected_extras": [],
+  "isolated_import_checks": true,
+  "runtime_probe_coverage": [
+    "imports"
+  ],
+  "accelerator_execution_checked": false,
+  "dependency_count": 4,
+  "dependencies": {
+    "numpy": {
+      "status": "installed",
+      "version": "2.5.4"
+    },
+    "openqml": {
+      "status": "installed",
+      "version": "0.3.0a14"
+    },
+    "packaging": {
+      "status": "installed",
+      "version": "26.3"
+    },
+    "psutil": {
+      "status": "installed",
+      "version": "7.2.2"
+    }
+  },
+  "integrations": {
+    "numpy": {
+      "status": "installed",
+      "version": "2.5.4",
+      "required": true,
+      "install_command": "python -m pip install \"openqml\"",
+      "import": {
+        "status": "ok",
+        "checks": [
+          "import"
+        ]
+      }
+    },
+    "torch": {
+      "status": "not_installed",
+      "required": false,
+      "install_command": "python -m pip install \"openqml[torch]\""
+    },
+    "jax": {
+      "status": "not_installed",
+      "required": false,
+      "install_command": "python -m pip install \"openqml[jax]\""
+    },
+    "flax": {
+      "status": "not_installed",
+      "required": false,
+      "install_command": "python -m pip install \"openqml[flax]\""
+    },
+    "optax": {
+      "status": "not_installed",
+      "required": false,
+      "install_command": "python -m pip install \"openqml[flax]\""
+    },
+    "qiskit": {
+      "status": "not_installed",
+      "required": false,
+      "install_command": "python -m pip install \"openqml[qiskit]\""
+    },
+    "qiskit_aer": {
+      "status": "not_installed",
+      "required": false,
+      "install_command": "python -m pip install \"openqml[aer]\""
+    },
+    "pennylane": {
+      "status": "not_installed",
+      "required": false,
+      "install_command": "python -m pip install \"openqml[pennylane]\""
+    },
+    "cirq": {
+      "status": "not_installed",
+      "required": false,
+      "install_command": "python -m pip install \"openqml[cirq]\""
+    },
+    "openqasm3": {
+      "status": "not_installed",
+      "required": false,
+      "install_command": "python -m pip install \"openqml[qasm]\""
+    },
+    "sympy": {
+      "status": "not_installed",
+      "required": false,
+      "install_command": "python -m pip install \"openqml[symbolic]\""
+    }
+  },
+  "installed_footprint": {
+    "scope": "logical_runtime_dependency_files",
+    "bytes": 71966397,
+    "file_paths_counted": 1540,
+    "missing_recorded_paths": 0,
+    "excludes": [
+      "pip_cache",
+      "build_cache",
+      "unrelated_distributions"
+    ]
+  },
+  "diagnostics": [],
+  "installation_profile": "fresh_virtual_environment_core_only",
+  "native_openqasm_conversion_checked": true,
+  "exact_hybrid_proof_checked": true,
+  "exact_operator_proof_checked": true,
+  "optional_sdk_absence_checked": true,
+  "source_revision": "0e2ba82 plus compact-semantic-kernels changes"
+}

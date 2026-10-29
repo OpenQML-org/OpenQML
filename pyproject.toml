@@ -29,32 +29,26 @@ dependencies = [
   "psutil>=5.9",
   "numpy>=1.24; platform_system != 'Darwin' or platform_machine != 'x86_64'",
   "numpy>=1.26,<2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
-  "torch>=2.2",
-  "jax>=0.4.30",
-  "flax>=0.10",
-  "optax>=0.2",
-  "qiskit[qasm3-import]>=1.2",
-  "qiskit-aer>=0.15",
-  "pennylane>=0.40",
-  "cirq-core>=1.4",
-  "openqasm3[parser]>=1.0",
-  "sympy>=1.12",
 ]
 
 [project.urls]
 Repository = "https://github.com/OpenQML-org/OpenQML"
 
 [project.optional-dependencies]
-torch = []
-jax = []
-qiskit = []
-aer = []
-qasm = []
-flax = []
-symbolic = []
-pennylane = []
-cirq = []
-all = []
+torch = ["torch>=2.2"]
+jax = ["jax>=0.4.30"]
+qiskit = ["qiskit[qasm3-import]>=1.2", "sympy>=1.12"]
+aer = ["qiskit[qasm3-import]>=1.2", "qiskit-aer>=0.15", "sympy>=1.12"]
+qasm = ["qiskit[qasm3-import]>=1.2", "openqasm3[parser]>=1.0", "sympy>=1.12"]
+flax = ["jax>=0.4.30", "flax>=0.10", "optax>=0.2"]
+symbolic = ["sympy>=1.12"]
+pennylane = ["pennylane>=0.40", "sympy>=1.12"]
+cirq = ["cirq-core>=1.4", "sympy>=1.12"]
+all = [
+  "torch>=2.2", "jax>=0.4.30", "flax>=0.10", "optax>=0.2",
+  "qiskit[qasm3-import]>=1.2", "qiskit-aer>=0.15", "pennylane>=0.40",
+  "cirq-core>=1.4", "openqasm3[parser]>=1.0", "sympy>=1.12",
+]
 dev = ["pytest>=8", "ruff>=0.11", "build>=1.2", "twine>=6"]
 
 [project.scripts]

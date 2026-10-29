@@ -8,7 +8,19 @@ OpenQML adds trainable quantum layers to PyTorch and JAX models and compiles sup
 python -m pip install openqml
 ```
 
-All supported integrations are included and load on access through one namespace.
+The default install contains the native simulator, circuit IR, built-in OpenQASM
+conversion and exact semantic proof kernels. It requires only NumPy, packaging
+and psutil. Optional frameworks load on access through the same namespace:
+
+```bash
+python -m pip install "openqml[torch]"       # PyTorch quantum layers
+python -m pip install "openqml[qiskit]"      # Native Qiskit interoperability
+python -m pip install "openqml[all]"         # Full integration bundle
+```
+
+Other extras: `jax`, `flax` (includes Optax), `aer`, `pennylane`, `cirq`, `qasm`
+(official SDK parser) and `symbolic`. Already-installed compatible frameworks
+work directly; OpenQML never downloads dependencies at runtime.
 
 ```python
 import openqml as oq
@@ -22,6 +34,8 @@ values = plan.evaluate({"theta": 0.4})
 Native APIs are available through `oq.torch`, `oq.jax`, `oq.flax`, `oq.optax`, `oq.numpy` and the SDK namespaces, including `oq.qiskit`, `oq.pennylane`, `oq.cirq` and `oq.qiskit_aer`.
 
 ## Hybrid learning
+
+Install the `torch` extra for this example:
 
 ```python
 import openqml as oq
@@ -44,12 +58,24 @@ One optimizer updates classical and quantum weights. JAX layers use `layer.init(
 
 | API | Guarantee |
 | --- | --- |
-| `oq.prove_equivalence(a, b)` | Bounded algebraic equivalence for supported normal forms and all defined parameter bindings |
+| `oq.prove_equivalence(a, b)` | Bounded algebraic equivalence, including factored exact hybrid density kernels, for all valid defined parameter bindings |
 | `oq.compile_verified(c, target=...)` | Exports with an algebraic certificate; refuses unproved conversions |
 | `oq.plan_conversion(...).verify(mode="native")` | Independent target-runtime comparison over a complete input basis at explicit bindings |
 | `oq.semantic_coverage()` | Representative framework/IR feature matrix and diagnostics |
 
 The proof kernel uses affine Boolean phase polynomials, exact word rewrites and optional projective Clifford conjugation. Strict mode compares global phase. Projective mode explicitly ignores it. Stored floating constants remain exact binary rationals; SDK rounding or unsupported identities can leave a conversion **unproved**, which does not establish inequivalence. Certificates cover the adapter's IR interpretation; native runtime checks remain separate.
+
+Hybrid proofs compare the full quantum output and every final classical bit,
+starting with zero classical storage. They handle measurement, reset, nested
+feedback, symbolic rotations and supported noise channels, adding hidden
+histories before comparison. Quantum/classical dependencies from **both**
+programs determine independent components. Each component defaults to at most
+six active qubits, with additional term, work and exact-coefficient limits;
+many independent components do not imply general large entangled-circuit capacity.
+Global phase is physically unobservable in this quantum-instrument semantics.
+Bounded exact operator kernels also handle the universal Hadamard/rotation gate
+set in strict unitary proofs, retaining global phase when simpler forms fail.
+See [the algorithm, limits and research basis](docs/semantic-kernels.md).
 
 Arbitrary Python programs are outside automatic translation. `oq.inspect_python(text)` diagnoses source without executing it. Dynamic control, custom matrices and noise require supported IR representations. External noise models, pulse calibrations and hardware context are diagnosed rather than silently preserved.
 
@@ -79,7 +105,19 @@ Adaptive plans default to one quarter of observed host/container availability, c
 
 The [compiler/execution audit](https://github.com/OpenQML-org/OpenQML/blob/main/benchmarks/results/compiler_execution_cpu.json) records randomized differential checks, symbolic certificates, a 1,024-qubit Clifford case, independently checked 128-qubit non-Clifford MPS readouts and measured dense execution. These are representation-specific results, not general large-qubit simulation guarantees.
 
-[CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml) covers Linux, Windows and both macOS architectures. GPU execution requires suitable hardware and is skipped on CPU runners. The full SDK bundle is substantial: one [measured Linux installation](https://github.com/OpenQML-org/OpenQML/blob/main/benchmarks/results/installation_linux.json) occupies about 6.39 GiB. `oq.environment_report(check_imports=True, include_sizes=True)` reports actual dependencies, compatibility and footprint.
+[CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml) separately tests
+the core and full bundle. GPU execution requires suitable hardware and is
+skipped on CPU runners. The earlier
+[full-bundle measurement](benchmarks/results/installation_linux.json) occupies
+about 6.39 GiB; it is not the new core footprint.
+The [new clean Linux core measurement](benchmarks/results/core_installation_linux.json)
+is about **68.6 MiB**, including its three dependencies. These are different
+installation profiles and dependency versions, not a same-version compression
+benchmark. The full bundle remains available and remains substantial.
+`oq.environment_report(check_imports=True, include_sizes=True)` reports the core
+dependency closure and optional integration availability. Pass `extras=("all",)`
+or use `python -m openqml doctor --extra all --sizes` to audit the full bundle.
+Missing optional SDKs do not make a core installation unhealthy.
 
 ## Architecture
 

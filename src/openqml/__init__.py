@@ -1,11 +1,12 @@
 """Hybrid quantum learning and explicit circuit interoperability.
 
 Install once with ``python -m pip install openqml`` and import as
-``import openqml as oq``. All integrations load only when accessed.
+``import openqml as oq``. Optional integrations load only when accessed.
 """
 
 from importlib import import_module as _import_module
 
+from ._dependencies import install_hint as _install_hint
 from ._scheduling import ExecutionBatch, ReadoutRoute
 from .adaptive import AdaptivePlan, ExecutionCandidate, plan_execution
 from .adjoint import AdjointPlan, adjoint_jvp, adjoint_vjp
@@ -91,7 +92,7 @@ def __getattr__(name):
             module = _import_module(_LAZY_MODULES[name], __name__)
         except ImportError as exc:
             raise MissingDependencyError(
-                f"Cannot load {name}. Run: python -m pip install openqml."
+                f"Cannot load {name}. Run: {_install_hint(name)}."
             ) from exc
         globals()[name] = module
         return module

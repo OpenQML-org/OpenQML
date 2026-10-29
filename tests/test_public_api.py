@@ -1,4 +1,4 @@
-"""One default installation and one import expose all integrations lazily."""
+"""A lightweight core and optional integrations share one lazy namespace."""
 
 import importlib
 import os
@@ -42,7 +42,7 @@ for name in names:
     try:
         getattr(oq, name)
     except oq.MissingDependencyError as error:
-        assert "python -m pip install openqml" in str(error)
+        assert 'python -m pip install "openqml[' in str(error)
     else:
         raise AssertionError(f"Missing dependency did not fail: {name}")
     assert name not in oq.__dict__
@@ -70,9 +70,8 @@ def test_root_namespace_reuses_the_canonical_framework_module(framework):
     assert getattr(oq, framework) is namespace
 
 
-def test_default_distribution_requires_every_supported_integration():
+def test_default_distribution_is_small_and_extras_cover_all_integrations():
     from importlib.metadata import requires
-    from importlib.util import find_spec
 
     from packaging.requirements import Requirement
 
@@ -91,10 +90,13 @@ def test_default_distribution_requires_every_supported_integration():
         "openqasm3": "openqasm3",
         "sympy": "sympy",
     }
-    assert expected.keys() <= base.keys()
-    assert "qasm3-import" in base["qiskit"].extras
-    assert "parser" in base["openqasm3"].extras
-    assert all(find_spec(module) is not None for module in expected.values())
+    assert set(base) == {"numpy", "packaging", "psutil"}
+    full = {
+        r.name: r for r in requirements if r.marker is None or r.marker.evaluate({"extra": "all"})
+    }
+    assert expected.keys() <= full.keys()
+    assert "qasm3-import" in full["qiskit"].extras
+    assert "parser" in full["openqasm3"].extras
     assert all(r.name != "openqml" for r in requirements)
 
 
@@ -102,12 +104,14 @@ def test_default_distribution_requires_every_supported_integration():
     "name", ["numpy", "optax", "qiskit", "pennylane", "cirq", "qiskit_aer", "openqasm3", "sympy"]
 )
 def test_sdk_namespaces_preserve_canonical_module_identity(name):
-    native = importlib.import_module(name)
+    native = pytest.importorskip(name)
     assert getattr(oq, name) is native
     assert getattr(oq, name) is native
 
 
 def test_framework_facades_preserve_native_apis_and_quantum_layers():
+    for name in ("torch", "jax", "flax"):
+        pytest.importorskip(name)
     assert oq.torch.nn is importlib.import_module("torch.nn")
     assert oq.torch.optim is importlib.import_module("torch.optim")
     assert oq.torch.randn is importlib.import_module("torch").randn
@@ -125,9 +129,11 @@ def test_readme_examples_need_only_the_openqml_import():
 
     text = (Path(__file__).parents[1] / "README.md").read_text()
     blocks = re.findall(r"```python\n(.*?)```", text, re.S)
-    assert blocks and "openqml[" not in text
+    assert blocks
     namespace = {}
     for block in blocks:
+        if "oq.torch" in block:
+            pytest.importorskip("torch")
         assert [line for line in block.splitlines() if line.startswith(("import ", "from "))] == [
             "import openqml as oq"
         ]
@@ -137,6 +143,8 @@ def test_readme_examples_need_only_the_openqml_import():
 
 
 def test_single_import_supports_jax_flax_and_optax_training():
+    for name in ("jax", "flax", "optax"):
+        pytest.importorskip(name)
     spec = oq.data_reuploading(2, depth=1)
     layer = oq.jax.QuantumLayer.from_spec(spec)
     inputs = oq.jax.numpy.asarray([[0.2, -0.3], [0.1, 0.4]])
@@ -156,6 +164,8 @@ def test_single_import_supports_jax_flax_and_optax_training():
 
 
 def test_single_import_supports_native_sdk_programs_and_conversion():
+    for name in ("qiskit", "cirq", "pennylane"):
+        pytest.importorskip(name)
     program = oq.qiskit.QuantumCircuit(2)
     program.h(0)
     program.cx(0, 1)
