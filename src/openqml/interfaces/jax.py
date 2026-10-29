@@ -18,6 +18,7 @@ from ._spec import (
     broadcast_batch_shape,
     prepare_adjoint,
     prepare_layer,
+    prepare_readout,
     resolve_gradient_method,
 )
 
@@ -32,6 +33,8 @@ class QuantumLayer(LayerSpecMixin):
     eliminated symbols. circuit is executable IR; optimization holds the report.
     gradient_method='auto' retains native autodiff or numerical parameter shifts.
     NumPy unitary simulation also supports explicit first-order adjoint gradients.
+    reduce_readout=True compacts the declared unitary readout cone; readout_plan
+    records provenance, while to_spec()/checkpoint() retain the full source.
     """
 
     def __init__(
@@ -51,6 +54,7 @@ class QuantumLayer(LayerSpecMixin):
         max_branches=256,
         optimize=False,
         optimization_options=None,
+        reduce_readout=False,
     ):
         from ..ir import integer
 
@@ -69,6 +73,10 @@ class QuantumLayer(LayerSpecMixin):
             observables,
             optimize=optimize,
             optimization_options=optimization_options,
+        )
+        self.source_observables = self.observables
+        circuit, self.observables, self.readout_plan = prepare_readout(
+            circuit, self.observables, enabled=reduce_readout, backend=backend
         )
         self.checkpoint_interval = _checkpoint_interval(circuit, backend, checkpoint_interval)
         if backend == "jax":
@@ -98,6 +106,9 @@ class QuantumLayer(LayerSpecMixin):
         self.gradient_chunk_size = integer(gradient_chunk_size, "gradient_chunk_size", 2)
         self.circuit = circuit
         self._active_parameters = frozenset(circuit.parameters)
+        self._has_removed_parameters = len(self._active_parameters) < len(
+            self.input_parameters + self.weight_parameters
+        )
         self.limits = {
             "max_qubits": max_qubits,
             "max_memory_mb": max_memory_mb,
@@ -224,7 +235,7 @@ class QuantumLayer(LayerSpecMixin):
             batch_shape=shape,
             **self.limits,
         )
-        if self.optimization is not None and self.optimization.removed_parameters:
+        if self._has_removed_parameters:
             result = result + jnp.square(inputs * 0).sum(-1, keepdims=True)
             result = result + jnp.square(weights * 0).sum(-1, keepdims=True)
         return result

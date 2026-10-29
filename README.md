@@ -17,9 +17,7 @@ For a source checkout, use `python -m pip install '.[all,dev]'`.
 
 Use one optimizer for classical parameters and quantum weights. Layers support arbitrary leading batch dimensions, input gradients, portable checkpoints and configurable execution backends.
 
-Compose reusable quantum blocks with `spec.compose(...)` and trained values with `checkpoint.compose(...)`. Explicit input/weight sharing maps preserve ownership; independent symbols receive separate namespaces.
-
-Use `spec.reparameterize(...)` to tie imported symbols or build nonlinear encoders with explicit input/weight ownership. `spec.bind(...)` fixes numeric values; `checkpoint.freeze(...)` embeds selected trained weights in the IR for portable transfer learning.
+Compose blocks and trained values with `spec.compose(...)` and `checkpoint.compose(...)`, using explicit sharing maps. `spec.reparameterize(...)` ties symbols or builds nonlinear encoders; `spec.bind(...)` and `checkpoint.freeze(...)` embed constants for transfer learning.
 
 ```python
 import torch
@@ -40,7 +38,7 @@ JAX exposes `layer(weights, inputs)`; Flax uses standard parameter trees and Opt
 
 `batch_chunk_size` bounds each simulator batch. For native unitary circuits, `checkpoint_interval` trades recomputation for fewer retained training tensors. Native tensor backends support higher derivatives; external numerical bridges support first-order differentiation.
 
-For unitary simulation, `backend="numpy", gradient_method="adjoint"` reuses prepared batches within memory limits. VJPs use reverse sweeps; JVPs propagate one tangent state across all readouts. `AdjointPlan` also accepts named array columns. Retained state vectors stay independent of gate count. Channels, measurements and feedback use the existing differentiation paths.
+For unitary simulation, `backend="numpy", gradient_method="adjoint"` reuses prepared batches within memory limits. VJPs use reverse sweeps; JVPs propagate one tangent state across readouts. `AdjointPlan` accepts named array columns. Retained state vectors stay independent of gate count. Effects use the existing differentiation paths.
 
 ## Circuit interoperability
 
@@ -61,6 +59,8 @@ Plans report source and prepared resources, required extras and deferred SDK syn
 IR readers check byte, operation, nesting, expression and matrix budgets before constructing circuits. Import settings belong in `source_options`; portable layer and checkpoint readers accept matching matrix limits.
 
 IR binding and renaming reuse validated immutable matrix payloads.
+
+For sparse unitary readouts, `reduce_readout=True` on PyTorch, JAX and Flax layers removes gates outside the causal cone and compacts simulator wires. Shapes and checkpoints keep source order; eliminated columns receive zero gradients. Native tensor and NumPy backends support this explicit pass. `plan_readout(circuit, observables)` reports resources, wire/operation maps and remapped readouts for conversion. Equivalence covers declared expectations from the all-zero initial state; full-program conversion keeps the source. Channels, measurements and feedback are rejected.
 
 The IR preserves parameter expressions, wire order, supported channels, measurements and classical branches. General runtime classical computation, pulse schedules and some native control flow remain outside the portable subset. Simulator execution has explicit resource budgets.
 
