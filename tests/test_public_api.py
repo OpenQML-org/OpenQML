@@ -77,7 +77,7 @@ def test_default_distribution_requires_every_supported_integration():
     from packaging.requirements import Requirement
 
     requirements = [Requirement(value) for value in requires("openqml")]
-    base = {r.name: r for r in requirements if r.marker is None}
+    base = {r.name: r for r in requirements if r.marker is None or r.marker.evaluate({"extra": ""})}
     expected = {
         "numpy": "numpy",
         "torch": "torch",

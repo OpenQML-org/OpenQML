@@ -446,7 +446,13 @@ def _numpy_pauli_expectation(state, paulis):
 def _pauli_expectation(state, paulis, num_qubits, ops):
     if ops.backend == "numpy" and num_qubits > 12:
         return _numpy_pauli_expectation(state, paulis)
-    capture = ops.backend == "torch" and getattr(ops.xp.compiler, "is_compiling", lambda: False)()
+    capture = False
+    if ops.backend == "torch":
+        compiling = getattr(getattr(ops.xp, "compiler", None), "is_compiling", None)
+        if compiling is None:
+            from torch._dynamo import is_compiling as compiling
+
+        capture = compiling()
     if ops.backend != "numpy" and (capture or num_qubits > 12):
         kwargs = {"device": ops.device} if ops.backend == "torch" else {}
         index = ops.xp.arange(state.shape[-1], **kwargs)
