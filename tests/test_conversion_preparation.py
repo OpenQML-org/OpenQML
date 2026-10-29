@@ -191,3 +191,16 @@ def test_cli_preflight_reports_target_expansion_with_configured_limits(tmp_path,
     assert not plan["compatible"] and plan["limits"]["max_operations"] == 3
     assert main(args) == 2
     assert "DECOMPOSITION_LIMIT" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("framework", ["cirq", "pennylane"])
+def test_native_exports_respect_explicit_operation_limits(framework):
+    pytest.importorskip(framework)
+    from openqml.frontends import get_adapter
+
+    circuit = Circuit(2).h(0).cx(0, 1)
+    native = plan_conversion(circuit, target=framework, max_operations=2).export().value
+    restored = get_adapter(framework).importer(native)
+    np.testing.assert_allclose(statevector(restored), statevector(circuit), atol=2e-12)
+    with pytest.raises(ConversionError, match="DECOMPOSITION_LIMIT"):
+        get_adapter(framework).exporter(circuit, max_operations=1)

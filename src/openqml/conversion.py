@@ -327,10 +327,10 @@ class ConversionPlan:
                 max_depth=self.max_depth,
                 max_output_statements=self.max_output_statements,
             )
-        elif self.target_format == "cirq":
-            from .adapters.cirq import to_cirq
-
-            value = to_cirq(circuit, max_operations=self.max_operations, max_depth=self.max_depth)
+        elif self.target_format in {"cirq", "pennylane"}:
+            value = get_adapter(self.target_format).exporter(
+                circuit, max_operations=self.max_operations, max_depth=self.max_depth
+            )
         else:
             value = get_adapter(self.target_format).exporter(circuit)
         return ConversionResult(
