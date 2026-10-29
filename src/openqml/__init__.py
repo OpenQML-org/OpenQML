@@ -40,6 +40,7 @@ from .measurement import EstimateResult, MeasurementPlan, ShotBackend, estimate,
 from .observables import Hamiltonian, PauliString, z_observables
 from .optimization import OptimizationResult, optimize
 from .parameters import Expression, Parameter
+from .pauli import PauliPlan
 from .planning import DensityPlan, plan_density
 from .program import QuantumProgram, as_circuit
 from .providers import CirqDensityBackend, QiskitEstimatorBackend, QiskitSamplerBackend
@@ -50,6 +51,7 @@ from .templates import data_reuploading, hardware_efficient
 __version__ = "0.3.0a8"
 
 __all__ = [
+    "PauliPlan",
     "ReadoutPlan",
     "plan_readout",
     "AdjointPlan",

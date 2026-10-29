@@ -142,6 +142,31 @@ def prepare_readout(circuit, observables, *, enabled, backend):
     return plan.circuit, plan.observables, plan
 
 
+def prepare_pauli(circuit, observables, *, method, options, backend, limits, checkpoint_interval):
+    """Compile only for an explicit native expectation evaluation choice."""
+    if not isinstance(method, str) or method not in {"auto", "pauli"}:
+        raise ValidationError("execution_method must be auto or pauli.")
+    if options is not None and (method != "pauli" or not isinstance(options, Mapping)):
+        raise ValidationError("pauli_options requires execution_method='pauli' and a mapping.")
+    if method == "auto":
+        return None
+    if not isinstance(backend, str) or backend not in {"torch", "jax"}:
+        raise ValidationError("Pauli layers require a native torch or jax backend.")
+    if checkpoint_interval is not None:
+        raise ValidationError("checkpoint_interval requires the default dense execution method.")
+    from ..errors import ResourceError
+    from ..ir import integer
+    from ..pauli import PauliPlan
+
+    maximum = integer(limits["max_qubits"], "max_qubits", 1)
+    if circuit.num_qubits > maximum:
+        raise ResourceError("Pauli circuit width exceeds max_qubits; set an explicit source limit.")
+    settings = {} if options is None else dict(options)
+    if set(settings) - {"max_terms", "max_nodes", "max_work", "max_operations"}:
+        raise ValidationError("Unknown Pauli compilation option.")
+    return PauliPlan(circuit, observables, max_memory_mb=limits["max_memory_mb"], **settings)
+
+
 def resolve_gradient_method(circuit, backend, method, limits):
     """Keep native graphs by default; adjoint is an explicit NumPy simulator choice."""
     if not isinstance(method, str) or method not in {"auto", "parameter-shift", "adjoint"}:
