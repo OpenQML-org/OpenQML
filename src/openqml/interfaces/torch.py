@@ -12,7 +12,13 @@ except ImportError as exc:
 
 from ..errors import ValidationError
 from ..simulator import _checkpoint_interval, _resource_check, expectations
-from ._spec import LayerSpecMixin, broadcast_batch_shape, prepare_layer, resolve_gradient_method
+from ._spec import (
+    LayerSpecMixin,
+    broadcast_batch_shape,
+    prepare_adjoint,
+    prepare_layer,
+    resolve_gradient_method,
+)
 
 
 class QuantumLayer(LayerSpecMixin, nn.Module):
@@ -102,6 +108,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
         self.gradient_method = resolve_gradient_method(
             circuit, backend, gradient_method, self.limits
         )
+        self.adjoint_plan = prepare_adjoint(self)
         dtype = torch.get_default_dtype() if dtype is None else dtype
         if dtype not in {torch.float32, torch.float64}:
             raise ValidationError("QuantumLayer requires float32 or float64 weights.")
@@ -257,14 +264,13 @@ class _ExternalQuantumFunction(torch.autograd.Function):
     def forward(ctx, inputs, weights, layer):
         import numpy as np
 
-        from ..batch import expectations_batch
+        from ._spec import numeric_expectations
 
         ctx.layer = layer
         ctx.save_for_backward(inputs, weights)
         ctx.save_for_forward(inputs, weights)
-        rows = _binding_rows(layer, inputs, weights)
-        output = expectations_batch(
-            layer.circuit, layer.observables, rows, backend=layer.execution_backend, **layer.limits
+        output = numeric_expectations(
+            layer, weights.detach().cpu().numpy(), inputs.detach().cpu().numpy()
         )
         shape = broadcast_batch_shape(weights, inputs)
         output = np.asarray(output).reshape(shape + (len(layer.observables),))
@@ -306,12 +312,6 @@ class _ExternalQuantumFunction(torch.autograd.Function):
             None if dw is None else torch.as_tensor(dw, dtype=weights.dtype, device=weights.device),
             None,
         )
-
-
-def _binding_rows(layer, inputs, weights):
-    from ._spec import numeric_rows
-
-    return numeric_rows(layer, weights.detach().cpu().numpy(), inputs.detach().cpu().numpy())
 
 
 class NativePennyLaneLayer(nn.Module):
