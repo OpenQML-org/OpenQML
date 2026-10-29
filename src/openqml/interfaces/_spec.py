@@ -153,6 +153,54 @@ def _sum_to_shape(values, shape):
     return values.sum(axis=axes, keepdims=True).reshape(shape)
 
 
+def prepare_adjoint(layer):
+    if layer.gradient_method != "adjoint":
+        return None
+    from ..adjoint import AdjointPlan
+
+    active = set(layer.circuit.parameters)
+    return AdjointPlan(
+        layer.circuit,
+        layer.observables,
+        tuple(name for name in layer.input_parameters + layer.weight_parameters if name in active),
+        layer.limits["max_qubits"],
+        layer.limits["max_memory_mb"],
+    )
+
+
+def _adjoint_columns(layer, weights, inputs):
+    import math
+
+    import numpy as np
+
+    shape = broadcast_batch_shape(weights, inputs)
+    count = math.prod(shape)
+    active = set(layer.adjoint_plan.parameters)
+    columns = {}
+    for names, values in ((layer.input_parameters, inputs), (layer.weight_parameters, weights)):
+        for i, name in enumerate(names):
+            if name in active:
+                columns[name] = np.broadcast_to(values[..., i], shape).reshape(count)
+    return columns, count
+
+
+def numeric_expectations(layer, weights, inputs):
+    if layer.adjoint_plan is not None:
+        columns, count = _adjoint_columns(layer, weights, inputs)
+        return layer.adjoint_plan.expectations(
+            columns, batch_size=count, batch_chunk_size=layer.batch_chunk_size
+        )
+    from ..batch import expectations_batch
+
+    return expectations_batch(
+        layer.circuit,
+        layer.observables,
+        numeric_rows(layer, weights, inputs),
+        backend=layer.execution_backend,
+        **layer.limits,
+    )
+
+
 def numeric_rows(layer, weights, inputs):
     """Bind only executable symbols while retaining the source-facing interface."""
     import math
@@ -200,21 +248,24 @@ def numeric_vjp(layer, weights, inputs, cotangents, *, input_grad=True, weight_g
             **layer.limits,
         },
     )
-    if layer.gradient_method == "adjoint":
-        from ..adjoint import adjoint_vjp
-
-        method, options = (
-            adjoint_vjp,
-            {name: layer.limits[name] for name in ("max_qubits", "max_memory_mb")},
+    if layer.adjoint_plan is not None:
+        columns, count = _adjoint_columns(layer, weights, inputs)
+        values = layer.adjoint_plan.vjp(
+            columns,
+            np.asarray(cotangents).reshape(count, len(layer.observables)),
+            parameters=selected,
+            batch_size=count,
+            batch_chunk_size=layer.batch_chunk_size,
         )
-    values = method(
-        layer.circuit,
-        layer.observables,
-        numeric_rows(layer, weights, inputs),
-        np.asarray(cotangents).reshape(-1, len(layer.observables)),
-        parameters=selected,
-        **options,
-    )
+    else:
+        values = method(
+            layer.circuit,
+            layer.observables,
+            numeric_rows(layer, weights, inputs),
+            np.asarray(cotangents).reshape(-1, len(layer.observables)),
+            parameters=selected,
+            **options,
+        )
     positions = {name: i for i, name in enumerate(selected)}
     shape = broadcast_batch_shape(weights, inputs)
     dx = np.zeros_like(inputs) if input_grad else None
@@ -259,19 +310,23 @@ def numeric_jvp(layer, weights, inputs, weight_tangent, input_tangent):
             **layer.limits,
         },
     )
-    if layer.gradient_method == "adjoint":
-        from ..adjoint import adjoint_jvp
-
-        method, options = (
-            adjoint_jvp,
-            {name: layer.limits[name] for name in ("max_qubits", "max_memory_mb")},
+    directions = np.concatenate((dx, dw), axis=-1)[:, indices]
+    if layer.adjoint_plan is not None:
+        columns, count = _adjoint_columns(layer, weights, inputs)
+        result = layer.adjoint_plan.jvp(
+            columns,
+            directions,
+            parameters=names,
+            batch_size=count,
+            batch_chunk_size=layer.batch_chunk_size,
         )
-    result = method(
-        layer.circuit,
-        layer.observables,
-        numeric_rows(layer, weights, inputs),
-        np.concatenate((dx, dw), axis=-1)[:, indices],
-        parameters=names,
-        **options,
-    )
+    else:
+        result = method(
+            layer.circuit,
+            layer.observables,
+            numeric_rows(layer, weights, inputs),
+            directions,
+            parameters=names,
+            **options,
+        )
     return result.reshape(shape + (len(layer.observables),)).astype(inputs.dtype)

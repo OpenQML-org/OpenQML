@@ -59,7 +59,7 @@ def _vectorized_states(circuits, options):
             name = f"_batch_{i}_{j}"
             params.append(expression(Parameter(name)))
             bindings[name] = np.array([c.operations[i].params[j].constant for c in circuits])
-        operations.append(replace(op, params=tuple(params)))
+        operations.append(replace(op, params=tuple(params)) if params else op)
     phase_name = "_batch_global_phase"
     bindings[phase_name] = np.array([c.global_phase.constant for c in circuits])
     prototype = replace(

@@ -13,7 +13,13 @@ except ImportError as exc:
 from ..errors import ValidationError
 from ..parameters import real
 from ..simulator import _checkpoint_interval, _resource_check, expectations
-from ._spec import LayerSpecMixin, broadcast_batch_shape, prepare_layer, resolve_gradient_method
+from ._spec import (
+    LayerSpecMixin,
+    broadcast_batch_shape,
+    prepare_adjoint,
+    prepare_layer,
+    resolve_gradient_method,
+)
 
 
 class QuantumLayer(LayerSpecMixin):
@@ -102,6 +108,7 @@ class QuantumLayer(LayerSpecMixin):
         self.gradient_method = resolve_gradient_method(
             circuit, backend, gradient_method, self.limits
         )
+        self.adjoint_plan = prepare_adjoint(self)
 
     def init(self, key, *, scale=0.1, dtype=jnp.float32):
         scale = real(scale)
@@ -269,20 +276,10 @@ class NativePennyLaneLayer:
 def _external_layer(layer, weights, inputs):
     import numpy as np
 
-    from ..batch import expectations_batch
-    from ._spec import numeric_rows, numeric_vjp
-
-    def rows(w, x):
-        return numeric_rows(layer, w, x)
+    from ._spec import numeric_expectations, numeric_vjp
 
     def forward_numpy(w, x):
-        result = expectations_batch(
-            layer.circuit,
-            layer.observables,
-            rows(w, x),
-            backend=layer.execution_backend,
-            **layer.limits,
-        )
+        result = numeric_expectations(layer, w, x)
         shape = broadcast_batch_shape(w, x)
         return np.asarray(result, dtype=x.dtype).reshape(shape + (len(layer.observables),))
 
