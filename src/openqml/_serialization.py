@@ -23,7 +23,14 @@ def load_json(text, max_bytes, *, label="IR"):
                 result[key] = value
             return result
 
-        return json.loads(text, object_pairs_hook=unique_object)
+        def bounded_integer(value):
+            # Older Python runtimes do not cap expensive decimal-to-integer
+            # conversion. Apply a consistent source budget before int().
+            if len(value.lstrip("-")) > 4300:
+                raise ValidationError(f"{label} JSON integer literal exceeds its digit budget.")
+            return int(value)
+
+        return json.loads(text, object_pairs_hook=unique_object, parse_int=bounded_integer)
     except ValidationError:
         raise
     except (ValueError, RecursionError) as exc:

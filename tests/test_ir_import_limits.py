@@ -176,3 +176,8 @@ def test_ir_budgets_accept_numpy_integer_configuration():
         )
         == circuit
     )
+
+
+def test_json_integer_digit_budget_precedes_decimal_conversion():
+    with pytest.raises(ValidationError, match="integer literal.*digit budget"):
+        Circuit.from_json('{"num_qubits":' + "9" * 5000 + "}")
