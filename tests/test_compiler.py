@@ -121,5 +121,5 @@ def test_ir_v1_backwards_read_and_v2_gate_guard():
     for op in payload["operations"]:
         for field in ("matrix", "kraus", "condition", "blocks"):
             op.pop(field, None)
-    with pytest.raises(ValidationError, match="requires IR version 2"):
+    with pytest.raises(ValidationError, match="schema does not support this operation"):
         Circuit.from_dict(payload)

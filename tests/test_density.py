@@ -284,7 +284,7 @@ def test_ir_version3_read_and_effect_payload_guards():
     payload["version"] = 3
     for field in ("kraus", "condition", "blocks"):
         payload["operations"][0].pop(field)
-    with pytest.raises(ValidationError, match="version 4"):
+    with pytest.raises(ValidationError, match="schema does not support quantum effects"):
         Circuit.from_dict(payload)
     payload = feedback().to_dict()
     payload["operations"][2]["condition"]["bits"] = {}

@@ -389,7 +389,23 @@ def plan_conversion(
             raise conversion_error("SOURCE_TYPE", "Expected an OpenQML Circuit.")
         circuit = value
     elif source == "json":
-        circuit = Circuit.from_json(value)
+        allowed = {
+            "max_source_bytes",
+            "max_operations",
+            "max_depth",
+            "max_matrix_qubits",
+            "max_matrix_entries",
+        }
+        if set(source_options) - allowed:
+            raise conversion_error("IR_FRONTEND", "Unknown JSON IR import option.")
+        options = dict(source_options)
+        if "max_source_bytes" in options:
+            options["max_bytes"] = options.pop("max_source_bytes")
+        for name, bound in (("max_operations", max_operations), ("max_depth", max_depth)):
+            if name in options:
+                integer(options[name], name)
+            options[name] = min(options.get(name, bound), bound)
+        circuit = Circuit.from_json(value, **options)
     elif source.startswith("openqasm"):
         from .adapters.openqasm import from_openqasm
 

@@ -193,6 +193,73 @@ def _resource_check(circuit, max_qubits, max_memory_mb, batch_size=1):
         )
 
 
+def _checkpoint_interval(circuit, backend, value):
+    if value is None:
+        return None
+    value = integer(value, "checkpoint_interval", 1)
+    if not (isinstance(backend, str) and backend in {"torch", "jax"}):
+        raise ValidationError("checkpoint_interval requires a native torch or jax backend.")
+    if circuit.has_effects:
+        raise ValidationError("checkpoint_interval requires a unitary circuit.")
+    return value
+
+
+def _evolve_unitary(state, operations, bindings, num_qubits, ops, checkpoint_interval):
+    if checkpoint_interval is None:
+        for operation in operations:
+            if operation.name != "barrier":
+                matrix = _gate_matrix(
+                    operation.name,
+                    [p.evaluate(bindings) for p in operation.params],
+                    ops,
+                    operation.matrix,
+                )
+                state = _apply_matrix(state, matrix, operation.qubits, num_qubits, ops)
+        return state
+
+    gates = tuple(op for op in operations if op.name != "barrier")
+    for start in range(0, len(gates), checkpoint_interval):
+        segment = gates[start : start + checkpoint_interval]
+        names = tuple(sorted(set().union(*(p.parameters for op in segment for p in op.params))))
+        values = tuple(bindings[name] for name in names)
+
+        def evolve(current, *args, segment=segment, names=names):
+            local = dict(zip(names, args, strict=True))
+            for operation in segment:
+                matrix = _gate_matrix(
+                    operation.name,
+                    [p.evaluate(local) for p in operation.params],
+                    ops,
+                    operation.matrix,
+                )
+                current = _apply_matrix(current, matrix, operation.qubits, num_qubits, ops)
+            return current
+
+        if ops.backend == "jax":
+            import jax
+
+            state = jax.checkpoint(evolve)(state, *values)
+        else:
+            import torch
+            from torch.utils.checkpoint import checkpoint
+
+            # PyTorch's checkpoint input saver has no forward-AD rule. Keep
+            # directional derivatives on the ordinary native tensor graph.
+            compiling = getattr(torch.compiler, "is_compiling", lambda: False)()
+            dual = not compiling and any(
+                isinstance(v, torch.Tensor)
+                and torch.autograd.forward_ad.unpack_dual(v).tangent is not None
+                for v in (state, *values)
+            )
+            if torch.is_grad_enabled() and not dual:
+                state = checkpoint(
+                    evolve, state, *values, use_reentrant=False, preserve_rng_state=False
+                )
+            else:
+                state = evolve(state, *values)
+    return state
+
+
 def statevector(
     circuit: Circuit,
     bindings: Mapping[str, Any] | None = None,
@@ -202,12 +269,16 @@ def statevector(
     max_qubits: int = 20,
     max_memory_mb: float = 256,
     batch_shape=None,
+    checkpoint_interval=None,
 ):
     """Return a pure state, q0-most-significant. Measurement requires sample/execute.
 
     The torch and jax paths use native tensor operations throughout, allowing
     differentiation with respect to every bound rotation and the global phase.
+    checkpoint_interval recomputes native unitary gate segments during backward
+    to retain fewer activations; it does not change the circuit or state.
     """
+    checkpoint_interval = _checkpoint_interval(circuit, backend, checkpoint_interval)
     _resource_check(circuit, max_qubits, max_memory_mb)
     if circuit.has_effects:
         raise ValidationError(
@@ -256,13 +327,9 @@ def statevector(
         state = np.zeros(2**circuit.num_qubits, dtype=complex)
         state[0] = 1
     state = ops.xp.broadcast_to(state, shape + (2**circuit.num_qubits,))
-    for operation in circuit.operations:
-        if operation.name == "barrier":
-            continue
-        matrix = _gate_matrix(
-            operation.name, [p.evaluate(bindings) for p in operation.params], ops, operation.matrix
-        )
-        state = _apply_matrix(state, matrix, operation.qubits, circuit.num_qubits, ops)
+    state = _evolve_unitary(
+        state, circuit.operations, bindings, circuit.num_qubits, ops, checkpoint_interval
+    )
     phase = ops.array(circuit.global_phase.evaluate(bindings), real_value=True)
     return state * ops.xp.exp(1j * phase)[..., None]
 
@@ -321,8 +388,19 @@ def _expectation_from_state(state, observable, num_qubits, ops):
 
 
 def expectation(
-    circuit, observable, bindings=None, *, backend="numpy", like=None, max_branches=256, **limits
+    circuit,
+    observable,
+    bindings=None,
+    *,
+    backend="numpy",
+    like=None,
+    max_branches=256,
+    checkpoint_interval=None,
+    **limits,
 ):
+    checkpoint_interval = _checkpoint_interval(circuit, backend, checkpoint_interval)
+    if checkpoint_interval is not None:
+        limits["checkpoint_interval"] = checkpoint_interval
     integer(max_branches, "max_branches", 1)
     if circuit.has_effects and isinstance(backend, str) and backend in {"numpy", "torch", "jax"}:
         return expectations(
@@ -370,8 +448,19 @@ def expectation(
 
 
 def expectations(
-    circuit, observables, bindings=None, *, backend="numpy", like=None, max_branches=256, **limits
+    circuit,
+    observables,
+    bindings=None,
+    *,
+    backend="numpy",
+    like=None,
+    max_branches=256,
+    checkpoint_interval=None,
+    **limits,
 ):
+    checkpoint_interval = _checkpoint_interval(circuit, backend, checkpoint_interval)
+    if checkpoint_interval is not None:
+        limits["checkpoint_interval"] = checkpoint_interval
     integer(max_branches, "max_branches", 1)
     observables = tuple(observables)
     if not observables:
