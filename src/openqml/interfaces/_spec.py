@@ -118,6 +118,23 @@ def prepare_layer(circuit, inputs, weights, observables, *, optimize, optimizati
     return (*names, circuit if report is None else report.circuit, report)
 
 
+def broadcast_batch_shape(weights, inputs):
+    """Broadcast only leading dimensions; input and weight feature widths may differ."""
+    import numpy as np
+
+    try:
+        return np.broadcast_shapes(weights.shape[:-1], inputs.shape[:-1])
+    except ValueError as exc:
+        raise ValidationError("Input and weight batch dimensions must be broadcastable.") from exc
+
+
+def _sum_to_shape(values, shape):
+    """Undo NumPy broadcasting for a first-order numerical pullback."""
+    leading = values.ndim - len(shape)
+    axes = tuple(range(leading)) + tuple(leading + i for i, size in enumerate(shape) if size == 1)
+    return values.sum(axis=axes, keepdims=True).reshape(shape)
+
+
 def numeric_rows(layer, weights, inputs):
     """Bind only executable symbols while retaining the source-facing interface."""
     import math
@@ -127,10 +144,17 @@ def numeric_rows(layer, weights, inputs):
     weights, inputs = np.asarray(weights), np.asarray(inputs)
     names = layer.input_parameters + layer.weight_parameters
     active = set(layer.circuit.parameters)
-    flat = np.asarray(inputs).reshape(math.prod(inputs.shape[:-1]), len(layer.input_parameters))
+    shape = broadcast_batch_shape(weights, inputs)
+    count = math.prod(shape)
+    flat = np.broadcast_to(inputs, shape + (len(layer.input_parameters),)).reshape(
+        count, len(layer.input_parameters)
+    )
+    flat_weights = np.broadcast_to(weights, shape + (len(layer.weight_parameters),)).reshape(
+        count, len(layer.weight_parameters)
+    )
     return [
-        {name: value for name, value in zip(names, (*row, *weights), strict=True) if name in active}
-        for row in flat
+        {name: value for name, value in zip(names, (*row, *w), strict=True) if name in active}
+        for row, w in zip(flat, flat_weights, strict=True)
     ]
 
 
@@ -161,14 +185,17 @@ def numeric_vjp(layer, weights, inputs, cotangents, *, input_grad=True, weight_g
         **layer.limits,
     )
     positions = {name: i for i, name in enumerate(selected)}
+    shape = broadcast_batch_shape(weights, inputs)
     dx = np.zeros_like(inputs) if input_grad else None
     dw = np.zeros_like(weights) if weight_grad else None
     for i, name in enumerate(layer.input_parameters if input_grad else ()):
         if name in positions:
-            dx[..., i] = values[:, positions[name]].reshape(inputs.shape[:-1])
+            dx[..., i] = _sum_to_shape(values[:, positions[name]].reshape(shape), inputs.shape[:-1])
     for i, name in enumerate(layer.weight_parameters if weight_grad else ()):
         if name in positions:
-            dw[i] = values[:, positions[name]].sum()
+            dw[..., i] = _sum_to_shape(
+                values[:, positions[name]].reshape(shape), weights.shape[:-1]
+            )
     return dw, dx
 
 
@@ -181,14 +208,18 @@ def numeric_jvp(layer, weights, inputs, weight_tangent, input_tangent):
     from ..gradients import parameter_shift_jvp
 
     weights, inputs = np.asarray(weights), np.asarray(inputs)
-    shape = inputs.shape[:-1]
+    shape = broadcast_batch_shape(weights, inputs)
     count = math.prod(shape)
     source_names = layer.input_parameters + layer.weight_parameters
     active = set(layer.circuit.parameters)
     indices = [i for i, name in enumerate(source_names) if name in active]
     names = tuple(source_names[i] for i in indices)
-    dx = np.asarray(input_tangent).reshape(count, len(layer.input_parameters))
-    dw = np.broadcast_to(weight_tangent, (count, len(layer.weight_parameters)))
+    dx = np.broadcast_to(input_tangent, shape + (len(layer.input_parameters),)).reshape(
+        count, len(layer.input_parameters)
+    )
+    dw = np.broadcast_to(weight_tangent, shape + (len(layer.weight_parameters),)).reshape(
+        count, len(layer.weight_parameters)
+    )
     result = parameter_shift_jvp(
         layer.circuit,
         layer.observables,

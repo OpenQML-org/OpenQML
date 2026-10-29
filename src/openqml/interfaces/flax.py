@@ -56,13 +56,17 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
         return {"params": {"weights": _checkpoint_weights(checkpoint, self.to_spec(), self.dtype)}}
 
     @nn.compact
-    def __call__(self, inputs):
-        weights = self.param(
-            "weights",
-            nn.initializers.normal(self.init_scale),
-            (len(self.weight_parameters),),
-            self.dtype,
-        )
+    def __call__(self, inputs, *, weights=None):
+        """Use owned weights or differentiable weights supplied by a classical model."""
+        if weights is None:
+            weights = self.param(
+                "weights",
+                nn.initializers.normal(self.init_scale),
+                (len(self.weight_parameters),),
+                self.dtype,
+            )
+        else:
+            weights = jnp.asarray(weights, dtype=self.dtype)
         layer = FunctionalLayer(
             self.circuit,
             self.input_parameters,

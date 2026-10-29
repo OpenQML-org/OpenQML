@@ -32,7 +32,9 @@ model(torch.randn(32, 8)).square().mean().backward()
 optimizer.step()
 ```
 
-JAX exposes `layer(weights, inputs)`; Flax uses standard parameter trees and Optax. `batch_chunk_size` bounds each simulator batch while preserving gradients. Backpropagation still retains required activations. Native tensor backends support higher derivatives; external numerical bridges support first-order differentiation.
+JAX exposes `layer(weights, inputs)`; Flax uses standard parameter trees and Optax. For classical weight generators and ensembles, pass broadcastable `(..., n_weights)` arrays via PyTorch's `layer.functional(weights, inputs)`, JAX's call, or Flax's `weights=` argument. Both inputs and generated weights receive gradients.
+
+`batch_chunk_size` bounds each simulator batch; backpropagation retains required activations. Native tensor backends support higher derivatives; external numerical bridges support first-order differentiation.
 
 ## Circuit interoperability
 
@@ -48,7 +50,9 @@ result = plan.export()  # Raises ConversionError for reported incompatibilities.
 print(result.value)
 ```
 
-The IR preserves parameter expressions, wire order, supported channels, measurements and classical branches. Reports identify incompatible features, parameter renaming and gate decompositions. General runtime classical computation, pulse schedules and some native control flow remain outside the portable subset. Simulator execution has explicit resource budgets.
+Plans report source and prepared resources, required extras and deferred SDK synthesis. Conversion accepts `max_operations`, `max_depth` and `max_output_statements` budgets; the CLI exposes matching flags. Single-qubit matrices lower with NumPy and retain global phase; OpenQASM 2 phase loss is rejected.
+
+The IR preserves parameter expressions, wire order, supported channels, measurements and classical branches. General runtime classical computation, pulse schedules and some native control flow remain outside the portable subset. Simulator execution has explicit resource budgets.
 
 ## Development
 

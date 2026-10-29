@@ -3,7 +3,7 @@
 from dataclasses import dataclass, replace
 from math import pi
 
-from .errors import ValidationError, conversion_error
+from .errors import ConversionError, ValidationError, conversion_error
 from .ir import GATES_V1, UNITARY_GATES, Circuit, Operation, integer
 from .parameters import Expression, expression
 
@@ -30,6 +30,16 @@ _ADJOINT = {"s": "sdg", "sdg": "s", "t": "tdg", "tdg": "t", "sx": "sxdg", "sxdg"
 _ROTATIONS = frozenset("rx ry rz p rxx ryy rzz crx cry crz cp".split())
 
 
+def _qasm_basis(circuit):
+    # Multi-qubit matrices require SDK synthesis. Leave those matrices intact
+    # until export; circuits containing only one-qubit matrices use NumPy.
+    return QASM_BASIS | (
+        {"unitary"}
+        if any(op.name == "unitary" and len(op.qubits) > 1 for _, op in circuit.walk_operations())
+        else set()
+    )
+
+
 def _rule(op):
     """Return chronological operations and an added global angle."""
     q, p = op.qubits, op.params
@@ -37,6 +47,27 @@ def _rule(op):
     def gate(name, *qubits, params=()):
         return Operation(name, tuple(qubits), tuple(params))
 
+    if op.name == "unitary" and len(q) == 1:
+        import numpy as np
+
+        matrix = np.asarray(op.matrix)
+        cosine, sine = abs(matrix[0, 0]), abs(matrix[1, 0])
+        theta = 2 * np.arctan2(sine, cosine)
+        # The diagonal and anti-diagonal cases have a free Euler angle. Use
+        # a nonzero pivot so its phase is well-defined, including near poles.
+        if sine == 0:
+            phase = np.angle(matrix[0, 0])
+            phi, lam = 0.0, np.angle(matrix[1, 1]) - phase
+        elif cosine == 0:
+            # With zero diagonal entries both off-diagonal phases fit directly
+            # in U's free angles; do not invent an unnecessary global phase.
+            phase = 0.0
+            phi, lam = np.angle(matrix[1, 0]), np.angle(-matrix[0, 1])
+        else:
+            phase = np.angle(matrix[0, 0])
+            phi = np.angle(matrix[1, 0]) - phase
+            lam = np.angle(-matrix[0, 1]) - phase
+        return (gate("u", *q, params=(theta, phi, lam)),), expression(float(phase))
     if op.name == "id":
         return (), Expression()
     if op.name == "u":
@@ -143,7 +174,43 @@ def _rule(op):
     raise conversion_error("DECOMPOSITION_UNAVAILABLE", f"Cannot lower gate {op.name!r}.")
 
 
-def decompose(circuit: Circuit, *, basis=PORTABLE_BASIS, max_operations=100_000) -> Circuit:
+def _operation_location(path):
+    return f"operations[{path[0]}]" + "".join(
+        f".blocks[{block}].operations[{index}]"
+        for block, index in zip(path[1::2], path[2::2], strict=True)
+    )
+
+
+def _check_circuit_limits(circuit, *, max_operations=100_000, max_depth=64):
+    """Bound work before recursive transforms or parameter traversal start."""
+    integer(max_operations, "max_operations", 1)
+    integer(max_depth, "max_depth")
+    if not isinstance(circuit, Circuit):
+        raise ValidationError("Expected an OpenQML Circuit.")
+    pending, count = [(circuit, (), 0)], 0
+    while pending:
+        body, prefix, depth = pending.pop()
+        if depth > min(max_depth, 128):
+            raise conversion_error(
+                "CONTROL_DEPTH_LIMIT",
+                "Circuit exceeds max_depth or the 128-level ceiling.",
+                _operation_location(prefix[:-1]),
+            )
+        for index, op in enumerate(body.operations):
+            path = prefix + (index,)
+            count += 1
+            if count > max_operations:
+                raise conversion_error(
+                    "DECOMPOSITION_LIMIT",
+                    "Circuit exceeds max_operations.",
+                    _operation_location(path),
+                )
+            pending.extend((block, path + (i,), depth + 1) for i, block in enumerate(op.blocks))
+
+
+def decompose(
+    circuit: Circuit, *, basis=PORTABLE_BASIS, max_operations=100_000, max_depth=64
+) -> Circuit:
     """Lower to a requested gate set, preserving symbolic angles and full phase.
 
     Barriers and measurements are retained. A cyclic or unavailable decomposition
@@ -154,40 +221,51 @@ def decompose(circuit: Circuit, *, basis=PORTABLE_BASIS, max_operations=100_000)
         raise ValidationError(
             "basis must be a nonempty collection of supported unitary gate names."
         )
-    integer(max_operations, "max_operations", 1)
-    output, phase = [], circuit.global_phase
+    _check_circuit_limits(circuit, max_operations=max_operations, max_depth=max_depth)
+    count = 0
 
-    def emit(op, path):
-        nonlocal phase
-        if op.blocks:
-            op = replace(
-                op,
-                blocks=tuple(
-                    decompose(b, basis=basis, max_operations=max_operations) for b in op.blocks
-                ),
-            )
-        if op.name in basis or op.name not in UNITARY_GATES:
-            if len(output) >= max_operations:
+    def lower(body, prefix):
+        output, phase = [], body.global_phase
+
+        def emit(op, ancestors, location):
+            nonlocal phase, count
+            if op.name in basis or op.name not in UNITARY_GATES:
+                count += 1
+                if count > max_operations:
+                    raise conversion_error(
+                        "DECOMPOSITION_LIMIT", "Expanded circuit exceeds max_operations.", location
+                    )
+                if op.blocks:
+                    op = replace(
+                        op,
+                        blocks=tuple(
+                            lower(block, path + (i,)) for i, block in enumerate(op.blocks)
+                        ),
+                    )
+                output.append(op)
+                return
+            if op.name in ancestors:
                 raise conversion_error(
-                    "DECOMPOSITION_LIMIT", "Expanded circuit exceeds max_operations."
+                    "DECOMPOSITION_UNAVAILABLE",
+                    f"Gate {op.name!r} cannot be expressed in this basis.",
+                    location,
                 )
-            output.append(op)
-            return
-        if op.name in path:
-            raise conversion_error(
-                "DECOMPOSITION_UNAVAILABLE", f"Gate {op.name!r} cannot be expressed in this basis."
-            )
-        children, delta = _rule(op)
-        phase += delta
-        for child in children:
-            emit(child, path | {op.name})
+            try:
+                children, delta = _rule(op)
+            except ConversionError as exc:
+                raise ConversionError(
+                    tuple(replace(d, location=location) for d in exc.diagnostics)
+                ) from exc
+            phase += delta
+            for child in children:
+                emit(child, ancestors | {op.name}, location)
 
-    for operation in circuit.operations:
-        emit(operation, frozenset())
-    result = replace(circuit, operations=tuple(output), global_phase=phase)
-    if sum(1 for _ in result.walk_operations()) > max_operations:
-        raise conversion_error("DECOMPOSITION_LIMIT", "Expanded blocks exceed max_operations.")
-    return result
+        for index, operation in enumerate(body.operations):
+            path = prefix + (index,)
+            emit(operation, frozenset(), _operation_location(path))
+        return replace(body, operations=tuple(output), global_phase=phase)
+
+    return lower(circuit, ())
 
 
 def inverse(circuit: Circuit) -> Circuit:
