@@ -17,7 +17,7 @@ For a source checkout, use `python -m pip install '.[all,dev]'`.
 
 Use one optimizer for classical parameters and quantum weights, with broadcast batches, input gradients and portable checkpoints.
 
-Compose blocks and weights with `spec.compose(...)` and `checkpoint.compose(...)`. `spec.reparameterize(...)` ties symbols or builds nonlinear encoders; `spec.bind(...)` and `checkpoint.freeze(...)` embed constants.
+Compose blocks with `spec.compose(...)` and `checkpoint.compose(...)`. Reparameterize symbols with `spec.reparameterize(...)`; embed constants with `spec.bind(...)` and `checkpoint.freeze(...)`.
 
 ```python
 import torch
@@ -38,11 +38,11 @@ JAX exposes `layer(weights, inputs)`; Flax uses standard parameter trees and Opt
 
 `batch_chunk_size` bounds each simulator batch. For native unitary circuits, `checkpoint_interval` trades recomputation for fewer retained training tensors. Native tensor backends support higher derivatives; external numerical bridges support first-order differentiation.
 
-For unitary simulation, `backend="numpy", gradient_method="adjoint"` reuses bounded batches. VJPs use reverse sweeps; JVPs propagate one tangent state. `AdjointPlan` accepts named array columns and retains state vectors independent of gate count.
+For unitary simulation, `backend="numpy", gradient_method="adjoint"` reuses bounded batches. `AdjointPlan` supports VJPs and directional JVPs with state-vector storage independent of gate count.
 
 `execution_method="pauli"` compiles supported unitary expectations into real arithmetic without state vectors. `PauliPlan` also evaluates NumPy arrays. `pauli_options` bounds symbolic growth; exhaustion raises diagnostics without approximate truncation. Growth can be exponential.
 
-`execution_method="planned"` factors readouts and selects exact Pauli or dense engines. Repeated dense functions execute once; matching blocks with different parameters pack into native batches. `ExpectationPlan` exposes provenance, costs, rejection reasons and `dense_batches`. `planning_options` bounds search, groups, dense width and `max_dense_batch`; packing also adapts to working memory. Native PyTorch/JAX/Flax retain higher derivatives and source checkpoints. Memory estimates exclude autodiff retention; engine selection uses a static heuristic. `plan.verify(...)` compares expectations against bounded full-source execution through NumPy, Qiskit, Cirq or PennyLane.
+`execution_method="planned"` factors readouts and selects exact Pauli or dense engines. Repeated dense functions execute once; matching blocks pack parameter lanes into native batches. Readouts run only on requesting lanes. `ExpectationPlan` exposes provenance, costs, rejection reasons, `dense_batches` and `ReadoutRoute` destinations. `planning_options` bounds search, groups, dense width and `max_dense_batch`; packing adapts to working memory. Native PyTorch/JAX/Flax retain higher derivatives and source checkpoints. Memory estimates exclude autodiff retention; selection uses a static heuristic. `plan.verify(...)` compares expectations against bounded full-source NumPy, Qiskit, Cirq or PennyLane execution.
 
 ## Circuit interoperability
 
@@ -60,7 +60,7 @@ print(result.value)
 
 Plans report resources, required extras and deferred synthesis. Conversion, `QuantumProgram.convert(...)` and the CLI expose operation, nesting and output-statement limits, enforced before built-in import expansion. Single-qubit matrices lower with NumPy while retaining phase; OpenQASM 2 phase loss is rejected.
 
-`ConversionPlan.verify(bindings)` checks export/reimport over a complete quantum input basis, including unitary phase, channels and final classical records with feedback. Checks use bounded basis chunks and the IR simulator at one binding. `ConversionCheck.raise_for_errors()` rejects numerical mismatches; this checks adapters, not target-runtime behavior or all parameter values.
+`ConversionPlan.verify(bindings)` checks export/reimport over a complete input basis, including unitary phase, channels and final classical records. `mode="native"` independently executes the exported SDK artifact; OpenQASM uses Qiskit's frontend. Native checks cover unitary programs and channels/reset through spanning physical inputs; recorded measurement and feedback require round-trip mode. Checks are bounded and pointwise in parameters. `ConversionCheck.raise_for_errors()` rejects numerical mismatches.
 
 IR readers check byte, operation, nesting, expression and matrix budgets before constructing circuits. Import settings belong in `source_options`; portable layer and checkpoint readers accept matching matrix limits.
 
