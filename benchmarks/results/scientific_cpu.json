@@ -1,0 +1,429 @@
+{
+  "scope": "restricted_families_not_general_quantum_scale",
+  "cpu_only": true,
+  "source_sha256": "b7c70e611ca1b3bb228d6602f627bcc85d092fa223f1aef10100303ff39a0748",
+  "environment": {
+    "python": "3.12.14",
+    "system": "Linux",
+    "machine": "x86_64",
+    "numpy": "2.5.4",
+    "worker_threads": {
+      "OMP_NUM_THREADS": 1,
+      "OPENBLAS_NUM_THREADS": 1
+    }
+  },
+  "benchmark_sha256": "4d98cd4ed41af33c46e787a0b6f45b196e226cc688c00c9d1fcce08fa4d43051",
+  "runs": [
+    {
+      "case": "ghz",
+      "qubits": 1024,
+      "structure": "GHZ_chain",
+      "representation": "exact_declared_Pauli_expectations",
+      "generic_dense_simulation": false,
+      "analytic_log2_Schmidt_rank_at_middle_cut": 1,
+      "small_dense_reference_qubits": 6,
+      "small_dense_max_error": 2.220446049250313e-16,
+      "analytic_binding_count": 4,
+      "analytic_max_error": 0.0,
+      "prepare_seconds": 0.01566980200004764,
+      "warm_median_seconds": 4.1244999010814354e-05,
+      "warm_samples_seconds": [
+        0.00011285500113444868,
+        0.00011922700105060358,
+        4.1244999010814354e-05,
+        3.692599966598209e-05,
+        4.308700044930447e-05,
+        2.9132999770808965e-05,
+        2.774900167423766e-05
+      ],
+      "prepare_memory": {
+        "status": "measured",
+        "metric": "linux_procfs_reset_hwm",
+        "scope": "current_process_call_window",
+        "approximate": true,
+        "start_rss_bytes": 44466176,
+        "peak_rss_bytes": 44548096,
+        "peak_over_start_bytes": 81920
+      },
+      "plan": {
+        "semantics": "declared_expectations",
+        "initial_state": "all_zero",
+        "source_resources": {
+          "num_qubits": 1024,
+          "num_clbits": 0,
+          "num_parameters": 1,
+          "gates": 1025,
+          "multi_qubit_gates": 1023,
+          "measurements": 0,
+          "depth": 1024,
+          "channels": 0,
+          "resets": 0,
+          "conditionals": 0
+        },
+        "prepared_operations": 1025,
+        "outputs": 2,
+        "arithmetic_nodes": 3,
+        "construction_nodes": 8,
+        "peak_terms": 2,
+        "propagation_work": 3074,
+        "active_parameters": [
+          "theta"
+        ],
+        "removed_parameters": [],
+        "limits": {
+          "max_terms": 4096,
+          "max_nodes": 100000,
+          "max_work": 1000000,
+          "max_operations": 100000,
+          "max_memory_mb": 256.0
+        },
+        "diagnostics": [
+          {
+            "code": "PAULI_EXPECTATIONS_ONLY",
+            "message": "The coefficient graph preserves declared expectations from the all-zero initial state; full-program export retains the source IR.",
+            "location": "circuit",
+            "severity": "info",
+            "hint": ""
+          },
+          {
+            "code": "PAULI_EXACT_COMPILATION",
+            "message": "Compiled 3 real arithmetic nodes with peak frontier 2; no approximate term truncation.",
+            "location": "circuit",
+            "severity": "info",
+            "hint": ""
+          }
+        ]
+      },
+      "dense_storage_estimate": {
+        "schema": "openqml.resource_estimate",
+        "scope": "storage_and_policy_only",
+        "dtype": "complex128",
+        "budget_model": "four_state_buffers_per_batch_row",
+        "excludes": [
+          "local_matrices",
+          "autodiff_tapes",
+          "backend_workspace",
+          "density_branches"
+        ],
+        "large_byte_counts": "null above signed-64-bit range; log2 fields remain available",
+        "num_qubits": 1024,
+        "operations": 1025,
+        "batch_size": 1,
+        "max_qubits": 20,
+        "max_memory_mb": 256.0,
+        "statevector_log2_bytes": 1028.0,
+        "density_log2_bytes": 2052.0,
+        "statevector_bytes": null,
+        "density_bytes": null,
+        "statevector_budget_bytes": null,
+        "within_statevector_policy": false,
+        "diagnostics": [
+          {
+            "code": "DENSE_WIDTH_LIMIT",
+            "message": "Source width exceeds the selected dense execution limit.",
+            "location": "num_qubits",
+            "severity": "error",
+            "hint": ""
+          },
+          {
+            "code": "DENSE_MEMORY_LIMIT",
+            "message": "Four state buffers exceed the budget; dense storage grows exponentially.",
+            "location": "max_memory_mb",
+            "severity": "error",
+            "hint": ""
+          }
+        ]
+      }
+    },
+    {
+      "case": "bell",
+      "qubits": 1024,
+      "structure": "product_of_crossed_Bell_pairs",
+      "representation": "exact_declared_Pauli_expectations",
+      "generic_dense_simulation": false,
+      "analytic_log2_Schmidt_rank_at_middle_cut": 512,
+      "small_dense_reference_qubits": 6,
+      "small_dense_max_error": 5.551115123125783e-16,
+      "analytic_binding_count": 4,
+      "analytic_max_error": 0.0,
+      "prepare_seconds": 0.011782262999986415,
+      "warm_median_seconds": 3.703099901031237e-05,
+      "warm_samples_seconds": [
+        5.174600119062234e-05,
+        0.00012032599988742732,
+        3.2293999538524076e-05,
+        3.703099901031237e-05,
+        0.00012432999938027933,
+        3.162699977110606e-05,
+        2.5858000299194828e-05
+      ],
+      "prepare_memory": {
+        "status": "measured",
+        "metric": "linux_procfs_reset_hwm",
+        "scope": "current_process_call_window",
+        "approximate": true,
+        "start_rss_bytes": 44421120,
+        "peak_rss_bytes": 44503040,
+        "peak_over_start_bytes": 81920
+      },
+      "plan": {
+        "semantics": "declared_expectations",
+        "initial_state": "all_zero",
+        "source_resources": {
+          "num_qubits": 1024,
+          "num_clbits": 0,
+          "num_parameters": 1,
+          "gates": 1025,
+          "multi_qubit_gates": 512,
+          "measurements": 0,
+          "depth": 3,
+          "channels": 0,
+          "resets": 0,
+          "conditionals": 0
+        },
+        "prepared_operations": 1025,
+        "outputs": 2,
+        "arithmetic_nodes": 3,
+        "construction_nodes": 8,
+        "peak_terms": 2,
+        "propagation_work": 3074,
+        "active_parameters": [
+          "theta"
+        ],
+        "removed_parameters": [],
+        "limits": {
+          "max_terms": 4096,
+          "max_nodes": 100000,
+          "max_work": 1000000,
+          "max_operations": 100000,
+          "max_memory_mb": 256.0
+        },
+        "diagnostics": [
+          {
+            "code": "PAULI_EXPECTATIONS_ONLY",
+            "message": "The coefficient graph preserves declared expectations from the all-zero initial state; full-program export retains the source IR.",
+            "location": "circuit",
+            "severity": "info",
+            "hint": ""
+          },
+          {
+            "code": "PAULI_EXACT_COMPILATION",
+            "message": "Compiled 3 real arithmetic nodes with peak frontier 2; no approximate term truncation.",
+            "location": "circuit",
+            "severity": "info",
+            "hint": ""
+          }
+        ]
+      },
+      "dense_storage_estimate": {
+        "schema": "openqml.resource_estimate",
+        "scope": "storage_and_policy_only",
+        "dtype": "complex128",
+        "budget_model": "four_state_buffers_per_batch_row",
+        "excludes": [
+          "local_matrices",
+          "autodiff_tapes",
+          "backend_workspace",
+          "density_branches"
+        ],
+        "large_byte_counts": "null above signed-64-bit range; log2 fields remain available",
+        "num_qubits": 1024,
+        "operations": 1025,
+        "batch_size": 1,
+        "max_qubits": 20,
+        "max_memory_mb": 256.0,
+        "statevector_log2_bytes": 1028.0,
+        "density_log2_bytes": 2052.0,
+        "statevector_bytes": null,
+        "density_bytes": null,
+        "statevector_budget_bytes": null,
+        "within_statevector_policy": false,
+        "diagnostics": [
+          {
+            "code": "DENSE_WIDTH_LIMIT",
+            "message": "Source width exceeds the selected dense execution limit.",
+            "location": "num_qubits",
+            "severity": "error",
+            "hint": ""
+          },
+          {
+            "code": "DENSE_MEMORY_LIMIT",
+            "message": "Four state buffers exceed the budget; dense storage grows exponentially.",
+            "location": "max_memory_mb",
+            "severity": "error",
+            "hint": ""
+          }
+        ]
+      }
+    },
+    {
+      "case": "cluster",
+      "qubits": 256,
+      "structure": "connected_square_cluster_graph",
+      "representation": "exact_declared_Pauli_expectations",
+      "generic_dense_simulation": false,
+      "analytic_log2_Schmidt_rank_at_middle_cut": 16,
+      "small_dense_reference_qubits": 4,
+      "small_dense_max_error": 7.771561172376096e-16,
+      "analytic_binding_count": 4,
+      "analytic_max_error": 0.0,
+      "prepare_seconds": 0.01578887899995607,
+      "warm_median_seconds": 5.418500040832441e-05,
+      "warm_samples_seconds": [
+        0.001120502000048873,
+        5.718399916077033e-05,
+        3.9339000068139285e-05,
+        9.007400149130262e-05,
+        3.702300091390498e-05,
+        3.4071001209667884e-05,
+        5.418500040832441e-05
+      ],
+      "prepare_memory": {
+        "status": "measured",
+        "metric": "linux_procfs_reset_hwm",
+        "scope": "current_process_call_window",
+        "approximate": true,
+        "start_rss_bytes": 44482560,
+        "peak_rss_bytes": 44544000,
+        "peak_over_start_bytes": 61440
+      },
+      "plan": {
+        "semantics": "declared_expectations",
+        "initial_state": "all_zero",
+        "source_resources": {
+          "num_qubits": 256,
+          "num_clbits": 0,
+          "num_parameters": 1,
+          "gates": 737,
+          "multi_qubit_gates": 480,
+          "measurements": 0,
+          "depth": 61,
+          "channels": 0,
+          "resets": 0,
+          "conditionals": 0
+        },
+        "prepared_operations": 737,
+        "outputs": 5,
+        "arithmetic_nodes": 3,
+        "construction_nodes": 8,
+        "peak_terms": 2,
+        "propagation_work": 5157,
+        "active_parameters": [
+          "theta"
+        ],
+        "removed_parameters": [],
+        "limits": {
+          "max_terms": 4096,
+          "max_nodes": 100000,
+          "max_work": 1000000,
+          "max_operations": 100000,
+          "max_memory_mb": 256.0
+        },
+        "diagnostics": [
+          {
+            "code": "PAULI_EXPECTATIONS_ONLY",
+            "message": "The coefficient graph preserves declared expectations from the all-zero initial state; full-program export retains the source IR.",
+            "location": "circuit",
+            "severity": "info",
+            "hint": ""
+          },
+          {
+            "code": "PAULI_EXACT_COMPILATION",
+            "message": "Compiled 3 real arithmetic nodes with peak frontier 2; no approximate term truncation.",
+            "location": "circuit",
+            "severity": "info",
+            "hint": ""
+          }
+        ]
+      },
+      "dense_storage_estimate": {
+        "schema": "openqml.resource_estimate",
+        "scope": "storage_and_policy_only",
+        "dtype": "complex128",
+        "budget_model": "four_state_buffers_per_batch_row",
+        "excludes": [
+          "local_matrices",
+          "autodiff_tapes",
+          "backend_workspace",
+          "density_branches"
+        ],
+        "large_byte_counts": "null above signed-64-bit range; log2 fields remain available",
+        "num_qubits": 256,
+        "operations": 737,
+        "batch_size": 1,
+        "max_qubits": 20,
+        "max_memory_mb": 256.0,
+        "statevector_log2_bytes": 260.0,
+        "density_log2_bytes": 516.0,
+        "statevector_bytes": null,
+        "density_bytes": null,
+        "statevector_budget_bytes": null,
+        "within_statevector_policy": false,
+        "diagnostics": [
+          {
+            "code": "DENSE_WIDTH_LIMIT",
+            "message": "Source width exceeds the selected dense execution limit.",
+            "location": "num_qubits",
+            "severity": "error",
+            "hint": ""
+          },
+          {
+            "code": "DENSE_MEMORY_LIMIT",
+            "message": "Four state buffers exceed the budget; dense storage grows exponentially.",
+            "location": "max_memory_mb",
+            "severity": "error",
+            "hint": ""
+          }
+        ]
+      }
+    },
+    {
+      "case": "ir",
+      "work_performed": "IR_counting_and_storage_estimation_only",
+      "quantum_simulation_performed": false,
+      "seconds": 0.253783221998674,
+      "resources": {
+        "schema": "openqml.resource_estimate",
+        "scope": "storage_and_policy_only",
+        "dtype": "complex128",
+        "budget_model": "four_state_buffers_per_batch_row",
+        "excludes": [
+          "local_matrices",
+          "autodiff_tapes",
+          "backend_workspace",
+          "density_branches"
+        ],
+        "large_byte_counts": "null above signed-64-bit range; log2 fields remain available",
+        "num_qubits": 8,
+        "operations": 100000,
+        "batch_size": 1,
+        "max_qubits": 20,
+        "max_memory_mb": 256.0,
+        "statevector_log2_bytes": 12.0,
+        "density_log2_bytes": 20.0,
+        "statevector_bytes": 4096,
+        "density_bytes": 1048576,
+        "statevector_budget_bytes": 16384,
+        "within_statevector_policy": true,
+        "diagnostics": []
+      },
+      "memory": {
+        "status": "measured",
+        "metric": "linux_procfs_reset_hwm",
+        "scope": "current_process_call_window",
+        "approximate": true,
+        "start_rss_bytes": 61235200,
+        "peak_rss_bytes": 61247488,
+        "peak_over_start_bytes": 12288
+      }
+    },
+    {
+      "case": "guard",
+      "representation": "exact_Pauli_propagation",
+      "status": "rejected_by_explicit_budget",
+      "codes": [
+        "PAULI_TERM_LIMIT"
+      ]
+    }
+  ]
+}

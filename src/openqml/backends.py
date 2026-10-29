@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass
 from threading import RLock
@@ -80,7 +79,9 @@ class ExecutionOptions:
         count = integer(batch_size, "batch_size", 1)
         if budget <= 0:
             raise ValidationError("max_memory_mb must be positive.")
-        width = math.floor(math.log2(budget) + 20 - math.log2(4 * 16) - math.log2(count))
+        numerator, denominator = budget.as_integer_ratio()
+        capacity = (numerator << 20) // (denominator * 4 * 16 * count)
+        width = capacity.bit_length() - 1
         if max_qubits is not None:
             width = min(width, integer(max_qubits, "max_qubits", 1))
         if width < 1:

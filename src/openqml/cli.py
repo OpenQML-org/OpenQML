@@ -125,6 +125,9 @@ def main(argv=None):
                 "cirq-core",
                 "flax",
                 "optax",
+                "openqasm3",
+                "sympy",
+                "packaging",
             ):
                 try:
                     version(package)

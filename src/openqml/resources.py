@@ -72,7 +72,10 @@ def estimate_resources(
     def byte_count(exponent):
         return batch * (1 << exponent) if exponent + batch.bit_length() <= 63 else None
 
-    memory_ok = state_log + 2 <= math.log2(options.max_memory_mb) + 20
+    budget = float(options.max_memory_mb)
+    numerator, denominator = budget.as_integer_ratio()
+    available_bytes = (numerator << 20) // denominator
+    memory_ok = batch <= available_bytes >> (width + 6)
     width_ok = max_qubits is None or width <= max_qubits
     notes = []
     if not width_ok:
@@ -105,7 +108,7 @@ def estimate_resources(
         sum(1 for _ in circuit.walk_operations()),
         batch,
         max_qubits,
-        options.max_memory_mb,
+        budget,
         state_log,
         density_log,
         byte_count(width + 4),

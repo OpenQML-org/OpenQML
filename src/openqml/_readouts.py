@@ -13,7 +13,7 @@ def _diagonal_value(diagonal, mask, num_qubits):
     value = diagonal.reshape(shape + (2,) * num_qubits)
     if axes:
         value = value.sum(axis=axes)
-    for _ in range(mask.bit_count()):
+    for _ in range(num_qubits - len(axes)):
         value = value[..., 0] - value[..., 1]
     return value
 
