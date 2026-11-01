@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
+from ._parameter_batches import CircuitCache, parameter_batches
 from .backends import BackendCapabilities
 from .errors import BackendError, ResourceError, ValidationError
 from .observables import Hamiltonian
@@ -22,11 +23,14 @@ class QiskitEstimatorBackend:
     name: str = "qiskit-estimator-v2"
     precision: float | None = None
     pass_manager: object = None
+    cache_size: int = 16
+    _cache: object = field(init=False, repr=False, compare=False)
     capabilities: BackendCapabilities = field(
         default_factory=lambda: BackendCapabilities(native_expectations=True)
     )
 
     def __post_init__(self):
+        object.__setattr__(self, "_cache", CircuitCache(self.cache_size))
         if not callable(getattr(self.estimator, "run", None)):
             raise ValidationError("Provide an initialized Qiskit V2 estimator.")
         if self.precision is not None:
@@ -34,6 +38,10 @@ class QiskitEstimatorBackend:
 
             if real(self.precision) < 0:
                 raise ValidationError("Estimator precision must be nonnegative.")
+
+    def clear_cache(self):
+        """Invalidate ISA circuits after changing a caller-owned pass manager/target."""
+        self._cache.clear()
 
     def expectations_batch(self, circuits, observables, *, options):
         from .adapters._common import dependency
@@ -49,27 +57,39 @@ class QiskitEstimatorBackend:
             operators.append(
                 SparsePauliOp.from_list([(t.paulis[::-1], t.coefficient) for t in terms])
             )
-        pubs = []
-        for circuit in circuits:
-            native = to_qiskit(circuit)
+        pubs, layouts = [], []
+        for rows, prototype, bindings in parameter_batches(circuits, options.max_memory_mb):
+
+            def compile_circuit(prototype=prototype):
+                native = to_qiskit(prototype)
+                return native if self.pass_manager is None else self.pass_manager.run(native)
+
+            native = self._cache.get(prototype, compile_circuit)
             mapped = operators
             if self.pass_manager is not None:
-                native = self.pass_manager.run(native)
                 if native.layout is None:
-                    if native.num_qubits != circuit.num_qubits:
+                    if native.num_qubits != prototype.num_qubits:
                         raise BackendError(
                             "Transpilation changed width without providing a layout."
                         )
                 else:
                     mapped = [operator.apply_layout(native.layout) for operator in operators]
-            pubs.append((native, mapped))
+            parameters = [bindings[p.name] for p in native.parameters]
+            values = np.stack(parameters, axis=-1) if parameters else np.empty((len(rows), 0))
+            # Observable (M,1) and parameter (B,) shapes broadcast to (M,B).
+            pubs.append((native, [[operator] for operator in mapped], values))
+            layouts.append(rows)
         try:
             results = self.estimator.run(pubs, precision=self.precision).result()
-            if len(results) != len(circuits):
+            if len(results) != len(pubs):
                 raise BackendError("Estimator returned an unexpected number of PUB results.")
-            return np.asarray(
-                [np.asarray(pub.data.evs).reshape(-1) for pub in results], dtype=float
-            )
+            output = np.empty((len(circuits), len(observables)), dtype=float)
+            for rows, pub in zip(layouts, results, strict=True):
+                data = np.asarray(pub.data.evs)
+                if data.shape != (len(observables), len(rows)):
+                    raise BackendError("Estimator returned an unexpected PUB broadcast shape.")
+                output[list(rows)] = data.T
+            return output
         except BackendError:
             raise
         except Exception as exc:
@@ -83,6 +103,8 @@ class QiskitSamplerBackend:
     sampler: object
     name: str = "qiskit-sampler-v2"
     pass_manager: object = None
+    cache_size: int = 16
+    _cache: object = field(init=False, repr=False, compare=False)
     capabilities: BackendCapabilities = field(
         default_factory=lambda: BackendCapabilities(
             native_sampling=True, mid_circuit_measurements=True
@@ -90,29 +112,47 @@ class QiskitSamplerBackend:
     )
 
     def __post_init__(self):
+        object.__setattr__(self, "_cache", CircuitCache(self.cache_size))
         if not callable(getattr(self.sampler, "run", None)):
             raise ValidationError("Provide an initialized Qiskit V2 sampler.")
+
+    def clear_cache(self):
+        """Invalidate ISA circuits after changing a caller-owned pass manager/target."""
+        self._cache.clear()
 
     def sample_batch(self, circuits, shots, *, options):
         from .adapters.qiskit import to_qiskit
 
-        jobs = []
-        for circuit in circuits:
-            if not circuit.has_measurements:
-                circuit = replace(circuit, num_clbits=0).measure_all()
-            native = to_qiskit(circuit)
-            if self.pass_manager is not None:
-                native = self.pass_manager.run(native)
-            jobs.append(native)
+        measured = [
+            c if c.has_measurements else replace(c, num_clbits=0).measure_all() for c in circuits
+        ]
+        jobs, layouts = [], []
+        for rows, prototype, bindings in parameter_batches(measured, options.max_memory_mb):
+
+            def compile_circuit(prototype=prototype):
+                native = to_qiskit(prototype)
+                return native if self.pass_manager is None else self.pass_manager.run(native)
+
+            native = self._cache.get(prototype, compile_circuit)
+            parameters = [bindings[p.name] for p in native.parameters]
+            values = np.stack(parameters, axis=-1) if parameters else np.empty((len(rows), 0))
+            jobs.append((native, values))
+            layouts.append(rows)
         try:
-            results = self.sampler.run([(job,) for job in jobs], shots=shots).result()
+            results = self.sampler.run(jobs, shots=shots).result()
             if len(results) != len(jobs):
                 raise BackendError("Sampler returned an unexpected number of PUB results.")
             # to_qiskit creates one register named c, in c0..cN IR order. A pass
             # manager may add ancillas but must preserve that classical interface.
-            return [
-                {key[::-1]: int(n) for key, n in pub.data.c.get_counts().items()} for pub in results
-            ]
+            output = [None] * len(circuits)
+            for rows, pub in zip(layouts, results, strict=True):
+                if pub.data.c.shape != (len(rows),):
+                    raise BackendError("Sampler returned an unexpected PUB broadcast shape.")
+                for i, row in enumerate(rows):
+                    output[row] = {
+                        key[::-1]: int(n) for key, n in pub.data.c.get_counts((i,)).items()
+                    }
+            return output
         except BackendError:
             raise
         except Exception as exc:

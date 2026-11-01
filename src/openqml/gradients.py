@@ -71,7 +71,7 @@ class ShiftPlan:
     circuit: Circuit
     observables: tuple
     parameters: tuple | None = None
-    backend: object = "numpy"
+    backend: object = "auto"
     max_qubits: int | None = None
     max_memory_mb: float = 256
     max_branches: int = 256
@@ -94,6 +94,22 @@ class ShiftPlan:
         ExecutionOptions(self.max_qubits, self.max_memory_mb, self.seed, self.max_branches)
         tensor = isinstance(self.backend, str) and self.backend in {"torch", "jax"}
         backend = self.backend if tensor else get_backend(self.backend)
+        if not tensor:
+            from .runtime import PriorityBackend, resolve_backend
+
+            if isinstance(backend, PriorityBackend):
+                backend = resolve_backend(
+                    backend,
+                    "expectations",
+                    [self.circuit],
+                    obs,
+                    options=ExecutionOptions(
+                        self.max_qubits, self.max_memory_mb, self.seed, self.max_branches
+                    ),
+                )
+                # A derivative evaluation must keep the provider's lowering,
+                # noise placement and determinism contract for all its shifts.
+                object.__setattr__(self, "backend", backend)
         exact = tensor or backend.capabilities.deterministic_expectations
         if self.coalesce is not None and type(self.coalesce) is not bool:
             raise ValidationError("coalesce must be a boolean or None.")
@@ -353,7 +369,7 @@ def parameter_shift_jacobian(
     *,
     parameters=None,
     chunk_size=64,
-    backend="numpy",
+    backend="auto",
     **options,
 ):
     """Return a (batch, readouts, parameters) Jacobian in source parameter order."""
@@ -370,7 +386,7 @@ def parameter_shift_vjp(
     *,
     parameters=None,
     chunk_size=64,
-    backend="numpy",
+    backend="auto",
     **options,
 ):
     """Return streamed (batch, parameters) cotangent contractions."""
@@ -387,7 +403,7 @@ def parameter_shift_jvp(
     *,
     parameters=None,
     chunk_size=64,
-    backend="numpy",
+    backend="auto",
     **options,
 ):
     """Return streamed (batch, readouts) directional derivatives."""

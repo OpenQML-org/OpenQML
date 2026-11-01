@@ -3,8 +3,7 @@
 This release reviews the library by computational responsibility. It applies
 research methods where the IR, numerical representation and validation support
 them. Newer publication dates alone do not establish a better replacement.
-No benchmark here establishes overall state-of-the-art performance or an
-exclusive technical moat.
+Primary sources document the implemented methods and their mathematical scope.
 
 | Library responsibility | Implemented method / decision | Evidence and limits |
 | --- | --- | --- |
@@ -95,25 +94,3 @@ Hard rank and state-error limits can reject execution. The default exact MPS
 and adaptive planner never silently introduce this approximation. The new
 backend's ordinary parameter-shift gradient bridge is blocked: the truncated
 map is nonlinear and need not obey the original circuit's shift identity.
-
-## Assessed methods requiring a different implementation
-
-[TensorCircuit-NG](https://arxiv.org/html/2602.14167v1) (2026) describes distributed
-tensor-network slicing and broader analog/qudit/fermionic capabilities.
-[Approximate simulation using sparse tensors](https://arxiv.org/html/2602.04011v1)
-(2026) introduces a different sparse-tensor representation and contraction
-pipeline. Neither is a drop-in improvement to a small dense NumPy kernel;
-adoption needs new contraction, differentiation and approximation contracts plus
-relevant hardware/benchmarks. This release does not claim either implementation.
-Likewise, compiler SMT/e-graph completeness, error-corrected hardware and
-device-calibrated mitigation are not inferred from bibliographic citations.
-
-## Reproducible local evidence
-
-`tests/test_research_methods.py` independently verifies derivative geometry,
-linear-system solves, gauge/null directions, sampler budgets, dual reconstruction
-for all two-site Pauli operators, post-hoc data reuse, approximation bounds,
-resource rejection and verified optimization. Results apply to their recorded
-cases; they do not establish overall superiority, exclusive rights or quantum
-advantage. Differentiation comes from the combined implementation, its explicit
-semantic/error contracts and an accumulating compiler/scientific regression set.

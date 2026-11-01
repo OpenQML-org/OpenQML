@@ -7,6 +7,7 @@ Install once with ``python -m pip install openqml`` and import as
 from importlib import import_module as _import_module
 
 from ._dependencies import install_hint as _install_hint
+from ._native_training import NativeNaturalGradientResult
 from ._scheduling import ExecutionBatch, ReadoutRoute
 from .adaptive import AdaptivePlan, ExecutionCandidate, plan_execution
 from .adjoint import AdjointPlan, adjoint_jvp, adjoint_vjp
@@ -49,6 +50,7 @@ from .gradients import (
     parameter_shift_vjp,
 )
 from .inspection import PythonSourceReport, inspect_python
+from .iqp import IQPGraph
 from .ir import Circuit, CircuitBuilder, ClassicalCondition, Operation
 from .layers import LayerCheckpoint, LayerSpec
 from .measurement import (
@@ -76,6 +78,28 @@ from .program import QuantumProgram, as_circuit
 from .providers import CirqDensityBackend, QiskitEstimatorBackend, QiskitSamplerBackend
 from .readout import ReadoutPlan, plan_readout
 from .resources import ResourceEstimate, estimate_resources
+from .rl import (
+    ActorCriticOutput,
+    AdvantageTargets,
+    CategoricalStatistics,
+    PPOLoss,
+    SACLoss,
+    VTraceTargets,
+    categorical_statistics,
+    generalized_advantages,
+    ppo_loss,
+    sac_loss,
+    squashed_gaussian,
+    surrogate_fit_loss,
+    vtrace_targets,
+)
+from .runtime import (
+    DispatchCandidate,
+    DispatchPlan,
+    PriorityBackend,
+    QPUBackend,
+    register_qpu_backend,
+)
 from .semantics import (
     CertifiedConversion,
     EquivalenceProof,
@@ -86,7 +110,12 @@ from .semantics import (
 from .shadows import ShadowEstimate, shadow_estimate
 from .simulator import ExecutionResult, execute, expectation, expectations, sample, statevector
 from .sparse_pauli import SparsePauliPlan, SparsePauliResult
-from .templates import data_reuploading, hardware_efficient
+from .templates import (
+    IdentityBlockInitialization,
+    data_reuploading,
+    hardware_efficient,
+    identity_block_ansatz,
+)
 from .truncated_mps import MPSApproximation, TruncatedMPSBackend
 from .verification import ConversionCheck
 
@@ -122,9 +151,31 @@ def __dir__():
     return sorted(set(globals()) | _LAZY_MODULES.keys())
 
 
-__version__ = "0.5.1"
+__version__ = "0.6.0"
 
 __all__ = [
+    "DispatchCandidate",
+    "DispatchPlan",
+    "PriorityBackend",
+    "QPUBackend",
+    "register_qpu_backend",
+    "ActorCriticOutput",
+    "AdvantageTargets",
+    "CategoricalStatistics",
+    "PPOLoss",
+    "SACLoss",
+    "VTraceTargets",
+    "categorical_statistics",
+    "generalized_advantages",
+    "ppo_loss",
+    "sac_loss",
+    "squashed_gaussian",
+    "surrogate_fit_loss",
+    "vtrace_targets",
+    "IdentityBlockInitialization",
+    "identity_block_ansatz",
+    "IQPGraph",
+    "NativeNaturalGradientResult",
     "ComponentPlan",
     "plan_components",
     "SparsePauliString",

@@ -296,7 +296,7 @@ def density_matrix(
     circuit,
     bindings=None,
     *,
-    backend="numpy",
+    backend="auto",
     like=None,
     max_qubits=None,
     max_memory_mb=256,
@@ -319,12 +319,36 @@ def density_matrix(
     if not (isinstance(backend, str) and backend in {"numpy", "torch", "jax"}):
         from ._validation import invoke, validate_density
         from .backends import ExecutionOptions, get_backend
+        from .runtime import PriorityBackend
 
+        device = get_backend(backend)
+        if isinstance(device, PriorityBackend):
+            route = device.plan(
+                [circuit],
+                task="density",
+                options=ExecutionOptions(max_qubits, max_memory_mb, max_branches=max_branches),
+            )
+            if route.device in {"CPU", "GPU"}:
+                context, target = None, "numpy"
+                if route.device == "GPU":
+                    import torch
+
+                    target, context = "torch", torch.empty((), dtype=torch.float64, device="cuda")
+                result = density_matrix(
+                    circuit,
+                    bindings,
+                    backend=target,
+                    like=context,
+                    max_qubits=max_qubits,
+                    max_memory_mb=max_memory_mb,
+                    max_branches=max_branches,
+                    batch_shape=batch_shape,
+                )
+                return result if target == "numpy" else result.detach().cpu().numpy()
         if like is not None or batch_shape is not None:
             raise ValidationError(
                 "External density backends require scalar bindings without tensor context."
             )
-        device = get_backend(backend)
         if not device.capabilities.density_matrix:
             raise ValidationError(f"Backend {device.name!r} has no density-matrix contract.")
         options = ExecutionOptions(max_qubits, max_memory_mb, max_branches=max_branches)
@@ -335,6 +359,9 @@ def density_matrix(
         ):
             raise ResourceError("Circuit exceeds backend qubit limit.")
         bound = circuit.bind({} if bindings is None else bindings)
+        from .runtime import resolve_backend
+
+        device = resolve_backend(device, "density", [bound], options=options)
         from .backends import check_effects
 
         check_effects(bound, device, expectation=True)

@@ -13,9 +13,10 @@ except ImportError as exc:
     ) from exc
 
 from ..errors import ValidationError
-from ..simulator import _checkpoint_interval, _resource_check, expectations
+from ..simulator import _checkpoint_interval, expectations
 from ._spec import (
     LayerSpecMixin,
+    admit_native_execution,
     broadcast_batch_shape,
     prepare_execution,
     prepare_gradients,
@@ -24,6 +25,10 @@ from ._spec import (
     resolve_gradient_method,
 )
 from ._torch_ad import ExternalQuantumFunction as _ExternalQuantumFunction
+from ._torch_hybrid import HyperQuantumAdapter as HyperQuantumAdapter
+from ._torch_hybrid import IQPQuantumLayer as IQPQuantumLayer
+from ._torch_rl import QuantumActorCritic as QuantumActorCritic
+from ._torch_rl import QuantumSurrogate as QuantumSurrogate
 
 
 class QuantumLayer(LayerSpecMixin, nn.Module):
@@ -70,6 +75,8 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
         planning_options=None,
     ):
         super().__init__()
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         from ..ir import integer
 
         integer(max_branches, "max_branches", 1)
@@ -100,30 +107,28 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
             options=pauli_options,
             planning_options=planning_options,
             backend=backend,
-            limits={"max_qubits": max_qubits, "max_memory_mb": max_memory_mb},
+            limits={
+                "max_qubits": max_qubits,
+                "max_memory_mb": max_memory_mb,
+                "max_branches": max_branches,
+            },
             checkpoint_interval=checkpoint_interval,
         )
         self.pauli_plan = self.execution_plan if execution_method == "pauli" else None
         self.checkpoint_interval = _checkpoint_interval(circuit, backend, checkpoint_interval)
-        if backend == "torch" and self.execution_plan is None:
-            if circuit.has_effects:
-                from ..density import _planning_limit
-                from ..density import _resource_check as density_check
-                from ..planning import plan_density
-
-                density_check(
-                    circuit,
-                    max_qubits,
-                    max_memory_mb,
-                    branches=plan_density(
-                        circuit,
-                        max_branches=_planning_limit(
-                            circuit, max_qubits, max_memory_mb, max_branches=max_branches
-                        ),
-                    ).peak_branches,
-                )
-            else:
-                _resource_check(circuit, max_qubits, max_memory_mb)
+        self.execution_plan = admit_native_execution(
+            circuit,
+            self.observables,
+            self.execution_plan,
+            backend=backend,
+            method=execution_method,
+            limits={
+                "max_qubits": max_qubits,
+                "max_memory_mb": max_memory_mb,
+                "max_branches": max_branches,
+            },
+            checkpoint=self.checkpoint_interval,
+        )
         self.execution_backend = backend
         self.batch_chunk_size = (
             None if batch_chunk_size is None else integer(batch_chunk_size, "batch_chunk_size", 1)
@@ -194,6 +199,12 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
 
     def forward(self, inputs):
         return self.functional(self.weights, inputs)
+
+    def _initialize_identity_blocks(self, pairs):
+        with torch.no_grad():
+            for forward, reverse in pairs:
+                self.weights[reverse] = -self.weights[forward]
+        return self
 
     def functional(self, weights, inputs):
         """Evaluate explicit (..., n_weights) weights without changing module parameters.

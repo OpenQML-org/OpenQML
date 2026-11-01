@@ -1,5 +1,7 @@
 """Feature maps and ansatz builders."""
 
+from dataclasses import dataclass
+
 from .errors import ValidationError
 from .ir import CircuitBuilder, integer
 from .layers import LayerSpec
@@ -54,3 +56,48 @@ def hardware_efficient(num_qubits: int, depth: int = 2) -> LayerSpec:
         for q in range(num_qubits - 1):
             circuit = circuit.cx(q, q + 1)
     return LayerSpec(circuit.build(), inputs, tuple(weights))
+
+
+@dataclass(frozen=True)
+class IdentityBlockInitialization:
+    spec: LayerSpec
+    pairs: tuple
+
+
+def identity_block_ansatz(num_qubits, depth=2, *, max_operations=100_000):
+    """Independent forward/inverse parameters; RZZ entanglers remain trainable.
+
+    Pairing reverse parameters with negative forward parameters initializes
+    each variational block to identity without permanently canceling its
+    entangling family. This is an initialization, not a no-barren-plateau theorem.
+    """
+    n = integer(num_qubits, "num_qubits", 1)
+    integer(depth, "depth", 1)
+    integer(max_operations, "max_operations", 1)
+    from .errors import ResourceError
+
+    if n + 2 * depth * (3 * n - 1) > max_operations:
+        raise ResourceError("Identity-block construction exceeds max_operations.")
+    builder = CircuitBuilder(n)
+    inputs = tuple(f"x_{q}" for q in range(n))
+    for q, name in enumerate(inputs):
+        builder.ry(Parameter(name), q)
+    gates = tuple((axis, (q,)) for q in range(n) for axis in ("ry", "rz"))
+    gates += tuple(("rzz", (q, q + 1)) for q in range(n - 1))
+    weights, pairs = [], []
+    for block in range(depth):
+        forward = []
+        for i, (gate, qubits) in enumerate(gates):
+            name = f"w_{block}_f_{i}"
+            forward.append(len(weights))
+            weights.append(name)
+            builder.gate(gate, *qubits, params=(Parameter(name),))
+        for i in reversed(range(len(gates))):
+            name = f"w_{block}_r_{i}"
+            pairs.append((forward[i], len(weights)))
+            weights.append(name)
+            gate, qubits = gates[i]
+            builder.gate(gate, *qubits, params=(Parameter(name),))
+    return IdentityBlockInitialization(
+        LayerSpec(builder.build(), inputs, tuple(weights)), tuple(pairs)
+    )

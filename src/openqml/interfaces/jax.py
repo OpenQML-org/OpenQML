@@ -14,9 +14,14 @@ except ImportError as exc:
 
 from ..errors import ValidationError
 from ..parameters import real as _real
-from ..simulator import _checkpoint_interval, _resource_check, expectations
+from ..simulator import _checkpoint_interval, expectations
+from ._jax_hybrid import HyperQuantumAdapter as HyperQuantumAdapter
+from ._jax_hybrid import IQPQuantumLayer as IQPQuantumLayer
+from ._jax_rl import QuantumActorCritic as QuantumActorCritic
+from ._jax_rl import QuantumSurrogate as QuantumSurrogate
 from ._spec import (
     LayerSpecMixin,
+    admit_native_execution,
     broadcast_batch_shape,
     prepare_execution,
     prepare_gradients,
@@ -98,30 +103,28 @@ class QuantumLayer(LayerSpecMixin):
             options=pauli_options,
             planning_options=planning_options,
             backend=backend,
-            limits={"max_qubits": max_qubits, "max_memory_mb": max_memory_mb},
+            limits={
+                "max_qubits": max_qubits,
+                "max_memory_mb": max_memory_mb,
+                "max_branches": max_branches,
+            },
             checkpoint_interval=checkpoint_interval,
         )
         self.pauli_plan = self.execution_plan if execution_method == "pauli" else None
         self.checkpoint_interval = _checkpoint_interval(circuit, backend, checkpoint_interval)
-        if backend == "jax" and self.execution_plan is None:
-            if circuit.has_effects:
-                from ..density import _planning_limit
-                from ..density import _resource_check as density_check
-                from ..planning import plan_density
-
-                density_check(
-                    circuit,
-                    max_qubits,
-                    max_memory_mb,
-                    branches=plan_density(
-                        circuit,
-                        max_branches=_planning_limit(
-                            circuit, max_qubits, max_memory_mb, max_branches=max_branches
-                        ),
-                    ).peak_branches,
-                )
-            else:
-                _resource_check(circuit, max_qubits, max_memory_mb)
+        self.execution_plan = admit_native_execution(
+            circuit,
+            self.observables,
+            self.execution_plan,
+            backend=backend,
+            method=execution_method,
+            limits={
+                "max_qubits": max_qubits,
+                "max_memory_mb": max_memory_mb,
+                "max_branches": max_branches,
+            },
+            checkpoint=self.checkpoint_interval,
+        )
         self.execution_backend = backend
         self.batch_chunk_size = (
             None if batch_chunk_size is None else integer(batch_chunk_size, "batch_chunk_size", 1)
@@ -153,7 +156,16 @@ class QuantumLayer(LayerSpecMixin):
         scale = _real(scale)
         if scale < 0 or jnp.dtype(dtype) not in {jnp.dtype("float32"), jnp.dtype("float64")}:
             raise ValidationError("Use nonnegative scale and float32/float64 dtype.")
-        return scale * jax.random.normal(key, (len(self.weight_parameters),), dtype=dtype)
+        values = scale * jax.random.normal(key, (len(self.weight_parameters),), dtype=dtype)
+        pairs = getattr(self, "_identity_pairs", ())
+        if pairs:
+            forward, reverse = zip(*pairs, strict=True)
+            values = values.at[jnp.asarray(reverse)].set(-values[jnp.asarray(forward)])
+        return values
+
+    def _initialize_identity_blocks(self, pairs):
+        self._identity_pairs = pairs
+        return self
 
     @classmethod
     def from_checkpoint(cls, checkpoint, *, dtype=None, **kwargs):

@@ -133,14 +133,18 @@ class AdaptivePlan:
             details = "; ".join(f"{c.method}: {c.reason}" for c in self.candidates)
             raise ResourceError(f"No admitted exact execution method. {details}")
 
-    def evaluate(self, bindings=None, *, backend="numpy", like=None):
+    def evaluate(self, bindings=None, *, backend="numpy", like=None, batch_shape=None):
         self.raise_for_errors()
         if backend not in {"numpy", "torch", "jax"}:
             raise ValidationError("Evaluation backend must be numpy, torch or jax.")
         if self.selected_method == "pauli":
-            return self._pauli.evaluate(bindings, backend=backend, like=like)
+            return self._pauli.evaluate(
+                bindings, backend=backend, like=like, batch_shape=batch_shape
+            )
         if self.selected_method == "components":
-            return self._components.evaluate(bindings, backend=backend, like=like)
+            return self._components.evaluate(
+                bindings, backend=backend, like=like, batch_shape=batch_shape
+            )
         if self.selected_method == "density":
             from .density import _expectations_from_density, density_matrix
             from .simulator import _TensorOps
@@ -153,6 +157,7 @@ class AdaptivePlan:
                 max_qubits=self.circuit.num_qubits,
                 max_memory_mb=self.max_memory_mb,
                 max_branches=self.max_branches,
+                batch_shape=batch_shape,
             )
             ops = _TensorOps(backend, rho.real if like is None else like)
             return _expectations_from_density(rho, self.observables, self.circuit.num_qubits, ops)
@@ -168,6 +173,7 @@ class AdaptivePlan:
                 max_qubits=self.circuit.num_qubits if self.max_qubits is None else self.max_qubits,
                 max_memory_mb=self.max_memory_mb,
                 max_branches=self.max_branches,
+                batch_shape=batch_shape,
             )
         if self.selected_method == "statevector-gpu":
             import torch
@@ -195,6 +201,7 @@ class AdaptivePlan:
                 like=like,
                 max_qubits=self.circuit.num_qubits,
                 max_memory_mb=self.max_memory_mb,
+                batch_shape=batch_shape,
             )
             return values if backend == "torch" else values.detach().cpu().numpy()
         if backend != "numpy" or like is not None:
@@ -279,7 +286,10 @@ def plan_execution(
         if method in {"auto", "stabilizer"}:
             from importlib.util import find_spec
 
-            installed = find_spec("qiskit_aer") is not None
+            try:
+                installed = find_spec("qiskit_aer") is not None
+            except ImportError:
+                installed = False
             # A packed tableau needs O(n^2) bits. Reserve a deliberately larger
             # byte-per-entry workspace model for native snapshots and readouts.
             workspace = (
@@ -479,27 +489,82 @@ class AdaptiveBackend:
     name: str = "auto"
     capabilities: BackendCapabilities = BackendCapabilities(
         native_expectations=True,
+        native_sampling=True,
+        density_matrix=True,
         channels=True,
         reset=True,
         classical_control=True,
         mid_circuit_measurements=True,
         measurement_expectations=True,
         deterministic_expectations=True,
+        exact_expectations=True,
     )
+    _cache: object = field(default=None, init=False, repr=False, compare=False)
+
+    def __post_init__(self):
+        from ._parameter_batches import CircuitCache
+
+        object.__setattr__(self, "_cache", CircuitCache(16))
 
     def expectations_batch(self, circuits, observables, *, options):
-        return np.asarray(
-            [
-                plan_execution(
-                    circuit,
+        from ._parameter_batches import parameter_batches
+
+        output = np.empty((len(circuits), len(observables)))
+        for rows, prototype, bindings in parameter_batches(circuits, options.max_memory_mb):
+            key = (
+                prototype,
+                tuple(observables),
+                options.max_memory_mb,
+                options.max_qubits,
+                options.max_branches,
+            )
+            plan = self._cache.get(
+                key,
+                lambda prototype=prototype: plan_execution(
+                    prototype,
                     observables,
                     max_memory_mb=options.max_memory_mb,
                     max_qubits=options.max_qubits,
                     max_branches=options.max_branches,
-                ).evaluate()
-                for circuit in circuits
-            ]
-        )
+                ),
+            )
+            if plan.selected_method in {"pauli", "components", "density", "statevector"}:
+                # Bound each chunk by the representation's per-row admission
+                # model; avoid retaining a full trajectory's quantum states.
+                representation = (
+                    plan._pauli if plan.selected_method == "pauli" else plan._components
+                )
+                if representation is not None:
+                    per_row = getattr(representation, "working_bytes", None)
+                    if per_row is None:
+                        per_row = 8 * (len(representation._nodes) + 8)
+                else:
+                    per_row = 64 * (
+                        1 << ((2 if prototype.has_effects else 1) * prototype.num_qubits)
+                    )
+                per_row += 8 * len(bindings) + 64 * len(observables)
+                chunk = max(1, int(options.max_memory_mb * 2**20) // (2 * max(1, per_row)))
+                for start in range(0, len(rows), chunk):
+                    selected = rows[start : start + chunk]
+                    parameters = {k: v[start : start + chunk] for k, v in bindings.items()}
+                    if representation is not None:
+                        result = representation.evaluate(parameters, batch_shape=(len(selected),))
+                    else:
+                        result = plan.evaluate(parameters, batch_shape=(len(selected),))
+                        if not bindings:
+                            result = np.broadcast_to(result, (len(selected), len(observables)))
+                    output[list(selected)] = result
+            else:
+                # MPS/tableau providers own their numeric batching contract.
+                from .batch import expectations_batch
+
+                output[list(rows)] = expectations_batch(
+                    [circuits[i] for i in rows],
+                    observables,
+                    backend=plan._runner,
+                    **options.__dict__,
+                )
+        return output
 
     def run(self, circuit, *, options):
         from .simulator import statevector
@@ -507,5 +572,27 @@ class AdaptiveBackend:
         # A full-state request necessarily has exponential output size. It
         # cannot inherit the capacity of a structured readout representation.
         return statevector(
-            circuit, max_qubits=options.max_qubits, max_memory_mb=options.max_memory_mb
+            circuit,
+            backend="numpy",
+            max_qubits=options.max_qubits,
+            max_memory_mb=options.max_memory_mb,
         )
+
+    def run_density(self, circuit, *, options):
+        from .density import density_matrix
+
+        return density_matrix(
+            circuit,
+            backend="numpy",
+            max_qubits=options.max_qubits,
+            max_memory_mb=options.max_memory_mb,
+            max_branches=options.max_branches,
+        )
+
+    def sample_batch(self, circuits, shots, *, options):
+        from .batch import execute_batch
+
+        return [
+            r.counts
+            for r in execute_batch(circuits, backend="numpy", shots=shots, **options.__dict__)
+        ]

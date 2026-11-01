@@ -94,7 +94,8 @@ def test_adaptive_backend_routes_existing_numeric_and_gradient_apis():
     )
     jacobian = oq.parameter_shift_jacobian(circuit, (observable,), [{"theta": 0.3}], backend="auto")
     np.testing.assert_allclose(jacobian, [[[-np.sin(0.3)]]], atol=1e-12)
-    assert oq.get_backend("auto").capabilities.deterministic_expectations
+    assert not oq.get_backend("auto").capabilities.deterministic_expectations
+    assert oq.get_backend("cpu").capabilities.deterministic_expectations
 
 
 def test_mps_admission_rejects_deep_and_nonlocal_inputs_without_execution(monkeypatch):

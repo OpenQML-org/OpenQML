@@ -67,33 +67,16 @@ prover. Native SDK/runtime execution remains a separate validation layer, and
 the existing native checker still excludes recorded measurement and feedback.
 Pulse calibration, external hardware/noise context and arbitrary Python control
 flow are not converted. Highly connected programs retain exponential worst-case
-cost. Independent-component benchmarks do not establish general thousand-qubit
-verification or simulation.
+cost. Independent factors do not imply efficient verification of arbitrary
+entangled programs.
 
 ## Research basis and differentiation
 
-The design draws on current research without copying implementations or
-claiming its authors' benchmark results:
+Primary sources and implemented scope:
 
 | Source | Idea used here | Scope of this implementation |
 | --- | --- | --- |
-| Ke, Li and Li, [Irene: Equivalence Checking of Hybrid Quantum Programs via Structure-Preserving Symbolic Reduction](https://arxiv.org/abs/2609.36065), September 2026 preprint | Stage structural reasoning before observable density-kernel comparison; compare coherent input/output maps and hidden histories | Exact sparse, component-factored kernels; no Irene HPS graph-isomorphism engine, SMT solver or reproduced Irene performance claims |
+| Ke, Li and Li, [Irene: Equivalence Checking of Hybrid Quantum Programs via Structure-Preserving Symbolic Reduction](https://arxiv.org/abs/2609.36065), September 2026 preprint | Stage structural reasoning before observable density-kernel comparison; compare coherent input/output maps and hidden histories | Exact sparse, component-factored kernels; no Irene HPS graph-isomorphism engine, SMT solver or Irene performance claims |
 | Ricciardi et al., [Quantum Circuit Equivalence Checking: A Tractable Bridge From Unitary to Hybrid Circuits](https://arxiv.org/abs/2511.22523), 2025 preprint | Explicit distinction between unitary, hybrid and discarded-output semantics | Direct instrument semantics; no general deferred-measurement lifting or SQbricks implementation |
 | Hong et al., [Equivalence Checking of Parameterised Quantum Circuits](https://arxiv.org/abs/2404.18456) | Symbolic parameters require an all-bindings guarantee, separate from testing at selected bindings | Conservative exponential-polynomial identities; no claim to implement the paper's full algorithm |
 | Vilmart, [Rewriting and Completeness of Sum-Over-Paths in Dyadic Fragments of Quantum Computing](https://lmcs.episciences.org/13200), Logical Methods in Computer Science 20(1:20), 2024 | Mathematical background for exact dyadic-phase reasoning rather than floating comparison | The present scalar field handles the Clifford+T fragment; this is not Vilmart's complete rewrite system for all dyadic fragments |
-
-These techniques are published and reproducible. Using them alone is not an
-exclusive technical moat. OpenQML's concrete differentiation is their integration
-into cross-framework conversion, a dependency-light proof kernel, explicit
-semantic contracts, recheckable fingerprints and a growing set of adversarial
-compiler regressions. Defensibility requires measured coverage on real compiler
-outputs and sustained improvements; it cannot be established by this commit.
-
-## Reproducible evidence
-
-`tests/test_exact_instrument.py` checks every named unitary against an independent
-numeric matrix implementation, randomized hybrid maps over all input matrix
-units, hidden histories, classical-record mismatches, coherence, guard writes,
-symbolic noise composition, Kraus maps, wire ordering and resource admission.
-Results are local evidence for the recorded cases and machine, not universal
-coverage or an industry-leading performance claim.

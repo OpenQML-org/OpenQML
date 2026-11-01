@@ -33,6 +33,8 @@ class BackendCapabilities:
     classical_control: bool = False
     measurement_expectations: bool = False
     deterministic_expectations: bool = False
+    device_type: str = "CPU"
+    exact_expectations: bool = False
 
     def __post_init__(self):
         if any(
@@ -47,9 +49,12 @@ class BackendCapabilities:
                 self.classical_control,
                 self.measurement_expectations,
                 self.deterministic_expectations,
+                self.exact_expectations,
             )
         ):
             raise ValidationError("Backend capability flags must be booleans.")
+        if not isinstance(self.device_type, str) or self.device_type not in {"QPU", "GPU", "CPU"}:
+            raise ValidationError("Backend device_type must be QPU, GPU or CPU.")
         gates = frozenset(self.gates)
         if not gates or gates - UNITARY_GATES:
             raise ValidationError("Backend gates must be known unitary gate names.")
@@ -209,6 +214,8 @@ _BUILTIN_NAMES = frozenset(
         "aer-stabilizer",
         "cirq-density",
         "auto",
+        "cpu",
+        "gpu",
         "mps",
     }
 )
@@ -297,9 +304,17 @@ def get_backend(backend: str | StatevectorBackend) -> StatevectorBackend:
 
             _REGISTRY[backend] = MPSBackend()
         elif backend not in _REGISTRY and backend == "auto":
+            from .runtime import PriorityBackend
+
+            _REGISTRY[backend] = PriorityBackend()
+        elif backend not in _REGISTRY and backend == "cpu":
             from .adaptive import AdaptiveBackend
 
-            _REGISTRY[backend] = AdaptiveBackend()
+            _REGISTRY[backend] = AdaptiveBackend(name="cpu")
+        elif backend not in _REGISTRY and backend == "gpu":
+            from ._cuda_backend import CUDABackend
+
+            _REGISTRY[backend] = CUDABackend()
         elif backend not in _REGISTRY and backend in {
             "aer",
             "aer-mps",

@@ -323,7 +323,7 @@ def statevector(
     circuit: Circuit,
     bindings: Mapping[str, Any] | None = None,
     *,
-    backend: str = "numpy",
+    backend: str = "auto",
     like=None,
     max_qubits: int | None = None,
     max_memory_mb: float = 256,
@@ -345,6 +345,35 @@ def statevector(
         )
     native = isinstance(backend, str) and backend in {"numpy", "torch", "jax"}
     if not native:
+        from .backends import ExecutionOptions, get_backend
+        from .runtime import PriorityBackend
+
+        if like is not None:
+            raise ValidationError(
+                "External backends do not support a native autodiff tensor context."
+            )
+        policy = get_backend(backend)
+        if isinstance(policy, PriorityBackend):
+            route = policy.plan(
+                [circuit], task="statevector", options=ExecutionOptions(max_qubits, max_memory_mb)
+            )
+            if route.device in {"CPU", "GPU"}:
+                context = None
+                target = "numpy"
+                if route.device == "GPU":
+                    import torch
+
+                    target, context = "torch", torch.empty((), dtype=torch.float64, device="cuda")
+                result = statevector(
+                    circuit,
+                    bindings,
+                    backend=target,
+                    like=context,
+                    max_qubits=max_qubits,
+                    max_memory_mb=max_memory_mb,
+                    batch_shape=batch_shape,
+                )
+                return result if target == "numpy" else result.detach().cpu().numpy()
         if like is not None:
             raise ValidationError(
                 "External backends do not support a native autodiff tensor context."
@@ -495,7 +524,7 @@ def expectation(
     observable,
     bindings=None,
     *,
-    backend="numpy",
+    backend="auto",
     like=None,
     max_branches=256,
     checkpoint_interval=None,
@@ -520,6 +549,19 @@ def expectation(
 
         device = get_backend(backend)
         if device.capabilities.native_expectations:
+            from .runtime import PriorityBackend
+
+            if isinstance(device, PriorityBackend) and any(
+                np.ndim(v) for v in (bindings or {}).values()
+            ):
+                return expectations(
+                    circuit,
+                    (observable,),
+                    bindings,
+                    backend=backend,
+                    max_branches=max_branches,
+                    **limits,
+                )[..., 0]
             return expectations(
                 circuit,
                 (observable,),
@@ -555,7 +597,7 @@ def expectations(
     observables,
     bindings=None,
     *,
-    backend="numpy",
+    backend="auto",
     like=None,
     max_branches=256,
     checkpoint_interval=None,
@@ -582,6 +624,24 @@ def expectations(
         device = get_backend(backend)
         if device.capabilities.native_expectations:
             from .batch import expectations_batch
+            from .runtime import PriorityBackend
+
+            if isinstance(device, PriorityBackend) and any(
+                np.ndim(v) for v in (bindings or {}).values()
+            ):
+                shape = np.broadcast_shapes(*(np.shape(v) for v in bindings.values()))
+                count = math.prod(shape)
+                if (
+                    8 * count * (len(bindings) + len(observables))
+                    > limits.get("max_memory_mb", 256) * 2**20
+                ):
+                    raise ResourceError("Automatic readout batch exceeds max_memory_mb.")
+                columns = {k: np.broadcast_to(v, shape).reshape(-1) for k, v in bindings.items()}
+                rows = [{k: v[r] for k, v in columns.items()} for r in range(count)]
+                result = expectations_batch(
+                    circuit, observables, rows, backend=device, max_branches=max_branches, **limits
+                )
+                return result.reshape(shape + (len(observables),))
 
             return expectations_batch(
                 circuit,
@@ -685,7 +745,7 @@ def execute(
     circuit: Circuit,
     bindings=None,
     *,
-    backend="numpy",
+    backend="auto",
     shots=None,
     seed=None,
     max_qubits=None,
@@ -718,6 +778,21 @@ def execute(
     if circuit.has_measurements and shots is None:
         raise ValidationError("Set shots for a measured circuit.")
     bound = circuit.bind({} if bindings is None else bindings)
+    from .runtime import resolve_backend
+
+    task = "sampling" if shots is not None else "density" if bound.has_effects else "statevector"
+    device = resolve_backend(
+        device,
+        task,
+        [bound],
+        options=ExecutionOptions(max_qubits, max_memory_mb, seed, max_branches),
+    )
+    from .adaptive import AdaptiveBackend
+
+    if isinstance(device, AdaptiveBackend):
+        # The CPU engine can produce states/probabilities and project classical
+        # records before simulation. A counts-only round trip loses both.
+        device = get_backend("numpy")
     if (
         device.capabilities.max_qubits is not None
         and circuit.num_qubits > device.capabilities.max_qubits

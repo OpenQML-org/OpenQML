@@ -33,7 +33,7 @@ def _limits(circuits, device, max_qubits):
             raise ResourceError(f"Circuit exceeds backend/requested qubit limit for {device.name}.")
 
 
-def _vectorized_states(circuits, options):
+def _vectorized_states(circuits, options, *, backend="numpy", like=None):
     from .parameters import expression
     from .simulator import statevector
 
@@ -49,7 +49,13 @@ def _vectorized_states(circuits, options):
 
     if any(signature(c) != signature(first) for c in circuits[1:]):
         return [
-            statevector(c, max_qubits=options.max_qubits, max_memory_mb=options.max_memory_mb)
+            statevector(
+                c,
+                backend=backend,
+                like=like,
+                max_qubits=options.max_qubits,
+                max_memory_mb=options.max_memory_mb,
+            )
             for c in circuits
         ]
     operations, bindings = [], {}
@@ -68,6 +74,8 @@ def _vectorized_states(circuits, options):
     return statevector(
         prototype,
         bindings,
+        backend=backend,
+        like=like,
         max_qubits=options.max_qubits,
         max_memory_mb=options.max_memory_mb,
     )
@@ -115,6 +123,7 @@ def _vectorized_densities(circuits, options):
         return [
             density_matrix(
                 c,
+                backend="numpy",
                 max_qubits=options.max_qubits,
                 max_memory_mb=options.max_memory_mb,
                 max_branches=options.max_branches,
@@ -133,6 +142,7 @@ def _vectorized_densities(circuits, options):
     return density_matrix(
         prototype,
         bindings,
+        backend="numpy",
         batch_shape=(len(circuits),),
         max_qubits=options.max_qubits,
         max_memory_mb=options.max_memory_mb,
@@ -220,7 +230,7 @@ def expectations_batch(
     observables,
     bindings=None,
     *,
-    backend="numpy",
+    backend="auto",
     max_qubits=None,
     max_memory_mb=256,
     seed=None,
@@ -236,6 +246,10 @@ def expectations_batch(
     device = None if tensor else get_backend(backend)
     if not values:
         return np.empty((0, len(observables)))
+    if not tensor:
+        from .runtime import resolve_backend
+
+        device = resolve_backend(device, "expectations", values, observables, options=options)
     if tensor:
         from .simulator import expectations
 
@@ -298,7 +312,7 @@ def execute_batch(
     circuits,
     bindings=None,
     *,
-    backend="numpy",
+    backend="auto",
     shots=None,
     seed=None,
     max_qubits=None,
@@ -319,6 +333,20 @@ def execute_batch(
     device = get_backend(backend)
     if not values:
         return []
+    from .runtime import resolve_backend
+
+    task = (
+        "sampling"
+        if shots is not None
+        else "density"
+        if any(c.has_effects for c in values)
+        else "statevector"
+    )
+    device = resolve_backend(device, task, values, options=options)
+    from .adaptive import AdaptiveBackend
+
+    if isinstance(device, AdaptiveBackend):
+        device = get_backend("numpy")
     for c in values:
         validate_classical_bits(c, classical_bits)
     _limits(values, device, max_qubits)

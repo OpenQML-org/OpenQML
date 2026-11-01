@@ -6,6 +6,13 @@ from ..layers import LayerCheckpoint, LayerSpec, validate_layer
 
 class LayerSpecMixin:
     @classmethod
+    def identity_blocks(cls, num_qubits, depth=2, *, max_operations=100_000, **kwargs):
+        from ..templates import identity_block_ansatz
+
+        recipe = identity_block_ansatz(num_qubits, depth, max_operations=max_operations)
+        return cls.from_spec(recipe.spec, **kwargs)._initialize_identity_blocks(recipe.pairs)
+
+    @classmethod
     def data_reuploading(cls, num_qubits, depth=2, *, entanglement="linear", **kwargs):
         from ..templates import data_reuploading
 
@@ -146,8 +153,8 @@ def prepare_execution(
     circuit, observables, *, method, options, planning_options, backend, limits, checkpoint_interval
 ):
     """Compile only for an explicit native expectation evaluation choice."""
-    if not isinstance(method, str) or method not in {"auto", "pauli", "planned"}:
-        raise ValidationError("execution_method must be auto, pauli or planned.")
+    if not isinstance(method, str) or method not in {"auto", "pauli", "planned", "components"}:
+        raise ValidationError("execution_method must be auto, pauli, planned or components.")
     if options is not None and (
         method not in {"pauli", "planned"} or not isinstance(options, Mapping)
     ):
@@ -170,6 +177,15 @@ def prepare_execution(
         maximum = integer(limits["max_qubits"], "max_qubits", 1)
         if circuit.num_qubits > maximum:
             raise ResourceError("Circuit width exceeds the explicit max_qubits limit.")
+    if method == "components":
+        from ..components import ComponentPlan
+
+        return ComponentPlan(
+            circuit,
+            observables,
+            max_memory_mb=limits["max_memory_mb"],
+            max_branches=limits.get("max_branches", 256),
+        )
     settings = {} if options is None else dict(options)
     if set(settings) - {"max_terms", "max_nodes", "max_work", "max_operations"}:
         raise ValidationError("Unknown Pauli compilation option.")
@@ -208,6 +224,36 @@ def resolve_gradient_method(circuit, backend, method, limits):
     return method
 
 
+def admit_native_execution(circuit, observables, plan, *, backend, method, limits, checkpoint):
+    """Admit dense training or exact factors before allocating a native state."""
+    if plan is not None or not isinstance(backend, str) or backend not in {"torch", "jax"}:
+        return plan
+    from ..errors import ResourceError
+
+    try:
+        if circuit.has_effects:
+            from ..density import _planning_limit, _resource_check
+            from ..planning import plan_density
+
+            branches = limits["max_branches"]
+            allowed = _planning_limit(
+                circuit, limits["max_qubits"], limits["max_memory_mb"], max_branches=branches
+            )
+            peak = plan_density(circuit, max_branches=allowed).peak_branches
+            _resource_check(circuit, limits["max_qubits"], limits["max_memory_mb"], branches=peak)
+        else:
+            from ..simulator import _resource_check
+
+            _resource_check(circuit, limits["max_qubits"], limits["max_memory_mb"])
+    except ResourceError:
+        if method != "auto" or checkpoint is not None:
+            raise
+        from ..components import ComponentPlan
+
+        return ComponentPlan(circuit, observables, **limits)
+    return None
+
+
 def _sum_to_shape(values, shape):
     """Undo NumPy broadcasting for a first-order numerical pullback."""
     leading = values.ndim - len(shape)
@@ -234,7 +280,7 @@ def prepare_gradients(layer):
     if layer.gradient_method == "parameter-shift":
         from ..gradients import ShiftPlan
 
-        return None, ShiftPlan(
+        plan = ShiftPlan(
             layer.circuit,
             layer.observables,
             names,
@@ -243,6 +289,8 @@ def prepare_gradients(layer):
             max_memory_mb=layer.limits["max_memory_mb"],
             max_branches=layer.limits["max_branches"],
         )
+        layer.execution_backend = plan.backend
+        return None, plan
     return None, None
 
 

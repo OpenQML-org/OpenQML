@@ -1,15 +1,16 @@
 # OpenQML
 
-[PyPI](https://pypi.org/project/openqml/) · [CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml) · [Documentation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/research-methods.md)
+[PyPI](https://pypi.org/project/openqml/) · [CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml) · [Documentation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md)
 
 OpenQML is a Python library for hybrid quantum-classical learning and quantum
 circuit interoperability.
 
 ## Features
 
-- Trainable quantum layers for PyTorch and JAX, with native automatic differentiation.
+- Trainable quantum layers and circuit hypernetwork adapters for PyTorch/JAX, with native autodiff.
+- Quantum actor-critic policies, PPO/SAC objectives and explicit hardware-response surrogates.
 - Circuit conversion across Qiskit, PennyLane, Cirq and OpenQASM, with explicit semantic verification.
-- Resource-aware execution, sparse Pauli propagation, quantum geometry and measurement estimation.
+- QPU→GPU→CPU dispatch, sparse readouts, quantum geometry and measurement estimation.
 
 ## Installation
 
@@ -29,7 +30,7 @@ are available through extras such as `openqml[torch]`, `openqml[jax]` and `openq
 ## Documentation
 
 [Architecture](https://github.com/OpenQML-org/OpenQML/blob/main/docs/architecture.svg) · [Semantic verification](https://github.com/OpenQML-org/OpenQML/blob/main/docs/semantic-kernels.md) ·
-[Scalable execution](https://github.com/OpenQML-org/OpenQML/blob/main/docs/scalable-methods.md) · [Research methods](https://github.com/OpenQML-org/OpenQML/blob/main/docs/research-methods.md)
+[Hybrid training](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md) · [Quantum RL](https://github.com/OpenQML-org/OpenQML/blob/main/docs/quantum-rl.md) · [Runtime](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md)
 
 There is no fixed total circuit-width ceiling. Execution remains subject to
 representation, memory and work budgets. Approximation is opt-in and reports its bounds.

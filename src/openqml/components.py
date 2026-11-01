@@ -32,6 +32,10 @@ class ComponentPlan:
     _routes: tuple = field(init=False, repr=False)
     _metadata_bytes: int = field(init=False, repr=False)
 
+    @property
+    def active_parameters(self):
+        return self.circuit.parameters
+
     def __post_init__(self):
         _check_circuit_limits(self.circuit, max_operations=self.max_operations)
         for name in ("max_work", "max_branches"):
@@ -124,14 +128,16 @@ class ComponentPlan:
             "memory_scope": "representation_model_excludes_autodiff_tapes_and_process_RSS",
         }
 
-    def evaluate(self, bindings=None, *, backend="numpy", like=None):
+    def evaluate(self, bindings=None, *, backend="numpy", like=None, batch_shape=None):
         import math
 
         from .pauli import _prepare_bindings
         from .simulator import expectations
 
         names = frozenset(self.circuit.parameters)
-        ops, values, shape = _prepare_bindings(bindings, backend, like, None, names, tuple(names))
+        ops, values, shape = _prepare_bindings(
+            bindings, backend, like, batch_shape, names, tuple(names)
+        )
         if like is None and backend != "numpy":
             like = next((v for v in values.values() if hasattr(v, "dtype")), None)
         rows = max(1, math.prod(shape))
@@ -144,7 +150,7 @@ class ComponentPlan:
         local_budget = capacity / 2**20
         zero = ops.array(0, real_value=True)
         for value in values.values():
-            zero = zero + ops.array(value, real_value=True) * 0
+            zero = zero + (ops.array(value, real_value=True) * 0) ** 2
         outputs = {}
         for i, ((_, _, child), queries) in enumerate(
             zip(self.components, self._queries, strict=True)
@@ -158,6 +164,7 @@ class ComponentPlan:
                     like=like,
                     max_memory_mb=local_budget,
                     max_branches=self.max_branches,
+                    batch_shape=shape,
                 )
         result = []
         for route in self._routes:

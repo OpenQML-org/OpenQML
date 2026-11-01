@@ -5,7 +5,7 @@ regularized block states determine weighted dual frames; production samples
 alone determine readouts. Every dual is checked against its POVM frame.
 Research basis: https://arxiv.org/abs/2511.02555 (v2, June 2026).
 This implementation uses bounded blocks and greedy pair matching, not the
-paper's full graph-partitioning pipeline or its reported molecular benchmarks.
+paper's full graph-partitioning pipeline.
 """
 
 from dataclasses import dataclass, field

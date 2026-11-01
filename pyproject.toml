@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openqml"
-version = "0.5.1"
-description = "Differentiable quantum layers and diagnostic-driven quantum circuit interoperability"
+version = "0.6.0"
+description = "Trainable quantum layers, reinforcement learning and semantic circuit interoperability"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
