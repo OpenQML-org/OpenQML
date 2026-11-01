@@ -145,10 +145,19 @@ def _digest(form):
 
 
 def _phase_form(circuit, max_terms, max_work):
-    wires = [(1 << q, 0) for q in range(circuit.num_qubits)]
+    wires = {}
     phases = {0: _angle(circuit.global_phase)}
     work = 0
     atom_count = len(phases[0])
+
+    def wire(q):
+        return wires.get(q, (1 << q, 0))
+
+    def put(q, value):
+        if value == (1 << q, 0):
+            wires.pop(q, None)
+        else:
+            wires[q] = value
 
     def accumulate(mask, angle, scale=Fraction(1)):
         nonlocal atom_count
@@ -175,24 +184,26 @@ def _phase_form(circuit, max_terms, max_work):
         if op.name not in _PHASE or op.condition or op.blocks:
             return None, work
         name, q = op.name, op.qubits
-        work += 1
+        work += 1 + max(q, default=0) // 64
         if work > max_work:
             raise ResourceError("Phase-polynomial proof exceeds max_work.")
         if name in {"id", "barrier"}:
             continue
-        a = wires[q[0]]
+        a = wire(q[0])
         if name in {"x", "y"}:
             if name == "y":
                 accumulate(0, {_PI: Fraction(1, 2)})
                 add(a, {_PI: Fraction(1)})
-            wires[q[0]] = a[0], a[1] ^ 1
+            put(q[0], (a[0], a[1] ^ 1))
         elif name == "cx":
-            b = wires[q[1]]
-            wires[q[1]] = a[0] ^ b[0], a[1] ^ b[1]
+            b = wire(q[1])
+            put(q[1], (a[0] ^ b[0], a[1] ^ b[1]))
         elif name == "swap":
-            wires[q[0]], wires[q[1]] = wires[q[1]], a
+            b = wire(q[1])
+            put(q[0], b)
+            put(q[1], a)
         elif name in {"cz", "cp", "rzz"}:
-            b = wires[q[1]]
+            b = wire(q[1])
             parity = a[0] ^ b[0], a[1] ^ b[1]
             angle = {_PI: Fraction(1)} if name == "cz" else _angle(op.params[0])
             if name == "rzz":
@@ -217,7 +228,7 @@ def _phase_form(circuit, max_terms, max_work):
     terms = tuple(
         (mask, frozen) for mask, angle in sorted(phases.items()) if (frozen := _frozen_angle(angle))
     )
-    return (tuple(wires), terms), work
+    return (tuple(sorted(wires.items())), terms), work
 
 
 def _conjugate(x, z, phase, name, q):
@@ -442,11 +453,11 @@ def prove_equivalence(
     target,
     *,
     phase_sensitive=True,
-    max_qubits=4096,
+    max_qubits=None,
     max_operations=100_000,
     max_terms=100_000,
     max_work=2_000_000,
-    max_component_qubits=6,
+    max_component_qubits=None,
 ):
     """Prove a supported identity for every binding; never promote a numeric check.
 
@@ -463,27 +474,38 @@ def prove_equivalence(
         raise ValidationError("phase_sensitive must be a boolean.")
     for value, label in ((max_terms, "max_terms"), (max_work, "max_work")):
         integer(value, label, 1)
-    integer(max_component_qubits, "max_component_qubits", 1)
-    if max_component_qubits > 8:
-        raise ValidationError("max_component_qubits must be at most 8.")
+    if max_component_qubits is not None:
+        integer(max_component_qubits, "max_component_qubits", 1)
+    if max_qubits is not None:
+        integer(max_qubits, "max_qubits", 1)
     for circuit in (source, target):
         _check_circuit_limits(circuit, max_operations=max_operations)
-        if circuit.num_qubits > min(integer(max_qubits, "max_qubits", 1), 8192):
-            raise ResourceError(
-                "Equivalence proof exceeds its width limit or the 8192-wire kernel ceiling."
-            )
+        if max_qubits is not None and circuit.num_qubits > max_qubits:
+            raise ResourceError("Equivalence proof exceeds the explicit max_qubits limit.")
     # Preflight expression expansion before serialization/fingerprinting.
     work = _expression_work(source, max_work)
     work += _expression_work(target, max_work - work)
     if work >= max_work:
         raise ResourceError("Equivalence proof exceeds max_work.")
+    original_source, original_target = source, target
+    dimensions = source.num_qubits == target.num_qubits and source.num_clbits == target.num_clbits
+    structural = source == target
+    if dimensions and not structural:
+        from ._structure import compact_pair
+
+        def charge(amount):
+            nonlocal work
+            work += amount
+            if work > max_work:
+                raise ResourceError("Semantic dependency analysis exceeds max_work.")
+
+        source, target = compact_pair(source, target, charge)
     semantics = "quantum_instrument" if source.has_effects or target.has_effects else "unitary"
     semantics = (
         "projective_unitary" if not phase_sensitive and semantics == "unitary" else semantics
     )
     notes = []
     method, normal = "inconclusive", None
-    dimensions = source.num_qubits == target.num_qubits and source.num_clbits == target.num_clbits
     if not dimensions:
         notes.append(
             Diagnostic("SEMANTIC_REGISTER_MISMATCH", "Quantum or classical register widths differ.")
@@ -552,10 +574,10 @@ def prove_equivalence(
         normal is not None,
         method,
         semantics,
-        _fingerprint(source),
-        _fingerprint(target),
-        tuple(sorted(set(source.parameters) | set(target.parameters))),
-        sum(len(c.operations) for c in (source, target)),
+        _fingerprint(original_source),
+        _fingerprint(original_target),
+        tuple(sorted(set(original_source.parameters) | set(original_target.parameters))),
+        sum(len(c.operations) for c in (original_source, original_target)),
         work,
         _digest(normal) if normal is not None else None,
         tuple(notes),
@@ -628,7 +650,7 @@ def _certify_plan(
     phase_sensitive=True,
     max_terms=100_000,
     max_work=2_000_000,
-    max_component_qubits=6,
+    max_component_qubits=None,
     source_options=None,
 ):
     from .compiler import rename_parameters
@@ -667,7 +689,7 @@ def compile_verified(
     phase_sensitive=True,
     max_terms=100_000,
     max_work=2_000_000,
-    max_component_qubits=6,
+    max_component_qubits=None,
     **conversion_options,
 ):
     """Export only when the imported artifact has an algebraic IR certificate.

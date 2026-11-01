@@ -400,40 +400,54 @@ class Circuit(_CircuitGates):
         """
         if not isinstance(other, Circuit):
             raise ValidationError("compose expects a Circuit.")
-        quantum = tuple(range(other.num_qubits) if qubits is None else qubits)
-        classical = tuple(range(other.num_clbits) if clbits is None else clbits)
+        quantum = None if qubits is None else tuple(qubits)
+        classical = None if clbits is None else tuple(clbits)
         for label, mapping, width in (
             ("qubits", quantum, other.num_qubits),
             ("clbits", classical, other.num_clbits),
         ):
+            if mapping is None:
+                continue
             if len(mapping) != width:
                 raise ValidationError(f"{label} map must cover every source bit.")
             for bit in mapping:
                 integer(bit, f"{label} index")
             if len(set(mapping)) != len(mapping):
                 raise ValidationError(f"{label} map must be injective.")
-        if max(quantum) >= self.num_qubits:
+        if (other.num_qubits - 1 if quantum is None else max(quantum)) >= self.num_qubits:
             raise ValidationError("Quantum map exceeds the destination width.")
-        width = max(self.num_clbits, max(classical, default=-1) + 1)
+        width = max(
+            self.num_clbits,
+            other.num_clbits if classical is None else max(classical, default=-1) + 1,
+        )
+
+        def qindex(q):
+            return q if quantum is None else quantum[q]
+
+        def cindex(c):
+            return c if classical is None else classical[c]
 
         def remap(op):
             condition = (
                 None
                 if op.condition is None
                 else ClassicalCondition(
-                    tuple(classical[c] for c in op.condition.bits), op.condition.value
+                    tuple(cindex(c) for c in op.condition.bits), op.condition.value
                 )
             )
             blocks = tuple(
-                Circuit(self.num_qubits, num_clbits=width).compose(
-                    b, qubits=quantum, clbits=classical[: b.num_clbits]
+                Circuit(
+                    self.num_qubits,
+                    tuple(remap(child) for child in b.operations),
+                    width,
+                    b.global_phase,
                 )
                 for b in op.blocks
             )
             return replace(
                 op,
-                qubits=tuple(quantum[q] for q in op.qubits),
-                clbits=tuple(classical[c] for c in op.clbits),
+                qubits=tuple(qindex(q) for q in op.qubits),
+                clbits=tuple(cindex(c) for c in op.clbits),
                 condition=condition,
                 blocks=blocks,
             )
@@ -442,7 +456,7 @@ class Circuit(_CircuitGates):
         return replace(
             self,
             operations=self.operations + mapped,
-            num_clbits=max(self.num_clbits, max(classical, default=-1) + 1),
+            num_clbits=width,
             global_phase=self.global_phase + other.global_phase,
         )
 

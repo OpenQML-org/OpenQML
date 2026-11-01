@@ -768,7 +768,7 @@ def execute(
                 bound,
                 shots=shots,
                 seed=seed,
-                max_qubits=20 if max_qubits is None else max_qubits,
+                max_qubits=max_qubits,
                 max_memory_mb=max_memory_mb,
                 max_branches=max_branches,
                 classical_bits=classical_bits,
@@ -776,7 +776,7 @@ def execute(
         rho = density_matrix(
             bound,
             backend=device,
-            max_qubits=20 if max_qubits is None else max_qubits,
+            max_qubits=max_qubits,
             max_memory_mb=max_memory_mb,
             max_branches=max_branches,
         )

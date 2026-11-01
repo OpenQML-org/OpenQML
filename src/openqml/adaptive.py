@@ -96,6 +96,7 @@ class AdaptivePlan:
     _pauli: object = field(default=None, repr=False, compare=False)
     _runner: object = field(default=None, repr=False, compare=False)
     dense_device: str = "CPU"
+    _components: object = field(default=None, repr=False, compare=False)
 
     @property
     def supported(self):
@@ -120,6 +121,7 @@ class AdaptivePlan:
             "floating_point_roundoff_remains",
             "memory_guarantee": "representation_admission_model_not_process_RSS_limit",
             "mps_profile": self.mps_profile,
+            "component_profile": None if self._components is None else self._components.to_dict(),
             "candidates": [asdict(candidate) for candidate in self.candidates],
         }
 
@@ -137,6 +139,8 @@ class AdaptivePlan:
             raise ValidationError("Evaluation backend must be numpy, torch or jax.")
         if self.selected_method == "pauli":
             return self._pauli.evaluate(bindings, backend=backend, like=like)
+        if self.selected_method == "components":
+            return self._components.evaluate(bindings, backend=backend, like=like)
         if self.selected_method == "density":
             from .density import _expectations_from_density, density_matrix
             from .simulator import _TensorOps
@@ -237,7 +241,7 @@ def plan_execution(
     from .pauli import PauliPlan
     from .planning import plan_density
 
-    allowed = {"auto", "pauli", "stabilizer", "mps", "statevector", "density"}
+    allowed = {"auto", "pauli", "stabilizer", "mps", "statevector", "density", "components"}
     if method not in allowed or device not in {"CPU", "GPU", "auto"}:
         raise ValidationError("Unknown execution method or device (CPU, GPU, auto).")
     _check_circuit_limits(circuit, max_operations=max_operations)
@@ -263,6 +267,7 @@ def plan_execution(
         else _budget(max_memory_mb)
     )
     candidates, selected, pauli, runner, mps_profile = [], None, None, None, None
+    components = None
     deferred_stabilizer = False
     if explicit_width:
         candidates.append(
@@ -272,20 +277,24 @@ def plan_execution(
         unitary = not circuit.has_effects
         clifford = unitary and all(op.name in _CLIFFORD | {"barrier"} for op in circuit.operations)
         if method in {"auto", "stabilizer"}:
+            from importlib.util import find_spec
+
+            installed = find_spec("qiskit_aer") is not None
             # A packed tableau needs O(n^2) bits. Reserve a deliberately larger
             # byte-per-entry workspace model for native snapshots and readouts.
             workspace = (
                 16 * circuit.num_qubits * circuit.num_qubits
                 + 128 * len(observables) * circuit.num_qubits
             )
-            eligible = clifford and workspace <= budget * 2**20
+            eligible = clifford and workspace <= budget * 2**20 and installed
             candidates.append(
                 ExecutionCandidate(
                     "stabilizer",
                     eligible,
                     "Named Clifford gates and bounded tableau workspace."
                     if eligible
-                    else "Requires named Clifford gates and sufficient tableau workspace.",
+                    else "Requires named Clifford gates, the aer extra "
+                    "and sufficient tableau workspace.",
                     workspace,
                 )
             )
@@ -354,6 +363,38 @@ def plan_execution(
             )
             if eligible:
                 selected = "mps"
+        if selected is None and method in {"auto", "components"}:
+            from .components import ComponentPlan
+
+            try:
+                components = ComponentPlan(
+                    circuit,
+                    observables,
+                    max_qubits=max_qubits,
+                    max_memory_mb=budget,
+                    max_branches=max_branches,
+                    max_work=max_work,
+                    max_operations=max_operations,
+                )
+                useful = (
+                    len(components.components) != 1
+                    or len(components.components[0][0]) < circuit.num_qubits
+                )
+                eligible = method == "components" or useful
+                candidates.append(
+                    ExecutionCandidate(
+                        "components",
+                        eligible,
+                        "Independent quantum/classical factors fit the memory budget."
+                        if eligible
+                        else "No smaller dependency factor; prefer the unfactored executor.",
+                        components.working_bytes,
+                    )
+                )
+                if eligible:
+                    selected = "components"
+            except ResourceError as error:
+                candidates.append(ExecutionCandidate("components", False, str(error)))
         if selected is None and method in {"auto", "statevector", "density"}:
             density = not unitary or method == "density"
             chosen = "density" if density else "statevector"
@@ -427,6 +468,7 @@ def plan_execution(
         pauli,
         runner,
         device,
+        components,
     )
 
 

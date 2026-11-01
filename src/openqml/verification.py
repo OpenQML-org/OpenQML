@@ -268,12 +268,13 @@ def _verify_conversion(
     budget = real(max_memory_mb)
     if min(atol, rtol) < 0 or budget <= 0:
         raise ValidationError("Use nonnegative tolerances and a positive memory budget.")
-    max_qubits = integer(max_qubits, "max_qubits", 1)
+    if max_qubits is not None:
+        max_qubits = integer(max_qubits, "max_qubits", 1)
     max_work = integer(max_work, "max_work", 1)
     max_branches = integer(max_branches, "max_branches", 1)
     chunk = integer(basis_chunk_size, "basis_chunk_size", 1)
     circuit = plan.circuit
-    if circuit.num_qubits > max_qubits:
+    if max_qubits is not None and circuit.num_qubits > max_qubits:
         raise ResourceError("Conversion verification exceeds max_qubits.")
     _check_circuit_limits(circuit, max_operations=plan.max_operations, max_depth=plan.max_depth)
     work = _expression_work(circuit, max_work)

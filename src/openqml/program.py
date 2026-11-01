@@ -58,7 +58,7 @@ class QuantumProgram:
         include_paths=(),
         max_source_bytes=2_000_000,
         max_operations=100_000,
-        max_register_bits=100_000,
+        max_register_bits=None,
         max_depth=64,
         max_matrix_qubits=10,
         max_include_depth=16,
@@ -96,7 +96,10 @@ class QuantumProgram:
             ) from exc
         except Exception as exc:
             raise conversion_error("SDK_QASM_PARSE", str(exc)) from exc
-        if native.num_qubits + native.num_clbits > max_register_bits:
+        if (
+            max_register_bits is not None
+            and native.num_qubits + native.num_clbits > max_register_bits
+        ):
             raise conversion_error(
                 "REGISTER_LIMIT", "SDK register sizes exceed the configured limit."
             )

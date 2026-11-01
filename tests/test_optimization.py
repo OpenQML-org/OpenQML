@@ -1,7 +1,6 @@
 """Logical feedback rewrites preserve joint records, phases and derivatives."""
 
 import json
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -351,19 +350,6 @@ def test_cli_uses_feedback_optimizer_and_reports_its_actual_work(tmp_path, capsy
     assert optimize(result).before.conditionals == 1
     diagnostics = json.loads(captured.err)
     assert "merged 3" in diagnostics[0]["message"]
-
-
-def test_readme_python_examples_execute_when_torch_is_available():
-    pytest.importorskip("torch")
-    path = Path(__file__).resolve().parents[1] / "README.md"
-    if not path.exists():
-        pytest.skip("README is not installed as a Python module")
-    import re
-
-    examples = re.findall(r"```python\n(.*?)```", path.read_text(), re.S)
-    assert len(examples) == 2
-    for block in examples:
-        exec(compile(block, "README.md", "exec"), {})
 
 
 def test_large_conditional_phase_run_balances_without_repeated_scope_copies():

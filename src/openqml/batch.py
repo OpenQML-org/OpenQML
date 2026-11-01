@@ -115,7 +115,7 @@ def _vectorized_densities(circuits, options):
         return [
             density_matrix(
                 c,
-                max_qubits=options.max_qubits or 20,
+                max_qubits=options.max_qubits,
                 max_memory_mb=options.max_memory_mb,
                 max_branches=options.max_branches,
             )
@@ -134,7 +134,7 @@ def _vectorized_densities(circuits, options):
         prototype,
         bindings,
         batch_shape=(len(circuits),),
-        max_qubits=options.max_qubits or 20,
+        max_qubits=options.max_qubits,
         max_memory_mb=options.max_memory_mb,
         max_branches=options.max_branches,
     )
@@ -151,7 +151,7 @@ def _dense_densities(circuits, device, options):
                 c,
                 max_branches=_planning_limit(
                     c,
-                    options.max_qubits or 20,
+                    options.max_qubits,
                     options.max_memory_mb,
                     max_branches=options.max_branches,
                 ),
@@ -159,7 +159,7 @@ def _dense_densities(circuits, device, options):
             if device is get_backend("numpy")
             else 1
         )
-        _resource_check(c, options.max_qubits or 20, options.max_memory_mb, branches=branches)
+        _resource_check(c, options.max_qubits, options.max_memory_mb, branches=branches)
         peak = max(peak, branches)
     width = max(c.num_qubits for c in circuits)
     chunk = max(1, min(128, int(options.max_memory_mb * 2**20 / (64 * 4**width * peak))))
@@ -172,7 +172,7 @@ def _dense_densities(circuits, device, options):
                 density_matrix(
                     c,
                     backend=device,
-                    max_qubits=options.max_qubits or 20,
+                    max_qubits=options.max_qubits,
                     max_memory_mb=options.max_memory_mb,
                     max_branches=options.max_branches,
                 )

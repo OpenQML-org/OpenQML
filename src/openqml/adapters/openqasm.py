@@ -130,15 +130,16 @@ def from_openqasm(
     expected_version=None,
     max_source_bytes=2_000_000,
     max_operations=100_000,
-    max_register_bits=100_000,
+    max_register_bits=None,
     max_depth=64,
 ) -> Circuit:
     for label, limit in (
         ("max_source_bytes", max_source_bytes),
         ("max_operations", max_operations),
-        ("max_register_bits", max_register_bits),
     ):
         integer(limit, label, 1)
+    if max_register_bits is not None:
+        integer(max_register_bits, "max_register_bits", 1)
     integer(max_depth, "max_depth")
     text = clean_source(text, max_source_bytes)
     statements = _statements(text)
@@ -164,6 +165,12 @@ def from_openqasm(
             )
         start, width = registers[match.group(1)]
         if match.group(2) is None:
+            if width > max_operations - work:
+                raise conversion_error(
+                    "OPERATION_LIMIT",
+                    "Register expansion exceeds the remaining work budget.",
+                    location,
+                )
             return tuple(range(start, start + width))
         index = int(match.group(2))
         if index >= width:
@@ -286,7 +293,7 @@ def from_openqasm(
                 raise conversion_error(
                     "REGISTER_DECLARATION", "Invalid or duplicate register.", location
                 )
-            if nq + nc + width > max_register_bits:
+            if max_register_bits is not None and nq + nc + width > max_register_bits:
                 raise conversion_error(
                     "REGISTER_LIMIT", "Register size exceeds the configured limit.", location
                 )

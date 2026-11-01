@@ -88,8 +88,9 @@ def test_unsupported_or_malicious_qasm_is_rejected(body):
 
 
 def test_parser_limits_and_format_contract():
+    assert from_openqasm("OPENQASM 3.0; qubit[999999] q;").num_qubits == 999999
     with pytest.raises(ConversionError):
-        from_openqasm("OPENQASM 3.0; qubit[999999] q;")
+        from_openqasm("OPENQASM 3.0; qubit[999999] q;", max_register_bits=100_000)
     with pytest.raises(ConversionError):
         from_openqasm("OPENQASM 3.0; qubit[5] q; h q;", max_operations=2)
     with pytest.raises(ConversionError):

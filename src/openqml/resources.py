@@ -17,8 +17,8 @@ class ResourceEstimate:
     batch_size: int
     max_qubits: int | None
     max_memory_mb: float
-    statevector_log2_bytes: float
-    density_log2_bytes: float
+    statevector_log2_bytes: int | float | str
+    density_log2_bytes: int | float | str
     statevector_bytes: int | None
     density_bytes: int | None
     statevector_budget_bytes: int | None
@@ -44,6 +44,7 @@ class ResourceEstimate:
                 "density_branches",
             ],
             "large_byte_counts": "null above signed-64-bit range; log2 fields remain available",
+            "log2_fields": "integer, float, or symbolic expression beyond floating-point range",
             **asdict(self),
         }
 
@@ -70,10 +71,18 @@ def estimate_resources(
     batch = integer(batch_size, "batch_size", 1)
     options = ExecutionOptions(max_qubits, max_memory_mb)
     width = circuit.num_qubits
-    if width > 10_000_000:
-        raise ResourceError("Resource-report width exceeds the bounded exponent range.")
-    state_log = width + 4 + math.log2(batch)
-    density_log = 2 * width + 4 + math.log2(batch)
+    batch_log = math.log2(batch)
+    if batch & (batch - 1) == 0:
+        batch_log = batch.bit_length() - 1
+
+    def log_size(exponent):
+        try:
+            return exponent + batch_log
+        except OverflowError:
+            return f"{exponent} + log2({batch})"
+
+    state_log = log_size(width + 4)
+    density_log = log_size(2 * width + 4)
 
     def byte_count(exponent):
         return batch * (1 << exponent) if exponent + batch.bit_length() <= 63 else None

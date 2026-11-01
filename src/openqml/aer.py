@@ -248,7 +248,7 @@ class AerBackend:
             raise ValidationError(
                 "Aer samples measurement branches; use numpy for exact ensembles."
             )
-        _resource_check(circuit, options.max_qubits or 20, options.max_memory_mb)
+        _resource_check(circuit, options.max_qubits, options.max_memory_mb)
         self._engine(options)
         native = to_qiskit(circuit)
         native.save_density_matrix(pershot=False)
@@ -272,7 +272,7 @@ class AerBackend:
                 rho = density_matrix(
                     c,
                     backend=self,
-                    max_qubits=options.max_qubits or 20,
+                    max_qubits=options.max_qubits,
                     max_memory_mb=options.max_memory_mb,
                     max_branches=options.max_branches,
                 )
@@ -284,7 +284,7 @@ class AerBackend:
             from .density import _resource_check
 
             for c in circuits:
-                _resource_check(c, options.max_qubits or 20, options.max_memory_mb)
+                _resource_check(c, options.max_qubits, options.max_memory_mb)
         self._engine(options)
         if self.parameter_batching:
             values = self._parameter_batch(circuits, observables, options)

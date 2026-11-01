@@ -1,7 +1,7 @@
 """Large structured expectation checks are distinct from general dense simulation."""
 
-import importlib.util
-from pathlib import Path
+import math
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -9,16 +9,69 @@ import pytest
 import openqml as oq
 
 
+def _workload(case, width):
+    theta = oq.Parameter("theta")
+    builder = oq.CircuitBuilder(width)
+    if case == "ghz":
+        builder.h(0)
+        for q in range(1, width):
+            builder.cx(q - 1, q)
+        labels, expected = ["X" * width, "Z" + "I" * (width - 2) + "Z"], ["cos", 1]
+        structure, cut_rank = "GHZ_chain", 1
+    elif case == "bell":
+        if width % 2:
+            raise ValueError("Crossed Bell pairs require an even width.")
+        half = width // 2
+        for q in range(half):
+            builder.h(q).cx(q, q + half)
+        labels = ["X" * width, "Z" * width]
+        expected, structure, cut_rank = ["cos", 1], "product_of_crossed_Bell_pairs", half
+    else:
+        side = math.isqrt(width)
+        if side**2 != width:
+            raise ValueError("Cluster width must be a square.")
+        for q in range(width):
+            builder.h(q)
+        for row in range(side):
+            for col in range(side):
+                q = row * side + col
+                if col + 1 < side:
+                    builder.cz(q, q + 1)
+                if row + 1 < side:
+                    builder.cz(q, q + side)
+        labels, expected = [], []
+        for q in sorted({0, width // 2, width - 1}):
+            label, row, col = ["I"] * width, q // side, q % side
+            label[q] = "X"
+            for r, c in ((row - 1, col), (row + 1, col), (row, col - 1), (row, col + 1)):
+                if 0 <= r < side and 0 <= c < side:
+                    label[r * side + c] = "Z"
+            labels.append("".join(label))
+            expected.append("cos" if q == 0 else 1)
+        # Products of one checkerboard's stabilizers have no internal graph
+        # edges. They retain a positive sign and probe the full grid collectively.
+        for color in (0, 1):
+            label = []
+            for q in range(width):
+                row, col = divmod(q, side)
+                if (row + col) % 2 == color:
+                    label.append("X")
+                else:
+                    degree = sum(
+                        0 <= r < side and 0 <= c < side
+                        for r, c in ((row - 1, col), (row + 1, col), (row, col - 1), (row, col + 1))
+                    )
+                    label.append("Z" if degree % 2 else "I")
+            labels.append("".join(label))
+            expected.append("cos" if color == 0 else 1)
+        structure, cut_rank = "connected_square_cluster_graph", side if side % 2 == 0 else None
+    builder.rz(theta, 0)
+    return builder.build(), tuple(oq.PauliString(p) for p in labels), expected, structure, cut_rank
+
+
 @pytest.fixture
-def science(monkeypatch):
-    directory = Path(__file__).parents[1] / "benchmarks"
-    monkeypatch.syspath_prepend(str(directory))
-    spec = importlib.util.spec_from_file_location(
-        "scientific_scale_fixture", directory / "scientific_scale.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def science():
+    return SimpleNamespace(workload=lambda _, case, width: _workload(case, width))
 
 
 @pytest.mark.parametrize("case,width", [("ghz", 6), ("bell", 6), ("cluster", 4)])
@@ -118,9 +171,13 @@ def test_structured_hybrid_model_updates_classical_and_quantum_weights(science, 
     )
 
 
-def test_pauli_growth_guard_is_a_representation_limit_not_a_universal_capacity_claim(science):
-    from types import SimpleNamespace
-
-    result = science.worker(SimpleNamespace(source=Path(oq.__file__).parents[1], case="guard"))
-    assert result["status"] == "rejected_by_explicit_budget"
-    assert result["codes"] == ["PAULI_TERM_LIMIT"]
+def test_pauli_growth_guard_is_a_representation_limit_not_a_universal_capacity_claim():
+    x, builder = oq.Parameter("x"), oq.CircuitBuilder(12)
+    for _ in range(3):
+        for q in range(12):
+            builder.ry((q + 1) * x, q)
+        for q in range(11):
+            builder.cz(q, q + 1)
+    with pytest.raises(oq.ConversionError) as caught:
+        oq.PauliPlan(builder.build(), (oq.PauliString("Z" * 12),), max_terms=8, max_work=5000)
+    assert [d.code for d in caught.value.diagnostics] == ["PAULI_TERM_LIMIT"]

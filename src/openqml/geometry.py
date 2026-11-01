@@ -3,7 +3,8 @@
 The Fubini--Study product is Re[J* (I-|psi><psi|) J v]. A directional
 forward sweep and reverse contraction avoid storing all parameter tangents or
 the quadratic metric. Natural gradients solve the damped system by linear CG.
-This is classical state-vector computation, with exponential qubit cost.
+Independent state factors contribute additive metrics, including shared
+parameters. State-vector cost is exponential in the largest connected factor.
 Research background: https://arxiv.org/abs/1909.02108 and
 https://arxiv.org/abs/2011.02991. This is not the nonlinear CQNG algorithm.
 """
@@ -12,8 +13,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ._gradient_common import _real_array
-from .adjoint import AdjointPlan, _reverse, _tangent_forward
+from ._gradient_common import _binding_columns, _names, _real_array
+from ._structure import split_circuit
+from .adjoint import AdjointPlan, _check_adjoint, _reverse, _tangent_forward
+from .compiler import _check_circuit_limits
 from .errors import ResourceError, ValidationError
 from .ir import Circuit, integer
 from .observables import PauliString
@@ -45,48 +48,94 @@ class QuantumMetricPlan:
     parameters: tuple | None = None
     max_qubits: int | None = None
     max_memory_mb: float = 256
-    _plan: object = field(init=False, repr=False)
+    max_work: int = 1_000_000
+    _plans: tuple = field(init=False, repr=False)
+    _row_mib: float = field(init=False, repr=False)
 
     def __post_init__(self):
         if not isinstance(self.circuit, Circuit):
             raise ValidationError("Quantum geometry requires an OpenQML Circuit.")
-        # Reuse the existing validation, derivative compilation and conservative
-        # twelve-state working-budget admission, without retaining state values.
-        plan = AdjointPlan(
-            self.circuit,
-            (PauliString("I" * self.circuit.num_qubits),),
-            self.parameters,
-            self.max_qubits,
-            self.max_memory_mb,
-        )
-        object.__setattr__(self, "_plan", plan)
-        object.__setattr__(self, "parameters", plan.parameters)
+        _check_circuit_limits(self.circuit)
+        if self.circuit.has_effects:
+            raise ValidationError("Quantum geometry requires a unitary pure-state circuit.")
+        if self.max_qubits is not None:
+            integer(self.max_qubits, "max_qubits", 1)
+            if self.circuit.num_qubits > self.max_qubits:
+                raise ResourceError("Quantum geometry exceeds the explicit max_qubits limit.")
+        budget = real(self.max_memory_mb)
+        if budget <= 0:
+            raise ValidationError("max_memory_mb must be positive.")
+        integer(self.max_work, "max_work", 1)
+        names = _names(self.parameters, self.circuit.parameters)
+        work = 0
+
+        def charge(amount):
+            nonlocal work
+            work += amount
+            if work > self.max_work:
+                raise ResourceError("Quantum geometry dependency analysis exceeds max_work.")
+
+        components = split_circuit(self.circuit, charge)
+        metadata = (256 * work + 128 * len(names)) / 2**20
+        if metadata >= budget:
+            raise ResourceError("Quantum geometry descriptors exceed max_memory_mb.")
+        plans, peak = [], 0
+        positions = {name: i for i, name in enumerate(names)}
+        for _, _, child in components:
+            indices = tuple(sorted(positions[p] for p in child.parameters if p in positions))
+            if not indices:
+                continue
+            _check_adjoint(child, None, budget - metadata)
+            plan = AdjointPlan(
+                child,
+                (PauliString("I" * child.num_qubits),),
+                tuple(names[i] for i in indices),
+                None,
+                budget - metadata,
+            )
+            plans.append((plan, indices))
+            peak = max(peak, plan._row_mib)
+        object.__setattr__(self, "_plans", tuple(plans))
+        object.__setattr__(self, "_row_mib", peak + metadata)
+        object.__setattr__(self, "parameters", names)
+        object.__setattr__(self, "max_memory_mb", budget)
+
+    def to_dict(self):
+        return {
+            "scope": "real_Fubini_Study_of_zero_initialized_pure_product_factors",
+            "num_qubits": self.circuit.num_qubits,
+            "parameters": list(self.parameters),
+            "differentiated_components": len(self._plans),
+            "max_component_qubits": max((p.circuit.num_qubits for p, _ in self._plans), default=0),
+            "working_mb": self._row_mib,
+            "parameter_reuse": "additive_factor_metrics_in_shared_global_coordinates",
+            "roundoff_excluded": True,
+        }
 
     def _bindings(self, bindings):
-        columns, count = self._plan._bindings(bindings, None)
+        columns, count = _binding_columns(
+            {} if bindings is None else bindings, self.circuit.parameters, None, label="Metric"
+        )
         if count != 1:
             raise ValidationError("Quantum metric products require one binding at a time.")
         return columns
 
     def _product(self, bindings, vector):
-        if not self.parameters:
-            return np.empty(0)
-        state, tangent = _tangent_forward(
-            self.circuit, bindings, self._plan._derivatives, vector[None, :]
-        )
-        overlap = np.sum(state.conj() * tangent, axis=-1)
-        projected = tangent - state * overlap[:, None]
-        return (
-            0.5
-            * _reverse(
-                self.circuit,
-                bindings,
-                state,
-                projected,
-                self._plan._derivatives,
-                len(self.parameters),
-            )[0]
-        )
+        result = np.zeros(len(self.parameters))
+        for plan, indices in self._plans:
+            local = {p: bindings[p] for p in plan.circuit.parameters}
+            state, tangent = _tangent_forward(
+                plan.circuit, local, plan._derivatives, vector[np.asarray(indices)][None, :]
+            )
+            overlap = np.sum(state.conj() * tangent, axis=-1)
+            projected = tangent - state * overlap[:, None]
+            result[np.asarray(indices)] += (
+                0.5
+                * _reverse(plan.circuit, local, state, projected, plan._derivatives, len(indices))[
+                    0
+                ]
+            )
+        return result
 
     def matvec(self, bindings, vector):
         """Apply the real Fubini--Study metric without constructing it."""
@@ -97,7 +146,7 @@ class QuantumMetricPlan:
         """Explicit small-metric diagnostic; the natural-gradient solver avoids it."""
         columns = self._bindings(bindings)
         count = len(self.parameters)
-        if count * count * 8 + self._plan._row_mib * 2**20 > self.max_memory_mb * 2**20:
+        if count * count * 8 + self._row_mib * 2**20 > self.max_memory_mb * 2**20:
             raise ResourceError("Explicit metric plus working state exceeds max_memory_mb.")
         result = np.empty((count, count))
         for j in range(count):
@@ -168,6 +217,8 @@ class QuantumMetricPlan:
         )
 
 
-def quantum_metric(circuit, *, parameters=None, max_qubits=None, max_memory_mb=256):
+def quantum_metric(
+    circuit, *, parameters=None, max_qubits=None, max_memory_mb=256, max_work=1_000_000
+):
     """Prepare matrix-free metric products and damped natural-gradient solves."""
-    return QuantumMetricPlan(circuit, parameters, max_qubits, max_memory_mb)
+    return QuantumMetricPlan(circuit, parameters, max_qubits, max_memory_mb, max_work)

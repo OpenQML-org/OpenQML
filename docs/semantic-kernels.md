@@ -38,26 +38,13 @@ simulation or optional SDKs enter the proof decision.
 
 ## API and boundaries
 
-```python
-import openqml as oq
-
-reset = oq.Circuit(1).reset(0).measure(0, 0)
-feedback = (
-    oq.Circuit(1)
-    .measure(0, 0)
-    .if_else(oq.ClassicalCondition((0,), 1), oq.Circuit(1).x(0))
-    .measure(0, 0)
-)
-proof = oq.prove_equivalence(reset, feedback, max_component_qubits=1)
-assert proof.proven and proof.check(reset, feedback)
-```
 
 `compile_verified` and `ConversionPlan.certify` use this stage automatically for
-effectful programs. Defaults are six quantum wires per connected component,
+effectful programs. There is no default total-width or connected-component width cap. Defaults are
 100,000 polynomial terms per sparse map/local transition table (and combined
 comparison maps), 2,000,000 charged work units, and 4096 bits per rational
-coefficient or real-atom exponent. The component width can be raised to at most
-eight. Budgets are admission limits, not hard process RSS limits: current maps,
+coefficient or real-atom exponent. `max_component_qubits` optionally adds a user
+width restriction. Budgets are admission limits, not hard process RSS limits: current maps,
 transition maps, branch maps and the compared result may coexist.
 
 When the existing unitary normal forms are inconclusive, the same scalar
@@ -108,6 +95,5 @@ outputs and sustained improvements; it cannot be established by this commit.
 numeric matrix implementation, randomized hybrid maps over all input matrix
 units, hidden histories, classical-record mismatches, coherence, guard writes,
 symbolic noise composition, Kraus maps, wire ordering and resource admission.
-`python benchmarks/semantic_kernels.py` writes a timed proof/mutation audit.
 Results are local evidence for the recorded cases and machine, not universal
 coverage or an industry-leading performance claim.

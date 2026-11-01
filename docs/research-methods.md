@@ -8,16 +8,24 @@ exclusive technical moat.
 
 | Library responsibility | Implemented method / decision | Evidence and limits |
 | --- | --- | --- |
-| Framework frontends, IR, symbolic expressions and serialization | Explicit circuit semantics, preserved register/parameter ownership and bounded parsing; exact conversion checks | Circuit objects are translated; arbitrary surrounding Python, pulse calibrations and external hardware context remain outside the IR. Replacing parsers with a quantum algorithm would add no scientific benefit. |
+| Framework frontends, IR, symbolic expressions and serialization | Sparse declared registers, bounded register expansion, explicit circuit semantics and preserved parameter ownership; exact conversion checks | No default total-register width ceiling. Circuit objects are translated; arbitrary surrounding Python, pulse calibrations and external hardware context remain outside the IR. |
 | Compiler, simplification and control-flow optimization | Algebraic phase polynomials, exact word rewrites, Clifford conjugation, exact operator and instrument kernels; new `optimize_verified` checks optimized IR before returning it | [Semantic kernel research record](semantic-kernels.md), including Irene (2026). Hard identities can remain inconclusive; bounded failure never becomes a proof. |
-| Hybrid model/layer definitions and numerical gradients | Existing adjoint/JVP/VJP engines plus new `QuantumMetricPlan`: tangent forward and projected adjoint reverse products, damped matrix-free CG natural gradients | Pure states, unitary circuits, CPU state vectors. Shared/nonlinear angle chain rules and global-phase gauge cancellation are checked independently. `LayerSpec.metric_plan()` selects ordered trainable weights. |
+| Hybrid model/layer definitions and numerical gradients | Adjoint/JVP/VJP engines and `QuantumMetricPlan`: exact additive factor metrics, tangent/adjoint products and damped matrix-free CG natural gradients | Pure unitary product factors, CPU state vectors per differentiated component. Shared nonlinear parameter coordinates are retained. Connected components remain exponential. `LayerSpec.metric_plan()` selects ordered trainable weights. |
 | Finite-shot readouts and sampler providers | Shared commuting groups and covariance; new independent-pilot covariance allocation with exploration floors | Pilot shots count toward the total budget and are never reused in production means. Sum-of-output variance is the allocation objective. Conditional unbiasedness assumes the sampler executes the intended ideal measurement; hardware bias is not removed. |
 | General Pauli/Hamiltonian measurement reuse | New correlated one/two-site locally optimal dual-frame shadows, pilot tomography, positive regularization and greedy mutual-information pairing | June 2026 local-dual research, below. The dual reconstruction identity is checked; production data can estimate additional readouts without another quantum call. Pair matching is bounded and greedy, not the paper's complete graph partitioner. |
-| Dense state-vector/density simulation, noise and measurement branches | Existing exact numerical engines, matrix-unit verification, branch liveness and explicit resource checks | General entangled dense states remain exponential. New sparse-tensor/distributed research is assessed below, not advertised as implemented. |
+| Dense state-vector/density simulation, noise and measurement branches | Exact numerical engines, matrix-unit verification, branch liveness and quantum/classical component execution; numeric sparse Pauli propagation for local noise/reset/nonselective measurements | Default density and bridge paths no longer impose 20 wires. CPTP Pauli truncation is opt-in with a discarded-L1 certificate. General dense states remain exponential. Feedback uses components/density, not unconditional Pauli propagation. |
 | Tensor-network simulation | Existing full-SVD MPS plus new opt-in canonical Schmidt truncation with rank cap and accumulated state/observable error bounds | Nearest-neighbor one/two-wire unitary circuits. Canonical QR sweeps precede truncation. Bounds exclude floating-point error; exact execution remains the default. Standard parameter-shift gradients of nonlinear truncation are rejected. |
-| Pauli/stabilizer/readout engines | Existing bounded Heisenberg/Pauli propagation, shared expression graphs, Clifford tableaux and causal readout reduction | Structure-specific exact methods. Large structured widths do not imply general large-qubit dense simulation. |
-| Execution selection, scheduling, batch reuse and memory planning | Existing admission-aware method selection and reuse; approximate MPS must be selected explicitly | Deterministic execution, approximate numeric execution and noisy sampling keep different contracts. Memory admission is not a hard process-RSS guarantee. |
+| Pauli/stabilizer/readout engines | Exact symbolic propagation, shared expression graphs, Clifford tableaux, causal reduction, sparse observable storage and noise-aware numeric propagation | Sparse masks use active-wire coordinates. Optional pruning reports deterministic per-output truncation bounds; defaults have no intentional pruning. No arbitrary-circuit polynomial runtime claim. |
+| Execution selection, scheduling, batch reuse and memory planning | Admission-aware selection, quantum/classical dependency factors and batch reuse; approximate MPS/Pauli must be selected explicitly | No default total-width cap. Finite memory, work, branching and external SDK/device capacity still apply. Deterministic execution, approximate numeric execution and sampling keep different contracts. Memory admission is not a hard process-RSS guarantee. |
 | Checkpoints, interfaces, CLI, package and platform infrastructure | Preserve portable model/parameter ownership, keep heavyweight SDKs optional, test core/full installations independently | These are engineering contracts rather than opportunities to insert unrelated quantum research algorithms. |
+
+## Resource-driven methods update (2026-10-30)
+
+The [scalable methods record](scalable-methods.md) documents sparse register
+compaction, exact component readouts, additive factor geometry, and noise-aware
+Pauli propagation with a deterministic discarded-L1 error contract. It links
+the relevant 2025/2026 primary papers and distinguishes their ensemble-specific
+theorems from the guarantees implemented here. Independent dense regressions in `tests/test_sparse_scaling.py` validate the implemented contracts.
 
 ## Quantum geometry
 
@@ -30,7 +38,9 @@ state derivatives with the projected adjoint contraction
 linear conjugate gradients. It does not form a parameter-by-parameter metric
 inside the solver. Matrix construction remains an explicitly bounded diagnostic.
 
-The solver reports iterations, product count, convergence and a recomputed
+Independent product factors contribute additive metrics in shared global
+parameter coordinates. Only differentiated factors need state buffers; no
+global dense state is constructed. The solver reports iterations, product count, convergence and a recomputed
 residual. A damped solve is not a guarantee of loss convergence or freedom from
 barren plateaus. This is the real Fubini--Study metric, not four times that metric
 (the pure-state quantum Fisher matrix).
@@ -99,13 +109,6 @@ Likewise, compiler SMT/e-graph completeness, error-corrected hardware and
 device-calibrated mitigation are not inferred from bibliographic citations.
 
 ## Reproducible local evidence
-
-Run `python benchmarks/research_methods.py`. The committed
-[CPU report](../benchmarks/results/research_methods_cpu.json) records matrix-free
-versus explicit metric agreement, finite-shot allocation at a fixed total budget,
-exact dual-frame variance on a specified reference case, independent pilot
-acquisition, and approximate-MPS readouts versus dense simulation. It separates
-known-reference variance calculations from pilot-fitted acquisitions.
 
 `tests/test_research_methods.py` independently verifies derivative geometry,
 linear-system solves, gauge/null directions, sampler budgets, dual reconstruction

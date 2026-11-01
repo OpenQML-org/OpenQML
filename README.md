@@ -1,142 +1,39 @@
 # OpenQML
 
-OpenQML adds trainable quantum layers to PyTorch and JAX models and compiles supported quantum circuits across Qiskit, PennyLane, Cirq and OpenQASM with explicit semantic checks.
+[PyPI](https://pypi.org/project/openqml/) · [CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml) · [Documentation](docs/research-methods.md)
 
-## Install and use
+OpenQML is a Python library for hybrid quantum-classical learning and quantum
+circuit interoperability.
+
+## Features
+
+- Trainable quantum layers for PyTorch and JAX, with native automatic differentiation.
+- Circuit conversion across Qiskit, PennyLane, Cirq and OpenQASM, with explicit semantic verification.
+- Resource-aware execution, sparse Pauli propagation, quantum geometry and measurement estimation.
+
+## Installation
+
+Requires Python 3.10 or later.
 
 ```bash
 python -m pip install openqml
 ```
 
-The default install contains the native simulator, circuit IR, built-in OpenQASM
-conversion and exact semantic proof kernels. It requires only NumPy, packaging
-and psutil. Optional frameworks load on access through the same namespace:
-
-```bash
-python -m pip install "openqml[torch]"       # PyTorch quantum layers
-python -m pip install "openqml[qiskit]"      # Native Qiskit interoperability
-python -m pip install "openqml[all]"         # Full integration bundle
-```
-
-Other extras: `jax`, `flax` (includes Optax), `aer`, `pennylane`, `cirq`, `qasm`
-(official SDK parser) and `symbolic`. Already-installed compatible frameworks
-work directly; OpenQML never downloads dependencies at runtime.
-
 ```python
 import openqml as oq
-
-circuit = oq.Circuit(2).ry(oq.Parameter("theta"), 0).cx(0, 1)
-compiled = oq.compile_verified(circuit, target="openqasm3")
-plan = oq.plan_execution(circuit, (oq.PauliString("ZI"),))
-values = plan.evaluate({"theta": 0.4})
 ```
 
-Native APIs are available through `oq.torch`, `oq.jax`, `oq.flax`, `oq.optax`, `oq.numpy` and the SDK namespaces, including `oq.qiskit`, `oq.pennylane`, `oq.cirq` and `oq.qiskit_aer`.
+The core depends on NumPy, packaging and psutil. Optional framework integrations
+are available through extras such as `openqml[torch]`, `openqml[jax]` and `openqml[all]`.
 
-## Hybrid learning
+## Documentation
 
-Install the `torch` extra for this example:
+[Architecture](docs/architecture.svg) · [Semantic verification](docs/semantic-kernels.md) ·
+[Scalable execution](docs/scalable-methods.md) · [Research methods](docs/research-methods.md)
 
-```python
-import openqml as oq
+There is no fixed total circuit-width ceiling. Execution remains subject to
+representation, memory and work budgets. Approximation is opt-in and reports its bounds.
 
-model = oq.torch.nn.Sequential(
-    oq.torch.nn.Linear(4, 2),
-    oq.torch.QuantumLayer.data_reuploading(2, depth=1),
-    oq.torch.nn.Linear(2, 1),
-)
-optimizer = oq.torch.optim.Adam(model.parameters(), lr=1e-3)
-optimizer.zero_grad()
-loss = model(oq.torch.randn(8, 4)).square().mean()
-loss.backward()
-optimizer.step()
-```
+## License
 
-One optimizer updates classical and quantum weights. JAX layers use `layer.init(key)` and `layer(weights, inputs)`; Flax and Optax are supported. Native tensor/Pauli execution preserves higher derivatives. Numerical SDK and MPS bridges provide first-order JVPs and VJPs.
-
-## Research methods
-
-| API | Capability |
-| --- | --- |
-| `oq.quantum_metric(circuit)` / `spec.metric_plan()` | Matrix-free Fubini--Study products and damped natural-gradient solves |
-| `oq.shadow_estimate(...)` | Independent-pilot correlated local dual-frame shadows; reuse data with `result.reestimate(...)` |
-| `oq.estimate_adaptive(...)` | Pilot-covariance shot allocation within a total budget |
-| `oq.TruncatedMPSBackend(...).evaluate(...)` | Opt-in rank-limited MPS with truncation error reports |
-| `oq.optimize_verified(circuit)` | Return an optimization only after exact semantic certification |
-
-The [whole-library research record](docs/research-methods.md) links each method
-to its sources, assumptions, measured evidence and assessed alternatives.
-Classical state-vector geometry remains exponential in qubit count. Shadow
-covariances assume the intended sampler; MPS truncation bounds exclude numerical
-roundoff. Unsupported hardware/distributed methods are not claimed as implemented.
-
-## Verifiable circuit compilation
-
-| API | Guarantee |
-| --- | --- |
-| `oq.prove_equivalence(a, b)` | Bounded algebraic equivalence, including factored exact hybrid density kernels, for all valid defined parameter bindings |
-| `oq.compile_verified(c, target=...)` | Exports with an algebraic certificate; refuses unproved conversions |
-| `oq.plan_conversion(...).verify(mode="native")` | Independent target-runtime comparison over a complete input basis at explicit bindings |
-| `oq.semantic_coverage()` | Representative framework/IR feature matrix and diagnostics |
-
-The proof kernel uses affine Boolean phase polynomials, exact word rewrites and optional projective Clifford conjugation. Strict mode compares global phase. Projective mode explicitly ignores it. Stored floating constants remain exact binary rationals; SDK rounding or unsupported identities can leave a conversion **unproved**, which does not establish inequivalence. Certificates cover the adapter's IR interpretation; native runtime checks remain separate.
-
-Hybrid proofs compare the full quantum output and every final classical bit,
-starting with zero classical storage. They handle measurement, reset, nested
-feedback, symbolic rotations and supported noise channels, adding hidden
-histories before comparison. Quantum/classical dependencies from **both**
-programs determine independent components. Each component defaults to at most
-six active qubits, with additional term, work and exact-coefficient limits;
-many independent components do not imply general large entangled-circuit capacity.
-Global phase is physically unobservable in this quantum-instrument semantics.
-Bounded exact operator kernels also handle the universal Hadamard/rotation gate
-set in strict unitary proofs, retaining global phase when simpler forms fail.
-See [the algorithm, limits and research basis](docs/semantic-kernels.md).
-
-Arbitrary Python programs are outside automatic translation. `oq.inspect_python(text)` diagnoses source without executing it. Dynamic control, custom matrices and noise require supported IR representations. External noise models, pulse calibrations and hardware context are diagnosed rather than silently preserved.
-
-## Adaptive execution
-
-`oq.plan_execution(...)` reports its method, rejected candidates and memory admission before execution. Existing numerical APIs also accept `backend="auto"`.
-
-| Method | Admission |
-| --- | --- |
-| Stabilizer | Named Clifford gates and bounded tableau storage |
-| Pauli | Bounded exact symbolic propagation of declared readouts |
-| OpenQML MPS | Nearest-neighbor one/two-wire circuits; planned full-SVD dimensions, no singular-value truncation |
-| Dense vector/density | Memory-derived capacity, including classical branches |
-| CUDA dense | Explicit dense device preference and sufficient available GPU memory |
-
-Direct vector execution and quantum layers have no fixed 20-qubit ceiling. The default vector budget remains 256 MiB; `max_qubits` is an optional additional cap. Four complex128 buffers per row require:
-
-| Qubits | Working budget |
-| ---: | ---: |
-| 22 | 256 MiB |
-| 24 | 1 GiB |
-| 26 | 4 GiB |
-
-Adaptive plans default to one quarter of observed host/container availability, capped at 4 GiB. Autodiff tapes and backend costs still matter; admission models are not process RSS limits. Difficult non-Clifford, noisy and highly entangled circuits can exhaust every method.
-
-## Evidence and installation cost
-
-The [compiler/execution audit](https://github.com/OpenQML-org/OpenQML/blob/main/benchmarks/results/compiler_execution_cpu.json) records randomized differential checks, symbolic certificates, a 1,024-qubit Clifford case, independently checked 128-qubit non-Clifford MPS readouts and measured dense execution. These are representation-specific results, not general large-qubit simulation guarantees.
-
-[CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml) separately tests
-the core and full bundle. GPU execution requires suitable hardware and is
-skipped on CPU runners. The earlier
-[full-bundle measurement](benchmarks/results/installation_linux.json) occupies
-about 6.39 GiB; it is not the new core footprint.
-The [new clean Linux core measurement](benchmarks/results/core_installation_linux.json)
-is about **68.7 MiB**, including its three dependencies. These are different
-installation profiles and dependency versions, not a same-version compression
-benchmark. The full bundle remains available and remains substantial.
-`oq.environment_report(check_imports=True, include_sizes=True)` reports the core
-dependency closure and optional integration availability. Pass `extras=("all",)`
-or use `python -m openqml doctor --extra all --sizes` to audit the full bundle.
-Missing optional SDKs do not make a core installation unhealthy.
-
-## Architecture
-
-![OpenQML project architecture](https://raw.githubusercontent.com/OpenQML-org/OpenQML/main/docs/architecture.svg)
-
-[Apache license](https://github.com/OpenQML-org/OpenQML/blob/main/LICENSE)
+[Apache License 2.0](LICENSE).

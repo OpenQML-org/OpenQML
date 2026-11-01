@@ -336,7 +336,7 @@ class ConversionPlan:
         *,
         atol=1e-10,
         rtol=1e-10,
-        max_qubits=6,
+        max_qubits=None,
         max_memory_mb=64,
         max_work=10_000_000,
         max_branches=256,
@@ -377,7 +377,7 @@ class ConversionPlan:
         phase_sensitive=True,
         max_terms=100_000,
         max_work=2_000_000,
-        max_component_qubits=6,
+        max_component_qubits=None,
         source_options=None,
     ):
         """Export with an exact algebraic certificate or raise if unproved.

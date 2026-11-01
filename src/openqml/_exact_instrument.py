@@ -297,6 +297,8 @@ def _kernel(circuit, component, alg):
     quantum = {q: i for i, (kind, q) in enumerate(r for r in component if r[0] == 0)}
     classical = {q: i for i, (kind, q) in enumerate(r for r in component if r[0] == 1)}
     n, component = len(quantum), set(component)
+    if 2 * n >= alg.max_terms.bit_length():
+        raise ResourceError("Exact density-kernel matrix units exceed max_terms.")
     size = 1 << n
     alg.admit(size * size)
     alg.charge(size * size)
@@ -448,7 +450,7 @@ def instrument_form(source, target, max_terms, max_work, max_component_qubits):
     alg, normal = _Algebra(max_terms, max_work), []
     for component in _components(source, target, alg):
         width = sum(kind == 0 for kind, _ in component)
-        if width > max_component_qubits:
+        if max_component_qubits is not None and width > max_component_qubits:
             raise ResourceError("Exact density-kernel component exceeds max_component_qubits.")
         left = _kernel(source, component, alg)
         right = _kernel(target, component, alg)
@@ -465,6 +467,8 @@ def _operator_kernel(circuit, component, alg):
     """Exact amplitudes, including relative phases, for every input column."""
     wires = {q: i for i, (_, q) in enumerate(component)}
     n = len(wires)
+    if n >= alg.max_terms.bit_length():
+        raise ResourceError("Exact operator-kernel columns exceed max_terms.")
     size = 1 << n
     alg.admit(size)
     state = {(column, column): alg.constant() for column in range(size)}
@@ -509,7 +513,7 @@ def operator_form(source, target, max_terms, max_work, max_component_qubits):
     if source_phase != target_phase:
         return None, alg.work
     for component in _components(source, target, alg):
-        if len(component) > max_component_qubits:
+        if max_component_qubits is not None and len(component) > max_component_qubits:
             raise ResourceError("Exact operator-kernel component exceeds max_component_qubits.")
         left = _operator_kernel(source, component, alg)
         right = _operator_kernel(target, component, alg)

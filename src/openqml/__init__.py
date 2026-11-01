@@ -25,6 +25,7 @@ from .backends import (
 )
 from .batch import execute_batch, expectations_batch
 from .compiler import CircuitStats, circuit_stats, decompose, inverse, simplify
+from .components import ComponentPlan, plan_components
 from .conversion import ConversionPlan, ConversionResult, convert, diagnose, plan_conversion
 from .density import density_matrix
 from .environment import environment_report
@@ -60,7 +61,13 @@ from .measurement import (
     measurement_plan,
 )
 from .mps import MPSBackend
-from .observables import Hamiltonian, PauliString, z_observables
+from .observables import (
+    Hamiltonian,
+    PauliString,
+    SparseHamiltonian,
+    SparsePauliString,
+    z_observables,
+)
 from .optimization import CertifiedOptimization, OptimizationResult, optimize, optimize_verified
 from .parameters import Expression, Parameter
 from .pauli import PauliPlan
@@ -78,6 +85,7 @@ from .semantics import (
 )
 from .shadows import ShadowEstimate, shadow_estimate
 from .simulator import ExecutionResult, execute, expectation, expectations, sample, statevector
+from .sparse_pauli import SparsePauliPlan, SparsePauliResult
 from .templates import data_reuploading, hardware_efficient
 from .truncated_mps import MPSApproximation, TruncatedMPSBackend
 from .verification import ConversionCheck
@@ -114,9 +122,15 @@ def __dir__():
     return sorted(set(globals()) | _LAZY_MODULES.keys())
 
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
+    "ComponentPlan",
+    "plan_components",
+    "SparsePauliString",
+    "SparseHamiltonian",
+    "SparsePauliPlan",
+    "SparsePauliResult",
     "CertifiedOptimization",
     "optimize_verified",
     "ShadowEstimate",

@@ -201,7 +201,7 @@ class CirqDensityBackend:
                 rho = density_matrix(
                     c,
                     backend=self,
-                    max_qubits=options.max_qubits or 20,
+                    max_qubits=options.max_qubits,
                     max_memory_mb=options.max_memory_mb,
                     max_branches=options.max_branches,
                 )

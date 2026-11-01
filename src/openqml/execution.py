@@ -328,8 +328,12 @@ class _Builder:
         notes, dense_work, dense_bytes, dense_program = [], None, None, None
         available = plan._memory_bytes - reserve
         width = circuit.num_qubits
-        if width <= plan.max_dense_qubits and width < 63:
-            local = max((len(op.qubits) for op in circuit.operations), default=1)
+        local = max((len(op.qubits) for op in circuit.operations), default=1)
+        if (
+            (plan.max_dense_qubits is None or width <= plan.max_dense_qubits)
+            and width + 6 < max(0, available).bit_length()
+            and 2 * local + 5 < max(0, available).bit_length()
+        ):
             dense_bytes = 64 * (1 << width) + 32 * (1 << (2 * local))
             if dense_bytes <= available:
                 remaining = plan.max_planning_work - self.work
@@ -387,7 +391,7 @@ class _Builder:
             notes.append(
                 Diagnostic(
                     "DENSE_WIDTH_LIMIT",
-                    "Local circuit exceeds max_dense_qubits or the array index ceiling.",
+                    "Local circuit exceeds the explicit dense-width or working-memory budget.",
                     severity="info",
                 )
             )
@@ -495,7 +499,7 @@ class ExpectationPlan:
     circuit: Circuit
     observables: tuple
     max_groups: int = 256
-    max_dense_qubits: int = 12
+    max_dense_qubits: int | None = None
     max_planning_work: int = 10_000_000
     max_terms: int = 4096
     max_nodes: int = 10_000
@@ -530,6 +534,8 @@ class ExpectationPlan:
             "max_dense_batch",
         ):
             minimum = 0 if name == "max_dense_qubits" else 2 if name == "max_nodes" else 1
+            if name == "max_dense_qubits" and getattr(self, name) is None:
+                continue
             object.__setattr__(self, name, integer(getattr(self, name), name, minimum))
         budget = real(self.max_memory_mb)
         if budget <= 0:
@@ -711,7 +717,7 @@ class ExpectationPlan:
         reference_backend="numpy",
         atol=1e-10,
         rtol=1e-10,
-        max_reference_qubits=12,
+        max_reference_qubits=None,
         max_reference_work=10_000_000,
     ):
         """Check one scalar binding against bounded, unfactored input IR execution.
@@ -731,8 +737,12 @@ class ExpectationPlan:
             "pennylane",
         }:
             raise ValidationError("Unknown reference verification backend.")
-        limit = integer(max_reference_qubits, "max_reference_qubits", 1)
-        if self.circuit.num_qubits > limit:
+        limit = (
+            None
+            if max_reference_qubits is None
+            else integer(max_reference_qubits, "max_reference_qubits", 1)
+        )
+        if limit is not None and self.circuit.num_qubits > limit:
             raise ResourceError("Source verification exceeds max_reference_qubits.")
         readout_work = self.circuit.num_qubits * sum(
             len(ob.terms) if isinstance(ob, Hamiltonian) else 1 for ob in self.observables

@@ -67,6 +67,8 @@ def check_literal_registers(text, max_register_bits):
     SDK-resolved constant/expression sizes also receive a post-parse width check.
     This preflight does not claim a process-level SDK parsing memory limit.
     """
+    if max_register_bits is None:
+        return
     integer(max_register_bits, "max_register_bits", 1)
     code = re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
     declarations = re.finditer(

@@ -71,7 +71,10 @@ def test_metric_invalid_domains_and_resource_limits():
     with pytest.raises(oq.ValidationError):
         oq.quantum_metric(oq.Circuit(1).reset(0))
     with pytest.raises(oq.ResourceError):
-        oq.quantum_metric(oq.Circuit(30).ry(x, 0), max_memory_mb=1)
+        dense = oq.CircuitBuilder(30).ry(x, 0)
+        for q in range(29):
+            dense.cx(q, q + 1)
+        oq.quantum_metric(dense.build(), max_memory_mb=1)
     plan = oq.quantum_metric(oq.Circuit(1).ry(x, 0))
     with pytest.raises(oq.ValidationError):
         plan.matvec({"x": [0.1, 0.2]}, [1.0])

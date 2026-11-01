@@ -187,8 +187,8 @@ def test_proof_bounds_precede_serialization_and_opaque_identities_remain_inconcl
     monkeypatch.setattr(
         oq.Circuit, "to_json", lambda *a, **k: pytest.fail("Unbounded serialization")
     )
-    with pytest.raises(oq.ResourceError, match="width"):
-        oq.prove_equivalence(circuit, circuit)
+    with pytest.raises(oq.ResourceError, match="max_qubits"):
+        oq.prove_equivalence(circuit, circuit, max_qubits=100)
 
 
 def test_effectful_identity_is_scoped_to_instrument_and_different_channel_is_unproved():

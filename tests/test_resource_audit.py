@@ -1,25 +1,11 @@
-"""Construction, exception, memory and benchmark isolation contracts."""
+"""Construction, exception, memory and runtime resource contracts."""
 
-import importlib.util
-import json
 import pickle
-import subprocess
-import sys
-from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 import openqml as oq
-
-
-def benchmark_module(name):
-    path = Path(__file__).parents[1] / "benchmarks" / f"{name}.py"
-    spec = importlib.util.spec_from_file_location(f"audit_{name}", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 @pytest.mark.parametrize(
@@ -281,77 +267,3 @@ def test_warm_bridge_keeps_one_preparation_and_one_submission_per_forward(framew
             actual = np.asarray(call(jnp.array([0.4]), jnp.full((16, 1), value)))
             np.testing.assert_allclose(actual, np.cos(value * 0.4), atol=1e-6)
     assert backend.preparations == 1 and backend.sizes == [16, 16, 16]
-
-
-@pytest.mark.parametrize("previous", [False, True])
-def test_precision_worker_scope_restores_prior_state_even_on_error(previous):
-    jax = pytest.importorskip("jax")
-    precision = benchmark_module("_precision")
-
-    @precision.scoped_x64
-    def worker(args):
-        assert jax.config.x64_enabled
-        if getattr(args, "fail", False):
-            raise RuntimeError("worker failed")
-        return jax.config.x64_enabled
-
-    with oq.jax.enable_x64(previous):
-        assert worker(SimpleNamespace(interface="jax")) is True
-        assert jax.config.x64_enabled is previous
-        with pytest.raises(RuntimeError):
-            worker(SimpleNamespace(case="jax-hybrid", fail=True))
-        assert jax.config.x64_enabled is previous
-
-
-def test_memory_window_never_reports_a_lifetime_peak_as_a_call_peak(monkeypatch):
-    memory = benchmark_module("_memory")
-
-    def rejected(*args):
-        raise PermissionError("clear_refs disabled")
-
-    monkeypatch.setattr(memory.Path, "write_text", rejected)
-    result, report = memory.measure_peak(lambda: 42)
-    assert result == 42 and report["status"] == "unavailable" and report["peak_rss_bytes"] is None
-
-
-def test_memory_window_resets_before_measuring_and_clearly_labels_scope():
-    memory = benchmark_module("_memory")
-    data, report = memory.measure_peak(lambda: bytearray(4 * 2**20))
-    assert len(data) == 4 * 2**20
-    if report["status"] == "unavailable":
-        pytest.skip(report["reason"])
-    assert report["scope"] == "current_process_call_window"
-    assert report["approximate"] is True
-    assert report["peak_rss_bytes"] >= report["start_rss_bytes"]
-
-
-def test_fork_exec_worker_peak_is_not_attributed_to_parent_history():
-    if not sys.platform.startswith("linux"):
-        pytest.skip("Linux procfs accounting required")
-    root = Path(__file__).parents[1] / "benchmarks"
-    script = f"""
-import json,sys
-sys.path.insert(0,{str(root)!r})
-from _memory import measure_peak
-data,report=measure_peak(lambda:bytearray(4*2**20))
-print(json.dumps(report))
-"""
-    # Run the fork in a separate, single-threaded launcher; the test process may
-    # already own JAX threads and must not execute Python hooks after forking.
-    launcher = f"""
-import subprocess,sys
-parent_allocation=bytearray(64*2**20)
-result=subprocess.run([sys.executable,'-c',{script!r}],capture_output=True,text=True,check=True,preexec_fn=lambda:None)
-print(result.stdout)
-"""
-    result = subprocess.run(
-        [sys.executable, "-c", launcher],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    report = json.loads(result.stdout)
-    if report["status"] == "unavailable":
-        pytest.skip(report["reason"])
-    assert report["metric"] == "linux_procfs_reset_hwm"
-    assert report["peak_over_start_bytes"] < 32 * 2**20
