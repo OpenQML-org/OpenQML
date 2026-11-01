@@ -1,6 +1,6 @@
 # OpenQML
 
-[PyPI](https://pypi.org/project/openqml/) · [CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml) · [Documentation](docs/research-methods.md)
+[PyPI](https://pypi.org/project/openqml/) · [CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml) · [Documentation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/research-methods.md)
 
 OpenQML is a Python library for hybrid quantum-classical learning and quantum
 circuit interoperability.
@@ -28,12 +28,12 @@ are available through extras such as `openqml[torch]`, `openqml[jax]` and `openq
 
 ## Documentation
 
-[Architecture](docs/architecture.svg) · [Semantic verification](docs/semantic-kernels.md) ·
-[Scalable execution](docs/scalable-methods.md) · [Research methods](docs/research-methods.md)
+[Architecture](https://github.com/OpenQML-org/OpenQML/blob/main/docs/architecture.svg) · [Semantic verification](https://github.com/OpenQML-org/OpenQML/blob/main/docs/semantic-kernels.md) ·
+[Scalable execution](https://github.com/OpenQML-org/OpenQML/blob/main/docs/scalable-methods.md) · [Research methods](https://github.com/OpenQML-org/OpenQML/blob/main/docs/research-methods.md)
 
 There is no fixed total circuit-width ceiling. Execution remains subject to
 representation, memory and work budgets. Approximation is opt-in and reports its bounds.
 
 ## License
 
-[Apache License 2.0](LICENSE).
+[Apache License 2.0](https://github.com/OpenQML-org/OpenQML/blob/main/LICENSE).
