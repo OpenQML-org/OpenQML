@@ -9,7 +9,7 @@ Trainable quantum circuits and tensor-network layers for PyTorch, JAX and Flax.
 Requires Python 3.10 or later. Install the PyTorch integration to run the example below:
 
 ```bash
-python -m pip install "openqml[torch]"
+python -m pip install --upgrade "openqml[torch]"
 ```
 
 Other options: `openqml[jax]`, `openqml[flax]`, or `openqml` for the NumPy core.
