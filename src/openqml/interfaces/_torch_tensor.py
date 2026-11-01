@@ -12,7 +12,7 @@ from ..parameters import real
 from ..quantum_tree import QuantumTreePlan
 from ..tensor_train import TensorTrainMatrix, TensorTrainPlan
 from ._spec import LayerSpecMixin
-from ._torch_hybrid import _input
+from ._torch_hybrid import _input, _quantum_precision
 
 
 def _device(device):
@@ -53,6 +53,7 @@ class TreeQuantumLayer(nn.Module):
             None if batch_chunk_size is None else integer(batch_chunk_size, "batch_chunk_size", 1)
         )
 
+    @_quantum_precision
     def functional(self, weights, inputs):
         _input(inputs, self.plan.num_qubits)
         _input(weights, self.plan.num_parameters)

@@ -28,11 +28,14 @@ from ._spec import (
 from ._torch_ad import ExternalQuantumFunction as _ExternalQuantumFunction
 from ._torch_hybrid import HyperQuantumAdapter as HyperQuantumAdapter
 from ._torch_hybrid import IQPQuantumLayer as IQPQuantumLayer
+from ._torch_hybrid import _quantum_precision
+from ._torch_ppo import PPOTrainer as PPOTrainer
 from ._torch_rl import QuantumActorCritic as QuantumActorCritic
 from ._torch_rl import QuantumSurrogate as QuantumSurrogate
 from ._torch_tensor import TensorNetworkAdapter as TensorNetworkAdapter
 from ._torch_tensor import TensorTrainLinear as TensorTrainLinear
 from ._torch_tensor import TreeQuantumLayer as TreeQuantumLayer
+from ._torch_training import HybridTrainer as HybridTrainer
 
 
 class QuantumLayer(LayerSpecMixin, nn.Module):
@@ -101,6 +104,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
             optimization_options=optimization_options,
         )
         self.source_observables = self.observables
+        self.num_outputs = len(self.observables)
         backend = default_layer_backend(
             circuit,
             self.observables,
@@ -226,6 +230,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
                 self.weights[reverse] = -self.weights[forward]
         return self
 
+    @_quantum_precision
     def functional(self, weights, inputs):
         """Evaluate explicit (..., n_weights) weights without changing module parameters.
 

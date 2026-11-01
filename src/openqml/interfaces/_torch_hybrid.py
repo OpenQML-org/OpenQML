@@ -1,6 +1,7 @@
 """Native sparse IQP layers and input-conditioned residual hypernetworks."""
 
 import math
+from functools import wraps
 
 import torch
 from torch import nn
@@ -11,6 +12,19 @@ from ..iqp import IQPGraph
 from ..ir import integer
 from ..parameters import real
 from ..simulator import _TensorOps
+
+
+def _quantum_precision(function):
+    @wraps(function)
+    def wrapped(self, weights, inputs):
+        if isinstance(inputs, torch.Tensor) and inputs.device.type in {"cpu", "cuda"}:
+            # Classical projections can use AMP; quantum rotations/readouts
+            # retain their explicitly selected float32/float64 arithmetic.
+            with torch.autocast(inputs.device.type, enabled=False):
+                return function(self, weights, inputs)
+        return function(self, weights, inputs)
+
+    return wrapped
 
 
 class _IQPReadout(nn.Module):
@@ -79,6 +93,7 @@ class IQPQuantumLayer(nn.Module):
     def forward(self, inputs):
         return self.functional(self.weights, inputs)
 
+    @_quantum_precision
     def functional(self, weights, inputs):
         _input(inputs, self.graph.num_qubits)
         _input(weights, self.graph.num_coordinates)

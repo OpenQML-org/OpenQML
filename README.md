@@ -47,9 +47,11 @@ Its MPO projections and quantum tree train together through ordinary autograd.
 | Task | Interface |
 | --- | --- |
 | Add quantum features | `TreeQuantumLayer` |
+| Adjust quantum capacity | `QuantumLayer.multiscale(bond_qubits=..., depth=...)` |
 | Train an existing circuit | `QuantumLayer`; set `execution_method="tensor-network"` for native contraction |
 | Factor a dense projection | `TensorTrainLinear.from_dense(weight, bias)` |
-| Build a quantum policy | `QuantumActorCritic` with PPO/SAC objectives |
+| Accumulate training gradients | `oq.torch.HybridTrainer` / `oq.jax.make_train_step` |
+| Train a quantum policy | `QuantumActorCritic` and `PPOTrainer` |
 
 These layers are available under `oq.torch`, `oq.jax` and `oq.flax`.
 JAX uses `layer.init(key)` and `layer(parameters, inputs)`; Flax uses Linen `init`/`apply`.
@@ -60,8 +62,10 @@ Dense import returns a module in PyTorch, `(layer, parameters)` in JAX, and `(mo
 Automatic circuit execution prefers a configured compatible QPU, then GPU, then CPU.
 Native tensor layers run on their selected framework device. There is no fixed
 circuit-width ceiling; memory, contraction width and work budgets determine capacity.
+`AdaptiveMPSBackend` offers explicit approximation with checked observable-error bounds.
+`compile_program` retains SDK-supported dynamic loops; `convert` uses portable circuit IR.
 
-[Tensor networks](https://github.com/OpenQML-org/OpenQML/blob/main/docs/tensor-networks.md) · [Hybrid training](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md) · [Quantum RL](https://github.com/OpenQML-org/OpenQML/blob/main/docs/quantum-rl.md) · [Circuit conversion](https://github.com/OpenQML-org/OpenQML/blob/main/docs/semantic-kernels.md) · [QPU configuration](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md)
+[Training and execution](https://github.com/OpenQML-org/OpenQML/blob/main/docs/training-and-execution.md) · [Tensor networks](https://github.com/OpenQML-org/OpenQML/blob/main/docs/tensor-networks.md) · [Hybrid training](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md) · [Quantum RL](https://github.com/OpenQML-org/OpenQML/blob/main/docs/quantum-rl.md) · [Circuit conversion](https://github.com/OpenQML-org/OpenQML/blob/main/docs/semantic-kernels.md) · [QPU configuration](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md)
 
 ## License
 

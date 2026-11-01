@@ -13,12 +13,12 @@ from .ir import Circuit
 def detect_framework(value):
     if isinstance(value, Circuit):
         return "ir"
-    module = type(value).__module__
-    if module.startswith("qiskit"):
+    modules = tuple(base.__module__ for base in type(value).__mro__)
+    if any(module.startswith("qiskit") for module in modules):
         return "qiskit"
-    if module.startswith("cirq"):
+    if any(module.startswith("cirq") for module in modules):
         return "cirq"
-    if module.startswith("pennylane"):
+    if any(module.startswith("pennylane") for module in modules):
         return "pennylane"
     from .frontends import detect_custom
 
@@ -157,6 +157,12 @@ class QuantumProgram:
         return import_native(
             program.native, program.framework, **(dict(program.import_options) | options)
         )
+
+    def compile(self, target, **options):
+        """Retain SDK-supported dynamic structure; see compile_program()."""
+        from .program_compilation import compile_program
+
+        return compile_program(self, target=target, **options)
 
     def convert(
         self,

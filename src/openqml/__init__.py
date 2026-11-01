@@ -10,6 +10,7 @@ from ._dependencies import install_hint as _install_hint
 from ._native_training import NativeNaturalGradientResult
 from ._scheduling import ExecutionBatch, ReadoutRoute
 from .adaptive import AdaptivePlan, ExecutionCandidate, plan_execution
+from .adaptive_mps import AdaptiveMPSBackend, AdaptiveMPSResult
 from .adjoint import AdjointPlan, adjoint_jvp, adjoint_vjp
 from .aer import AerBackend
 from .backends import (
@@ -63,6 +64,7 @@ from .measurement import (
     measurement_plan,
 )
 from .mps import MPSBackend
+from .multiscale import MultiscalePlan
 from .observables import (
     Hamiltonian,
     PauliString,
@@ -75,6 +77,7 @@ from .parameters import Expression, Parameter
 from .pauli import PauliPlan
 from .planning import DensityPlan, plan_density
 from .program import QuantumProgram, as_circuit
+from .program_compilation import ProgramConversion, compile_program
 from .providers import CirqDensityBackend, QiskitEstimatorBackend, QiskitSamplerBackend
 from .quantum_tree import QuantumTreePlan
 from .readout import ReadoutPlan, plan_readout
@@ -91,9 +94,11 @@ from .rl import (
     ppo_loss,
     sac_loss,
     squashed_gaussian,
+    squashed_gaussian_log_probability,
     surrogate_fit_loss,
     vtrace_targets,
 )
+from .rl_training import PPOConfig
 from .runtime import (
     DispatchCandidate,
     DispatchPlan,
@@ -154,9 +159,16 @@ def __dir__():
     return sorted(set(globals()) | _LAZY_MODULES.keys())
 
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 __all__ = [
+    "AdaptiveMPSBackend",
+    "AdaptiveMPSResult",
+    "MultiscalePlan",
+    "PPOConfig",
+    "ProgramConversion",
+    "compile_program",
+    "squashed_gaussian_log_probability",
     "QuantumTreePlan",
     "TensorNetworkPlan",
     "TensorTrainMatrix",

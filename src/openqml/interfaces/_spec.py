@@ -31,6 +31,26 @@ def default_layer_backend(circuit, observables, backend, native, *, native_contr
 
 class LayerSpecMixin:
     @classmethod
+    def multiscale(
+        cls,
+        num_qubits,
+        *,
+        bond_qubits=1,
+        depth=2,
+        num_outputs=3,
+        disentangle=True,
+        reupload=True,
+        max_operations=100_000,
+        **kwargs,
+    ):
+        from ..multiscale import MultiscalePlan
+
+        plan = MultiscalePlan(
+            num_qubits, bond_qubits, depth, num_outputs, disentangle, reupload, max_operations
+        )
+        return cls.from_spec(plan.to_spec(), **kwargs)
+
+    @classmethod
     def identity_blocks(cls, num_qubits, depth=2, *, max_operations=100_000, **kwargs):
         from ..templates import identity_block_ansatz
 
@@ -243,6 +263,7 @@ def prepare_execution(
             "max_flops",
             "optimizer",
             "search_trials",
+            "rematerialize",
         }:
             raise ValidationError("Unknown tensor contraction option.")
         return TensorNetworkPlan(

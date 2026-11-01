@@ -354,6 +354,23 @@ def squashed_gaussian(mean, log_std, noise):
     return xp.tanh(latent), xp.sum(normal - correction, axis=-1)
 
 
+def squashed_gaussian_log_probability(mean, log_std, latent):
+    """Log density of a recorded pre-tanh action under a new Gaussian policy.
+
+    Keeping the latent avoids inverse-tanh saturation during PPO replay. For
+    affine physical action bounds subtract sum(log((high-low)/2)).
+    """
+    mean = _floating(mean)
+    ops, xp = _Ops(mean), _Ops(mean).xp
+    log_std, latent = _same(ops, mean, log_std, latent)
+    if mean.ndim < 1 or mean.shape[-1] < 1:
+        raise ValidationError("Gaussian actions need a nonempty event dimension.")
+    noise = (latent - mean) * xp.exp(-log_std)
+    normal = -0.5 * (noise * noise + math.log(2 * math.pi)) - log_std
+    correction = 2 * (math.log(2) - latent - xp.logaddexp(xp.zeros_like(latent), -2 * latent))
+    return xp.sum(normal - correction, axis=-1)
+
+
 def sac_loss(
     log_probs,
     actor_q1,

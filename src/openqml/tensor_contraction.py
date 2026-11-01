@@ -171,6 +171,7 @@ class TensorNetworkPlan:
     max_flops: int = 1_000_000_000
     optimizer: str = "greedy"
     search_trials: int = 16
+    rematerialize: bool = False
     _graphs: tuple = field(init=False, repr=False)
     _routes: tuple = field(init=False, repr=False)
     _metadata_bytes: int = field(init=False, repr=False)
@@ -179,6 +180,8 @@ class TensorNetworkPlan:
     planning_work: int = field(init=False)
 
     def __post_init__(self):
+        if type(self.rematerialize) is not bool:
+            raise ValidationError("rematerialize must be a boolean.")
         _check_circuit_limits(self.circuit, max_operations=self.max_operations)
         if self.circuit.has_effects:
             raise ValidationError("Circuit tensor contractions currently require unitary circuits.")
@@ -280,6 +283,7 @@ class TensorNetworkPlan:
         return {
             "representation": "exact_circuit_tensor_network",
             "optimizer": self.optimizer,
+            "rematerialize": self.rematerialize,
             "num_qubits": self.circuit.num_qubits,
             "readouts": len(self.observables),
             "working_bytes": self.working_bytes,
@@ -300,6 +304,27 @@ class TensorNetworkPlan:
         }
 
     def evaluate(self, bindings=None, *, backend="numpy", like=None, batch_shape=None):
+        if self.rematerialize and bindings and backend in {"torch", "jax"}:
+            keys, values = tuple(bindings), tuple(bindings.values())
+
+            def forward(*arguments):
+                return self._evaluate(
+                    dict(zip(keys, arguments, strict=True)),
+                    backend=backend,
+                    like=like,
+                    batch_shape=batch_shape,
+                )
+
+            if backend == "torch":
+                from torch.utils.checkpoint import checkpoint
+
+                return checkpoint(forward, *values, use_reentrant=False, preserve_rng_state=False)
+            import jax
+
+            return jax.checkpoint(forward)(*values)
+        return self._evaluate(bindings, backend=backend, like=like, batch_shape=batch_shape)
+
+    def _evaluate(self, bindings=None, *, backend="numpy", like=None, batch_shape=None):
         from .simulator import _I, _X, _Y, _Z, _gate_matrix
 
         ops, local, shape = _prepare_bindings(

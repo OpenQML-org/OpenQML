@@ -13,6 +13,9 @@ except ImportError as exc:
         'Cannot load Flax. Run: python -m pip install "openqml[flax]".'
     ) from exc
 
+from ._jax_ppo import PPOTrainer as PPOTrainer
+from ._jax_training import accumulate_gradients as accumulate_gradients
+from ._jax_training import make_train_step as make_train_step
 from ._spec import LayerSpecMixin
 from .jax import QuantumLayer as FunctionalLayer
 
@@ -106,6 +109,10 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
     planning_options: object = None
     tensor_options: object = None
     initialization_pairs: tuple = ()
+
+    @property
+    def num_outputs(self):
+        return self.circuit.num_qubits if self.observables is None else len(self.observables)
 
     def _initialize_identity_blocks(self, pairs):
         return self.clone(initialization_pairs=pairs)
