@@ -42,14 +42,22 @@ aer = ["qiskit[qasm3-import]>=1.2", "qiskit-aer>=0.15", "sympy>=1.12"]
 qasm = ["qiskit[qasm3-import]>=1.2", "openqasm3[parser]>=1.0", "sympy>=1.12"]
 flax = ["jax>=0.4.30", "flax>=0.10", "optax>=0.2"]
 symbolic = ["sympy>=1.12"]
-tensor = ["cotengra>=0.7"]
+tensor = [
+  "cotengra>=0.7.5,<0.8; python_version < '3.11'",
+  "autoray>=0.7.2,<0.8; python_version < '3.11'",
+  "cotengra>=0.8.3; python_version >= '3.11'",
+  "autoray>=0.8.4; python_version >= '3.11'",
+]
 pennylane = ["pennylane>=0.40", "sympy>=1.12"]
 cirq = ["cirq-core>=1.4", "sympy>=1.12"]
 all = [
   "torch>=2.2", "jax>=0.4.30", "flax>=0.10", "optax>=0.2",
   "qiskit[qasm3-import]>=1.2", "qiskit-aer>=0.15", "pennylane>=0.40",
   "cirq-core>=1.4", "openqasm3[parser]>=1.0", "sympy>=1.12",
-  "cotengra>=0.7",
+  "cotengra>=0.7.5,<0.8; python_version < '3.11'",
+  "autoray>=0.7.2,<0.8; python_version < '3.11'",
+  "cotengra>=0.8.3; python_version >= '3.11'",
+  "autoray>=0.8.4; python_version >= '3.11'",
 ]
 dev = ["pytest>=8", "ruff>=0.11", "build>=1.2", "twine>=6"]
 
