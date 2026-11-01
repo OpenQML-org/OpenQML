@@ -11,6 +11,7 @@ INTEGRATION_EXTRAS = {
     "cirq": "cirq",
     "openqasm3": "qasm",
     "sympy": "symbolic",
+    "cotengra": "tensor",
 }
 
 

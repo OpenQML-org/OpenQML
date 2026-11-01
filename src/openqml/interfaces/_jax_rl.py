@@ -45,6 +45,9 @@ class QuantumActorCritic:
         if not callable(quantum_layer) or not callable(getattr(quantum_layer, "init", None)):
             raise ValidationError("Provide a functional quantum layer with init(key, dtype=...).")
         self.quantum = quantum_layer
+        self.quantum_features = integer(
+            getattr(quantum_layer, "num_outputs", num_qubits), "quantum_features", 1
+        )
 
     def init(self, key, *, dtype=jnp.float32):
         _dtype(dtype)
@@ -66,7 +69,7 @@ class QuantumActorCritic:
             "encoder": dense(keys[0], obs, n),
             "input_scale": jnp.ones((n,), dtype),
             "quantum": self.quantum.init(keys[1], dtype=dtype),
-            "actor": dense(keys[2], n, actions, 0.01),
+            "actor": dense(keys[2], self.quantum_features, actions, 0.01),
             "critic_hidden": dense(keys[3], obs, hidden),
             "critic_value": dense(keys[4], hidden, 1),
         }
@@ -83,8 +86,10 @@ class QuantumActorCritic:
 
         controls = math.pi * jnp.tanh(linear("encoder", observations)) * parameters["input_scale"]
         features = self.quantum(parameters["quantum"], controls)
-        if features.shape != controls.shape:
-            raise ValidationError("Quantum policies require one readout per declared quantum wire.")
+        if features.shape != observations.shape[:-1] + (self.quantum_features,):
+            raise ValidationError(
+                "Quantum policy readouts differ from the configured feature width."
+            )
         policy = linear("actor", features)
         value = linear("critic_value", jnp.tanh(linear("critic_hidden", observations)))[..., 0]
         log_std = (

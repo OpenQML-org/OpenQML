@@ -76,6 +76,7 @@ from .pauli import PauliPlan
 from .planning import DensityPlan, plan_density
 from .program import QuantumProgram, as_circuit
 from .providers import CirqDensityBackend, QiskitEstimatorBackend, QiskitSamplerBackend
+from .quantum_tree import QuantumTreePlan
 from .readout import ReadoutPlan, plan_readout
 from .resources import ResourceEstimate, estimate_resources
 from .rl import (
@@ -116,6 +117,8 @@ from .templates import (
     hardware_efficient,
     identity_block_ansatz,
 )
+from .tensor_contraction import TensorNetworkPlan
+from .tensor_train import TensorTrainMatrix, TensorTrainPlan
 from .truncated_mps import MPSApproximation, TruncatedMPSBackend
 from .verification import ConversionCheck
 
@@ -151,9 +154,13 @@ def __dir__():
     return sorted(set(globals()) | _LAZY_MODULES.keys())
 
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 __all__ = [
+    "QuantumTreePlan",
+    "TensorNetworkPlan",
+    "TensorTrainMatrix",
+    "TensorTrainPlan",
     "DispatchCandidate",
     "DispatchPlan",
     "PriorityBackend",

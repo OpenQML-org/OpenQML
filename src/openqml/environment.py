@@ -26,6 +26,7 @@ _INTEGRATIONS = {
     "cirq-core": "cirq",
     "openqasm3": "openqasm3",
     "sympy": "sympy",
+    "cotengra": "cotengra",
 }
 
 
@@ -92,6 +93,7 @@ def environment_report(*, check_imports=False, include_sizes=False, import_timeo
         "pennylane",
         "cirq",
         "symbolic",
+        "tensor",
         "dev",
     }
     if any(not isinstance(e, str) or e not in allowed for e in extras):

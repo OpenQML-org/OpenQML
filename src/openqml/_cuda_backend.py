@@ -72,13 +72,22 @@ class CUDABackend:
                     return PauliPlan(prototype, observables, max_memory_mb=options.max_memory_mb)
                 except (ResourceError, ConversionError):
                     pass
-            return ComponentPlan(
-                prototype,
-                observables,
-                max_qubits=options.max_qubits,
-                max_memory_mb=options.max_memory_mb,
-                max_branches=options.max_branches,
-            )
+            try:
+                return ComponentPlan(
+                    prototype,
+                    observables,
+                    max_qubits=options.max_qubits,
+                    max_memory_mb=options.max_memory_mb,
+                    max_branches=options.max_branches,
+                )
+            except ResourceError:
+                if prototype.has_effects:
+                    raise
+                from .tensor_contraction import TensorNetworkPlan
+
+                return TensorNetworkPlan(
+                    prototype, observables, max_memory_mb=options.max_memory_mb
+                )
 
         return self._cache.get(key, compile_readout)
 

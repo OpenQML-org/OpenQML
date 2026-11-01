@@ -175,11 +175,32 @@ def prepare_readout(circuit, observables, *, enabled, backend):
 
 
 def prepare_execution(
-    circuit, observables, *, method, options, planning_options, backend, limits, checkpoint_interval
+    circuit,
+    observables,
+    *,
+    method,
+    options,
+    planning_options,
+    backend,
+    limits,
+    checkpoint_interval,
+    tensor_options=None,
 ):
     """Compile only for an explicit native expectation evaluation choice."""
-    if not isinstance(method, str) or method not in {"auto", "pauli", "planned", "components"}:
-        raise ValidationError("execution_method must be auto, pauli, planned or components.")
+    if not isinstance(method, str) or method not in {
+        "auto",
+        "pauli",
+        "planned",
+        "components",
+        "tensor-network",
+    }:
+        raise ValidationError(
+            "execution_method must be auto, pauli, planned, components or tensor-network."
+        )
+    if tensor_options is not None and (
+        method != "tensor-network" or not isinstance(tensor_options, Mapping)
+    ):
+        raise ValidationError("tensor_options requires tensor-network execution and a mapping.")
     if options is not None and (
         method not in {"pauli", "planned"} or not isinstance(options, Mapping)
     ):
@@ -210,6 +231,22 @@ def prepare_execution(
             observables,
             max_memory_mb=limits["max_memory_mb"],
             max_branches=limits.get("max_branches", 256),
+        )
+    if method == "tensor-network":
+        from ..tensor_contraction import TensorNetworkPlan
+
+        settings = {} if tensor_options is None else dict(tensor_options)
+        if set(settings) - {
+            "max_work",
+            "max_operations",
+            "max_slices",
+            "max_flops",
+            "optimizer",
+            "search_trials",
+        }:
+            raise ValidationError("Unknown tensor contraction option.")
+        return TensorNetworkPlan(
+            circuit, observables, max_memory_mb=limits["max_memory_mb"], **settings
         )
     settings = {} if options is None else dict(options)
     if set(settings) - {"max_terms", "max_nodes", "max_work", "max_operations"}:
@@ -275,7 +312,16 @@ def admit_native_execution(circuit, observables, plan, *, backend, method, limit
             raise
         from ..components import ComponentPlan
 
-        return ComponentPlan(circuit, observables, **limits)
+        try:
+            return ComponentPlan(circuit, observables, **limits)
+        except ResourceError:
+            if circuit.has_effects or (
+                limits["max_qubits"] is not None and circuit.num_qubits > limits["max_qubits"]
+            ):
+                raise
+            from ..tensor_contraction import TensorNetworkPlan
+
+            return TensorNetworkPlan(circuit, observables, max_memory_mb=limits["max_memory_mb"])
     return None
 
 

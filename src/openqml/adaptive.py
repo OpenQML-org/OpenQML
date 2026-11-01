@@ -97,6 +97,7 @@ class AdaptivePlan:
     _runner: object = field(default=None, repr=False, compare=False)
     dense_device: str = "CPU"
     _components: object = field(default=None, repr=False, compare=False)
+    _tensor: object = field(default=None, repr=False, compare=False)
 
     @property
     def supported(self):
@@ -122,6 +123,7 @@ class AdaptivePlan:
             "memory_guarantee": "representation_admission_model_not_process_RSS_limit",
             "mps_profile": self.mps_profile,
             "component_profile": None if self._components is None else self._components.to_dict(),
+            "tensor_profile": None if self._tensor is None else self._tensor.to_dict(),
             "candidates": [asdict(candidate) for candidate in self.candidates],
         }
 
@@ -143,6 +145,10 @@ class AdaptivePlan:
             )
         if self.selected_method == "components":
             return self._components.evaluate(
+                bindings, backend=backend, like=like, batch_shape=batch_shape
+            )
+        if self.selected_method == "tensor-network":
+            return self._tensor.evaluate(
                 bindings, backend=backend, like=like, batch_shape=batch_shape
             )
         if self.selected_method == "density":
@@ -248,7 +254,16 @@ def plan_execution(
     from .pauli import PauliPlan
     from .planning import plan_density
 
-    allowed = {"auto", "pauli", "stabilizer", "mps", "statevector", "density", "components"}
+    allowed = {
+        "auto",
+        "pauli",
+        "stabilizer",
+        "mps",
+        "statevector",
+        "density",
+        "components",
+        "tensor-network",
+    }
     if method not in allowed or device not in {"CPU", "GPU", "auto"}:
         raise ValidationError("Unknown execution method or device (CPU, GPU, auto).")
     _check_circuit_limits(circuit, max_operations=max_operations)
@@ -275,6 +290,7 @@ def plan_execution(
     )
     candidates, selected, pauli, runner, mps_profile = [], None, None, None, None
     components = None
+    tensor = None
     deferred_stabilizer = False
     if explicit_width:
         candidates.append(
@@ -405,6 +421,37 @@ def plan_execution(
                     selected = "components"
             except ResourceError as error:
                 candidates.append(ExecutionCandidate("components", False, str(error)))
+        if selected is None and method in {"auto", "tensor-network"} and unitary:
+            from .tensor_contraction import TensorNetworkPlan
+
+            try:
+                tensor = TensorNetworkPlan(
+                    circuit,
+                    observables,
+                    max_memory_mb=budget,
+                    max_work=max_work,
+                    max_operations=max_operations,
+                )
+                dense_size = _dense_bytes(circuit.num_qubits)
+                preferred = (
+                    method == "tensor-network"
+                    or dense_size is None
+                    or tensor.working_bytes < dense_size
+                )
+                if preferred:
+                    selected = "tensor-network"
+                candidates.append(
+                    ExecutionCandidate(
+                        "tensor-network",
+                        preferred,
+                        "An exact contraction path fits the slicing and memory budgets."
+                        if preferred
+                        else "A path fits, but the dense working model is smaller.",
+                        tensor.working_bytes,
+                    )
+                )
+            except ResourceError as error:
+                candidates.append(ExecutionCandidate("tensor-network", False, str(error)))
         if selected is None and method in {"auto", "statevector", "density"}:
             density = not unitary or method == "density"
             chosen = "density" if density else "statevector"
@@ -479,6 +526,7 @@ def plan_execution(
         runner,
         device,
         components,
+        tensor,
     )
 
 
@@ -528,11 +576,21 @@ class AdaptiveBackend:
                     max_branches=options.max_branches,
                 ),
             )
-            if plan.selected_method in {"pauli", "components", "density", "statevector"}:
+            if plan.selected_method in {
+                "pauli",
+                "components",
+                "density",
+                "statevector",
+                "tensor-network",
+            }:
                 # Bound each chunk by the representation's per-row admission
                 # model; avoid retaining a full trajectory's quantum states.
                 representation = (
-                    plan._pauli if plan.selected_method == "pauli" else plan._components
+                    plan._pauli
+                    if plan.selected_method == "pauli"
+                    else plan._tensor
+                    if plan.selected_method == "tensor-network"
+                    else plan._components
                 )
                 if representation is not None:
                     per_row = getattr(representation, "working_bytes", None)

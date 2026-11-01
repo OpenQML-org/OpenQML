@@ -62,8 +62,11 @@ class QuantumActorCritic(nn.Module):
         if not isinstance(quantum_layer, nn.Module):
             raise ValidationError("quantum_layer must be a PyTorch module.")
         self.quantum = quantum_layer
-        self.actor = nn.Linear(num_qubits, action_size, dtype=dtype, device=device)
-        nn.init.normal_(self.actor.weight, std=0.01 / math.sqrt(num_qubits))
+        self.quantum_features = integer(
+            getattr(quantum_layer, "num_outputs", num_qubits), "quantum_features", 1
+        )
+        self.actor = nn.Linear(self.quantum_features, action_size, dtype=dtype, device=device)
+        nn.init.normal_(self.actor.weight, std=0.01 / math.sqrt(self.quantum_features))
         nn.init.zeros_(self.actor.bias)
         self.critic = nn.Sequential(
             nn.Linear(observation_size, hidden, dtype=dtype, device=device),
@@ -80,8 +83,10 @@ class QuantumActorCritic(nn.Module):
         _input(observations, self.observation_size)
         controls = math.pi * torch.tanh(self.encoder(observations)) * self.input_scale
         features = self.quantum(controls)
-        if features.shape != controls.shape:
-            raise ValidationError("Quantum policies require one readout per declared quantum wire.")
+        if features.shape != observations.shape[:-1] + (self.quantum_features,):
+            raise ValidationError(
+                "Quantum policy readouts differ from the configured feature width."
+            )
         policy = self.actor(features.to(self.actor.weight.dtype))
         value = self.critic(observations)[..., 0]
         log_std = None if self.log_std is None else self.log_std.clamp(-20, 2).expand_as(policy)

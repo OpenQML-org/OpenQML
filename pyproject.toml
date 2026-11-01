@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openqml"
-version = "0.6.0"
-description = "Trainable quantum layers, reinforcement learning and semantic circuit interoperability"
+version = "0.7.0"
+description = "Tensor-network quantum learning, reinforcement learning and semantic circuit interoperability"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -42,12 +42,14 @@ aer = ["qiskit[qasm3-import]>=1.2", "qiskit-aer>=0.15", "sympy>=1.12"]
 qasm = ["qiskit[qasm3-import]>=1.2", "openqasm3[parser]>=1.0", "sympy>=1.12"]
 flax = ["jax>=0.4.30", "flax>=0.10", "optax>=0.2"]
 symbolic = ["sympy>=1.12"]
+tensor = ["cotengra>=0.7"]
 pennylane = ["pennylane>=0.40", "sympy>=1.12"]
 cirq = ["cirq-core>=1.4", "sympy>=1.12"]
 all = [
   "torch>=2.2", "jax>=0.4.30", "flax>=0.10", "optax>=0.2",
   "qiskit[qasm3-import]>=1.2", "qiskit-aer>=0.15", "pennylane>=0.40",
   "cirq-core>=1.4", "openqasm3[parser]>=1.0", "sympy>=1.12",
+  "cotengra>=0.7",
 ]
 dev = ["pytest>=8", "ruff>=0.11", "build>=1.2", "twine>=6"]
 

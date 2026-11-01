@@ -30,6 +30,9 @@ from ._torch_hybrid import HyperQuantumAdapter as HyperQuantumAdapter
 from ._torch_hybrid import IQPQuantumLayer as IQPQuantumLayer
 from ._torch_rl import QuantumActorCritic as QuantumActorCritic
 from ._torch_rl import QuantumSurrogate as QuantumSurrogate
+from ._torch_tensor import TensorNetworkAdapter as TensorNetworkAdapter
+from ._torch_tensor import TensorTrainLinear as TensorTrainLinear
+from ._torch_tensor import TreeQuantumLayer as TreeQuantumLayer
 
 
 class QuantumLayer(LayerSpecMixin, nn.Module):
@@ -74,6 +77,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
         execution_method="auto",
         pauli_options=None,
         planning_options=None,
+        tensor_options=None,
     ):
         super().__init__()
         if device is None:
@@ -128,6 +132,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
                 "max_branches": max_branches,
             },
             checkpoint_interval=checkpoint_interval,
+            tensor_options=tensor_options,
         )
         self.pauli_plan = self.execution_plan if execution_method == "pauli" else None
         self.checkpoint_interval = _checkpoint_interval(circuit, backend, checkpoint_interval)

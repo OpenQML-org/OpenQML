@@ -52,12 +52,15 @@ class QuantumActorCritic(nn.Module):
                 self.num_qubits, self.depth, backend=self.backend, dtype=self.dtype
             ).clone(parent=self, name="quantum")
         features = quantum(controls)
-        if features.shape != controls.shape:
-            raise ValidationError("Quantum policies require one readout per declared wire.")
+        width = getattr(quantum, "num_outputs", self.num_qubits)
+        if features.shape != observations.shape[:-1] + (width,):
+            raise ValidationError(
+                "Quantum policy readouts differ from the configured feature width."
+            )
         policy = nn.Dense(
             self.action_size,
             dtype=self.dtype,
-            kernel_init=nn.initializers.normal(0.01 / math.sqrt(self.num_qubits)),
+            kernel_init=nn.initializers.normal(0.01 / math.sqrt(width)),
             name="actor",
         )(features)
         hidden = jnp.tanh(
@@ -101,6 +104,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
     execution_method: str = "auto"
     pauli_options: object = None
     planning_options: object = None
+    tensor_options: object = None
     initialization_pairs: tuple = ()
 
     def _initialize_identity_blocks(self, pairs):
@@ -172,6 +176,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
             execution_method=self.execution_method,
             pauli_options=self.pauli_options,
             planning_options=self.planning_options,
+            tensor_options=self.tensor_options,
         )
         return layer(weights, jnp.asarray(inputs, dtype=self.dtype))
 
@@ -191,6 +196,161 @@ class NativePennyLaneLayer(nn.Module):
         )
         layer = FunctionalQNode(self.qnode, {"weights": self.weight_shape})
         return layer({"weights": weights}, jnp.asarray(inputs, dtype=self.dtype))
+
+
+class TreeQuantumLayer(nn.Module):
+    num_qubits: int
+    num_outputs: int = 4
+    dtype: object = jnp.float32
+    init_scale: float = 0.02
+    batch_chunk_size: int | None = 256
+    max_memory_mb: float = 256
+
+    @nn.compact
+    def __call__(self, inputs):
+        from ._jax_tensor import TreeQuantumLayer as FunctionalTree
+
+        layer = FunctionalTree(
+            self.num_qubits,
+            num_outputs=self.num_outputs,
+            batch_chunk_size=self.batch_chunk_size,
+            max_memory_mb=self.max_memory_mb,
+        )
+        weights = self.param(
+            "weights",
+            lambda key, shape, dtype: layer.init(key, scale=self.init_scale, dtype=dtype),
+            (layer.plan.num_parameters,),
+            self.dtype,
+        )
+        return layer(weights, jnp.asarray(inputs, self.dtype))
+
+
+class TensorTrainLinear(nn.Module):
+    in_features: int
+    out_features: int
+    bond_dimension: object = 8
+    input_modes: object = None
+    output_modes: object = None
+    bias: bool = True
+    dtype: object = jnp.float32
+    batch_chunk_size: int | None = 256
+    max_memory_mb: float = 256
+    max_work: int = 2_000_000
+    initial_error_bound: float | None = None
+    initial_source_norm: float | None = None
+
+    @classmethod
+    def from_dense(cls, weight, bias=None, *, dtype=jnp.float32, **options):
+        import numpy as np
+
+        from ..errors import ValidationError
+        from ..tensor_train import TensorTrainMatrix
+        from ._jax_hybrid import _dtype
+
+        _dtype(dtype)
+        compressed = TensorTrainMatrix.from_dense(weight, **options)
+        plan = compressed.plan
+        model = cls(
+            plan.in_features,
+            plan.out_features,
+            bond_dimension=plan.ranks[1:-1],
+            input_modes=plan.input_modes,
+            output_modes=plan.output_modes,
+            bias=bias is not None,
+            dtype=dtype,
+            max_memory_mb=plan.max_memory_mb,
+            max_work=plan.max_work,
+            initial_error_bound=compressed.error_bound,
+            initial_source_norm=compressed.source_norm,
+        )
+        parameters = {f"core_{i}": jnp.asarray(c, dtype) for i, c in enumerate(compressed.cores)}
+        if bias is not None:
+            value = np.asarray(bias)
+            if value.shape != (plan.out_features,) or not np.isfinite(value).all():
+                raise ValidationError("Dense bias has the wrong shape or nonfinite entries.")
+            parameters["bias"] = jnp.asarray(value, dtype)
+        return model, {"params": parameters}
+
+    @nn.compact
+    def __call__(self, inputs):
+        import math
+
+        from ._jax_tensor import TensorTrainLinear as FunctionalMPO
+
+        layer = FunctionalMPO(
+            self.in_features,
+            self.out_features,
+            bond_dimension=self.bond_dimension,
+            input_modes=self.input_modes,
+            output_modes=self.output_modes,
+            bias=self.bias,
+            batch_chunk_size=self.batch_chunk_size,
+            max_memory_mb=self.max_memory_mb,
+            max_work=self.max_work,
+        )
+        plan = layer.plan
+        count = len(plan.core_shapes)
+        factor = math.prod(plan.ranks[1:-1]) ** (-1 / (2 * count))
+        parameters = {
+            "cores": tuple(
+                self.param(
+                    f"core_{k}",
+                    nn.initializers.normal(factor / math.sqrt(shape[1])),
+                    shape,
+                    self.dtype,
+                )
+                for k, shape in enumerate(plan.core_shapes)
+            )
+        }
+        if self.bias:
+            parameters["bias"] = self.param(
+                "bias", nn.initializers.zeros, (self.out_features,), self.dtype
+            )
+        return layer(parameters, jnp.asarray(inputs, self.dtype))
+
+
+class TensorNetworkAdapter(nn.Module):
+    features: int
+    num_qubits: int = 64
+    num_outputs: int = 8
+    bond_dimension: int = 8
+    residual_scale: float = 0.01
+    dtype: object = jnp.float32
+    batch_chunk_size: int | None = 256
+    max_memory_mb: float = 256
+
+    @nn.compact
+    def __call__(self, inputs):
+        import math
+
+        from ..errors import ValidationError
+
+        if inputs.shape[-1] != self.features:
+            raise ValidationError("Tensor adapter input feature width differs.")
+        options = dict(
+            bond_dimension=self.bond_dimension,
+            dtype=self.dtype,
+            batch_chunk_size=self.batch_chunk_size,
+            max_memory_mb=self.max_memory_mb,
+        )
+        controls = math.pi * jnp.tanh(
+            TensorTrainLinear(self.features, self.num_qubits, name="encoder", **options)(inputs)
+        )
+        quantum = TreeQuantumLayer(
+            self.num_qubits,
+            self.num_outputs,
+            self.dtype,
+            batch_chunk_size=self.batch_chunk_size,
+            max_memory_mb=self.max_memory_mb,
+            name="quantum",
+        )(controls)
+        delta = TensorTrainLinear(self.num_outputs, self.features, name="projection", **options)(
+            quantum
+        )
+        scale = self.param(
+            "residual_scale", nn.initializers.constant(self.residual_scale), (), self.dtype
+        )
+        return (inputs + scale * delta).astype(inputs.dtype)
 
 
 class QuantumAdapter(nn.Module):
