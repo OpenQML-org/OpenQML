@@ -89,7 +89,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
     init_scale: float = 0.1
     max_qubits: int | None = None
     max_memory_mb: float = 256
-    backend: str = "jax"
+    backend: object = None
     batch_chunk_size: int | None = None
     checkpoint_interval: int | None = None
     gradient_chunk_size: int = 64

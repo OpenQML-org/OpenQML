@@ -96,7 +96,8 @@ class _Ops:
 
 
 def _floating(value):
-    if not hasattr(value, "shape") or not hasattr(value, "dtype"):
+    module = type(value).__module__
+    if not module.startswith(("torch", "jax", "jaxlib")) and not isinstance(value, np.ndarray):
         value = np.asarray(value, dtype=float)
     if str(value.dtype).removeprefix("torch.") not in {"float16", "bfloat16", "float32", "float64"}:
         raise ValidationError("RL inputs must be real floating tensors.")

@@ -4,6 +4,31 @@ from ..errors import ValidationError
 from ..layers import LayerCheckpoint, LayerSpec, validate_layer
 
 
+def default_layer_backend(circuit, observables, backend, native, *, native_contract, limits):
+    """Prefer a configured compatible QPU; retain native AD when none is eligible.
+
+    Explicit tensor backends and native-only execution options pin their graph.
+    Merely importing or constructing an unconfigured layer never loads a cloud
+    SDK or changes the framework's derivative order.
+    """
+    if backend is not None:
+        return backend
+    if native_contract:
+        return native
+    from ..backends import _LOCK, _REGISTRY, ExecutionOptions
+
+    with _LOCK:
+        configured = any(d.capabilities.device_type == "QPU" for d in _REGISTRY.values())
+    if not configured:
+        return native
+    from ..runtime import PriorityBackend
+
+    route = PriorityBackend().plan(
+        [circuit], observables=observables, options=ExecutionOptions(**limits)
+    )
+    return route._backend if route.device == "QPU" else native
+
+
 class LayerSpecMixin:
     @classmethod
     def identity_blocks(cls, num_qubits, depth=2, *, max_operations=100_000, **kwargs):

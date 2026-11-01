@@ -147,6 +147,44 @@ def test_quantum_rl_policy_default_routes_forward_and_backward_to_qpu(hardware, 
     assert x.grad is not None and model.quantum.weights.grad is not None
 
 
+def test_general_torch_layer_defaults_to_configured_qpu_and_preserves_explicit_native_pin(hardware):
+    torch = pytest.importorskip("torch")
+    layer = oq.torch.QuantumLayer.hardware_efficient(2, 1, device="cpu")
+    assert layer.execution_backend.name == hardware.name
+    x = torch.randn(3, 2, requires_grad=True)
+    layer(x).sum().backward()
+    assert x.grad is not None and layer.weights.grad is not None and len(hardware.calls) >= 2
+    count = len(hardware.calls)
+    native = oq.torch.QuantumLayer.hardware_efficient(2, 1, device="cpu", backend="torch")
+    assert native.execution_backend == "torch"
+    native(x).sum().backward()
+    compiled = oq.torch.QuantumLayer.hardware_efficient(
+        2, 1, device="cpu", execution_method="pauli"
+    )
+    compiled(x).sum().backward()
+    assert len(hardware.calls) == count
+
+
+def test_general_jax_and_flax_layers_default_to_configured_qpu(hardware):
+    jax, jnp = pytest.importorskip("jax"), pytest.importorskip("jax.numpy")
+    layer = oq.jax.QuantumLayer.hardware_efficient(2, 1)
+    assert layer.execution_backend.name == hardware.name
+    weights = layer.init(jax.random.key(6))
+    x = jnp.ones((3, 2)) * 0.2
+    value, gradient = jax.jit(jax.value_and_grad(lambda w: layer(w, x).sum()))(weights)
+    assert np.isfinite(value) and np.isfinite(gradient).all() and len(hardware.calls) >= 2
+    count = len(hardware.calls)
+    native = oq.jax.QuantumLayer.hardware_efficient(2, 1, backend="jax")
+    jax.jit(lambda w: native(w, x))(weights)
+    assert len(hardware.calls) == count
+    pytest.importorskip("flax")
+    module = oq.flax.QuantumLayer.hardware_efficient(2, 1)
+    variables = module.init(jax.random.key(8), x)
+    result = jax.jit(module.apply)(variables, x)
+    np.testing.assert_allclose(result, module.apply(variables, x), atol=1e-6)
+    assert len(hardware.calls) > count
+
+
 def test_cpu_topology_cache_is_shared_across_parameter_shift_rows(monkeypatch):
     import openqml.adaptive as adaptive
     from openqml.adaptive import AdaptiveBackend

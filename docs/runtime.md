@@ -55,8 +55,11 @@ those caller-owned objects must remain stable between invalidations. Duplicate
 stochastic rows remain separate parameter entries. Sampler counts are extracted
 per PUB location rather than summed across parameter bindings.
 
-Native PyTorch/JAX execution is an explicit differentiability contract and does
-not submit a QPU job. PyTorch modules without a device pin prefer available CUDA;
+General quantum layers first select a compatible registered QPU by default.
+Without one, they retain native framework differentiation and device placement.
+Explicit native backends, compiled readout methods, readout reduction and activation
+checkpointing pin that native computation graph and do not submit a QPU job.
+PyTorch modules without a device pin prefer available CUDA;
 JAX follows its configured device placement. Universal external quantum layers
 use batched first-order parameter shifts; native structured layers retain higher
 derivatives and compiler transforms.

@@ -18,6 +18,7 @@ from ._spec import (
     LayerSpecMixin,
     admit_native_execution,
     broadcast_batch_shape,
+    default_layer_backend,
     prepare_execution,
     prepare_gradients,
     prepare_layer,
@@ -61,7 +62,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
         init_scale=0.1,
         max_qubits=None,
         max_memory_mb=256,
-        backend="torch",
+        backend=None,
         batch_chunk_size=None,
         checkpoint_interval=None,
         gradient_chunk_size=64,
@@ -96,6 +97,20 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
             optimization_options=optimization_options,
         )
         self.source_observables = self.observables
+        backend = default_layer_backend(
+            circuit,
+            self.observables,
+            backend,
+            "torch",
+            native_contract=reduce_readout
+            or execution_method != "auto"
+            or checkpoint_interval is not None,
+            limits={
+                "max_qubits": max_qubits,
+                "max_memory_mb": max_memory_mb,
+                "max_branches": max_branches,
+            },
+        )
         circuit, self.observables, self.readout_plan = prepare_readout(
             circuit, self.observables, enabled=reduce_readout, backend=backend
         )
@@ -334,11 +349,13 @@ class NativePennyLaneLayer(nn.Module):
 class QuantumAdapter(nn.Module):
     """Residual feature adapter for MLP/CNN/Transformer tensors (..., embedding_dim)."""
 
-    def __init__(self, features, *, num_qubits=4, depth=2, dtype=None, device=None):
+    def __init__(self, features, *, num_qubits=4, depth=2, dtype=None, device=None, backend=None):
         super().__init__()
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         self.encoder = nn.Linear(features, num_qubits, dtype=dtype, device=device)
         self.quantum = QuantumLayer.hardware_efficient(
-            num_qubits, depth, dtype=dtype, device=device
+            num_qubits, depth, dtype=dtype, device=device, backend=backend
         )
         self.projection = nn.Linear(num_qubits, features, dtype=dtype, device=device)
         nn.init.normal_(self.projection.weight, std=0.01)
@@ -368,10 +385,12 @@ class QuantumConv2d(nn.Module):
         patch_chunk_size=128,
         dtype=None,
         device=None,
-        backend="torch",
+        backend=None,
         max_memory_mb=256,
     ):
         super().__init__()
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         from ..ir import integer
 
         self.in_channels = integer(in_channels, "in_channels", 1)

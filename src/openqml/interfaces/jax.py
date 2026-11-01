@@ -23,6 +23,7 @@ from ._spec import (
     LayerSpecMixin,
     admit_native_execution,
     broadcast_batch_shape,
+    default_layer_backend,
     prepare_execution,
     prepare_gradients,
     prepare_layer,
@@ -60,7 +61,7 @@ class QuantumLayer(LayerSpecMixin):
         *,
         max_qubits=None,
         max_memory_mb=256,
-        backend="jax",
+        backend=None,
         batch_chunk_size=None,
         checkpoint_interval=None,
         gradient_chunk_size=64,
@@ -92,6 +93,20 @@ class QuantumLayer(LayerSpecMixin):
             optimization_options=optimization_options,
         )
         self.source_observables = self.observables
+        backend = default_layer_backend(
+            circuit,
+            self.observables,
+            backend,
+            "jax",
+            native_contract=reduce_readout
+            or execution_method != "auto"
+            or checkpoint_interval is not None,
+            limits={
+                "max_qubits": max_qubits,
+                "max_memory_mb": max_memory_mb,
+                "max_branches": max_branches,
+            },
+        )
         circuit, self.observables, self.readout_plan = prepare_readout(
             circuit, self.observables, enabled=reduce_readout, backend=backend
         )
