@@ -124,7 +124,8 @@ def test_framework_facades_preserve_native_apis_and_quantum_layers():
         assert "QuantumLayer" in dir(getattr(oq, name))
 
 
-def test_readme_documents_the_single_package_import():
+def test_readme_uses_the_public_package_import():
+    import ast
     import re
 
     text = (Path(__file__).parents[1] / "README.md").read_text()
@@ -134,9 +135,19 @@ def test_readme_documents_the_single_package_import():
     for block in blocks:
         if "oq.torch" in block:
             pytest.importorskip("torch")
-        assert [line for line in block.splitlines() if line.startswith(("import ", "from "))] == [
-            "import openqml as oq"
+        program = ast.parse(block)
+        imports = [
+            alias
+            for node in ast.walk(program)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+            if alias.name.split(".")[0] == "openqml"
         ]
+        assert [(alias.name, alias.asname) for alias in imports] == [("openqml", "oq")]
+        assert not any(
+            isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "openqml"
+            for node in ast.walk(program)
+        )
         exec(compile(block, "README.md", "exec"), namespace)
     assert namespace["oq"] is oq
 
