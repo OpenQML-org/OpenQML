@@ -158,7 +158,10 @@ class PPOTrainer(PPOTrainingLoop):
     def save(self, path):
         # A matching, initialized trainer supplies the trusted PyTree structure
         # on loading; only numbered array leaves are stored in the archive.
-        leaves = jax.tree_util.tree_leaves((self.parameters, self.optimizer_state, self.key))
+        keyed, structure = jax.tree_util.tree_flatten_with_path(
+            (self.parameters, self.optimizer_state, self.key)
+        )
+        leaves = [value for _, value in keyed]
         metadata = {
             "schema": "openqml.jax_ppo",
             "version": 1,
@@ -170,6 +173,8 @@ class PPOTrainer(PPOTrainingLoop):
             "continuous": self.continuous,
             "low": self.environments.low.tolist(),
             "high": self.environments.high.tolist(),
+            "tree_paths": [jax.tree_util.keystr(path) for path, _ in keyed],
+            "tree_structure": str(structure),
         }
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -188,9 +193,10 @@ class PPOTrainer(PPOTrainingLoop):
         return path
 
     def load(self, path):
-        reference, structure = jax.tree_util.tree_flatten(
+        keyed, structure = jax.tree_util.tree_flatten_with_path(
             (self.parameters, self.optimizer_state, self.key)
         )
+        reference = [value for _, value in keyed]
         with np.load(path, allow_pickle=False) as archive:
             metadata = json.loads(str(archive["metadata"]))
             if (
@@ -202,6 +208,8 @@ class PPOTrainer(PPOTrainingLoop):
                 or metadata["continuous"] != self.continuous
                 or metadata["low"] != self.environments.low.tolist()
                 or metadata["high"] != self.environments.high.tolist()
+                or metadata.get("tree_paths") != [jax.tree_util.keystr(path) for path, _ in keyed]
+                or metadata.get("tree_structure") != str(structure)
                 or set(archive.files) != {"metadata"} | {f"leaf_{i}" for i in range(len(reference))}
             ):
                 raise ValidationError("JAX PPO checkpoint configuration differs.")

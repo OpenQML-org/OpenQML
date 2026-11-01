@@ -28,7 +28,7 @@ def accumulate_gradients(
 
     if type(has_aux) is not bool:
         raise ValidationError("has_aux must be a boolean.")
-    if axis_name is not None and hasattr(jax.lax, "pcast"):
+    if axis_name is not None and (hasattr(jax.lax, "pcast") or hasattr(jax.lax, "pvary")):
         # New JAX manual-axis AD automatically sums cotangents of invariant
         # inputs. Differentiate varying local copies so accumulation performs
         # exactly one explicit reduction, on both new and legacy JAX releases.
@@ -36,9 +36,12 @@ def accumulate_gradients(
 
         def local_parameter(value):
             for axis in axes:
-                manual_type = getattr(jax.typeof(value), "mat", None)
-                if manual_type is not None and axis not in manual_type.varying:
-                    value = jax.lax.pcast(value, axis, to="varying")
+                if hasattr(jax.lax, "pcast"):
+                    manual_type = getattr(jax.typeof(value), "mat", None)
+                    if manual_type is not None and axis not in manual_type.varying:
+                        value = jax.lax.pcast(value, axis, to="varying")
+                elif axis not in getattr(jax.core.get_aval(value), "vma", frozenset()):
+                    value = jax.lax.pvary(value, axis)
             return value
 
         parameters = jax.tree_util.tree_map(local_parameter, parameters)
@@ -52,6 +55,7 @@ def accumulate_gradients(
         losses = losses.astype(jnp.result_type(losses.dtype, jnp.float32))
 
         def reduce(value):
+            value = jnp.asarray(value)
             if value.ndim == 0:
                 return value * n
             if value.shape[0] != n:

@@ -155,7 +155,7 @@ def test_jax_scan_weighted_gradients_and_auxiliary_metrics():
     optimizer = optax.sgd(0.1)
 
     def auxiliary(p, b):
-        return loss(p, b), {"target": b["y"]}
+        return loss(p, b), {"target": b["y"], "constant": 0.25}
 
     step = oq.jax.make_train_step(
         optimizer, auxiliary, microbatch_size=3, max_grad_norm=None, has_aux=True
@@ -163,6 +163,7 @@ def test_jax_scan_weighted_gradients_and_auxiliary_metrics():
     updated, _, metrics = step(params, optimizer.init(params), batch)
     np.testing.assert_allclose(updated["w"], params["w"] - 0.1 * gradient["w"], rtol=1e-6)
     np.testing.assert_allclose(metrics["target"], batch["y"].mean(), rtol=1e-6)
+    assert float(metrics["constant"]) == 0.25
     bad = oq.jax.make_train_step(optimizer, lambda p, b: loss(p, b) * jnp.nan)
     updated, _, metrics = bad(params, optimizer.init(params), batch)
     assert bool(metrics["skipped"])
@@ -310,6 +311,35 @@ def test_jax_complete_ppo_learns_quantum_weights_and_restores_state(tmp_path):
         strict=True,
     ):
         np.testing.assert_array_equal(a, b)
+
+
+def test_jax_checkpoint_rejects_different_parameter_keys(tmp_path):
+    jax = pytest.importorskip("jax")
+    optax = pytest.importorskip("optax")
+    import json
+
+    model = oq.jax.QuantumActorCritic(
+        2,
+        2,
+        num_qubits=2,
+        hidden_features=4,
+        quantum_layer=oq.jax.TreeQuantumLayer(2, num_outputs=2),
+    )
+    config = oq.PPOConfig(discount=np.float32(0.9))
+    assert type(config.discount) is float
+    trainer = oq.jax.PPOTrainer(
+        model, model.init(jax.random.PRNGKey(2)), optax.adam(0.01), [Bandit], config=config
+    )
+    path = tmp_path / "policy.npz"
+    trainer.save(path)
+    with np.load(path, allow_pickle=False) as archive:
+        values = {key: archive[key] for key in archive.files}
+    metadata = json.loads(str(values["metadata"]))
+    metadata["tree_paths"][0] = "different_parameter_name"
+    values["metadata"] = np.asarray(json.dumps(metadata))
+    np.savez_compressed(path, **values)
+    with pytest.raises(oq.ValidationError, match="configuration"):
+        trainer.load(path)
 
 
 def test_flax_ppo_uses_linen_apply():

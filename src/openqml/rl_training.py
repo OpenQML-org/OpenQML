@@ -49,6 +49,20 @@ class PPOConfig:
         for name in ("value_coefficient", "entropy_coefficient"):
             if real(getattr(self, name)) < 0:
                 raise ValidationError(f"{name} must be nonnegative.")
+        for name in (
+            "discount",
+            "trace_decay",
+            "clip_ratio",
+            "value_clip",
+            "value_coefficient",
+            "entropy_coefficient",
+            "max_grad_norm",
+            "target_kl",
+            "max_rollout_mb",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, real(value))
 
 
 class EnvironmentBatch:
