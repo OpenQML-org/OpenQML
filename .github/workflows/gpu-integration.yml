@@ -1,0 +1,32 @@
+name: CUDA NCCL integration
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cuda:
+    runs-on: [self-hosted, linux, x64, gpu]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install core and functional test runner
+        run: python -m pip install . pytest
+      - name: Require real CUDA devices
+        run: |
+          python - <<'PY'
+          import torch
+          assert torch.cuda.device_count() >= 2, 'Two physical CUDA devices are required'
+          assert torch.distributed.is_nccl_available(), 'NCCL is required'
+          from torch.distributed.tensor import DTensor
+          PY
+      - name: Verify distributed values and gradients on CUDA
+        env:
+          OPENQML_REQUIRE_CUDA: '1'
+          OPENQML_HARDWARE_REPORT_DIR: ${{ runner.temp }}/openqml-hardware
+        run: python -m pytest -q tests/test_distributed_tensor.py -k physical_multi_gpu
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cuda-nccl-execution-${{ github.sha }}
+          path: ${{ runner.temp }}/openqml-hardware/*.json
+          if-no-files-found: error

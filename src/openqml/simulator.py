@@ -346,7 +346,7 @@ def statevector(
     native = isinstance(backend, str) and backend in {"numpy", "torch", "jax"}
     if not native:
         from .backends import ExecutionOptions, get_backend
-        from .runtime import PriorityBackend
+        from .runtime import CostAwareBackend, PriorityBackend, _ObservedBackend
 
         if like is not None:
             raise ValidationError(
@@ -354,9 +354,14 @@ def statevector(
             )
         policy = get_backend(backend)
         if isinstance(policy, PriorityBackend):
-            route = policy.plan(
-                [circuit], task="statevector", options=ExecutionOptions(max_qubits, max_memory_mb)
-            )
+            options = ExecutionOptions(max_qubits, max_memory_mb)
+            if isinstance(policy, CostAwareBackend):
+                route, rows = policy.native_plan(
+                    circuit, bindings, batch_shape, task="statevector", options=options
+                )
+            else:
+                route = policy.plan([circuit], task="statevector", options=options)
+                rows = 1
             if route.device in {"CPU", "GPU"}:
                 context = None
                 target = "numpy"
@@ -364,14 +369,22 @@ def statevector(
                     import torch
 
                     target, context = "torch", torch.empty((), dtype=torch.float64, device="cuda")
-                result = statevector(
-                    circuit,
-                    bindings,
-                    backend=target,
-                    like=context,
-                    max_qubits=max_qubits,
-                    max_memory_mb=max_memory_mb,
-                    batch_shape=batch_shape,
+
+                def native_execute():
+                    return statevector(
+                        circuit,
+                        bindings,
+                        backend=target,
+                        like=context,
+                        max_qubits=max_qubits,
+                        max_memory_mb=max_memory_mb,
+                        batch_shape=batch_shape,
+                    )
+
+                result = (
+                    route._backend.run_native(native_execute, circuit, rows, options=options)
+                    if isinstance(route._backend, _ObservedBackend)
+                    else native_execute()
                 )
                 return result if target == "numpy" else result.detach().cpu().numpy()
         if like is not None:

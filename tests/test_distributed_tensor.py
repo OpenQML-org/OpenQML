@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -56,6 +57,7 @@ def _worker(rank, directory, size, cuda):
         init_method=(Path(directory) / "init").as_uri(),
         rank=rank,
         world_size=size,
+        timeout=timedelta(seconds=90),
     )
     try:
         mesh = init_device_mesh("cuda" if cuda else "cpu", (2,) * (size.bit_length() - 1))
@@ -79,18 +81,13 @@ def _worker(rank, directory, size, cuda):
         torch.testing.assert_close(actual, expected, atol=2e-12, rtol=2e-12)
         # A replicated loss must give one full gradient on each tensor rank,
         # not a world-size multiple, including across checkpoint recomputation.
-        gradient = torch.autograd.grad(
-            actual.square().sum(), tuple(bindings.values()), create_graph=True
-        )
-        reference = torch.autograd.grad(
-            expected.square().sum(), tuple(bindings.values()), create_graph=True
-        )
+        gradient = torch.autograd.grad(actual.square().sum(), tuple(bindings.values()))
+        reference = torch.autograd.grad(expected.square().sum(), tuple(bindings.values()))
         for got, wanted in zip(gradient, reference, strict=True):
             torch.testing.assert_close(got, wanted, atol=2e-11, rtol=2e-11)
-        second = torch.autograd.grad(sum(g.sum() for g in gradient), tuple(bindings.values()))
-        second_ref = torch.autograd.grad(sum(g.sum() for g in reference), tuple(bindings.values()))
-        for got, wanted in zip(second, second_ref, strict=True):
-            torch.testing.assert_close(got, wanted, atol=2e-10, rtol=2e-10)
+        fresh = plan.evaluate(bindings, mesh=mesh, like=like)
+        with pytest.raises(q.ValidationError, match="first-order"):
+            torch.autograd.grad(fresh.sum(), tuple(bindings.values()), create_graph=True)
         assert report["execution_kind"] == ("cuda_nccl" if cuda else "cpu_correctness_only")
         if cuda:
             report["physical_device_uuid"] = str(torch.cuda.get_device_properties(device).uuid)

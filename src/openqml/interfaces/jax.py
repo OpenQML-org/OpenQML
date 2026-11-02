@@ -15,6 +15,7 @@ except ImportError as exc:
 from ..errors import ValidationError
 from ..parameters import real as _real
 from ..simulator import _checkpoint_interval, expectations
+from ._jax_deep import QuantumDeepNetwork as QuantumDeepNetwork
 from ._jax_hybrid import HyperQuantumAdapter as HyperQuantumAdapter
 from ._jax_hybrid import IQPQuantumLayer as IQPQuantumLayer
 from ._jax_ppo import PPOTrainer as PPOTrainer
@@ -106,6 +107,7 @@ class QuantumLayer(LayerSpecMixin):
             self.observables,
             backend,
             "jax",
+            gradient_chunk_size=integer(gradient_chunk_size, "gradient_chunk_size", 2),
             native_contract=reduce_readout
             or execution_method != "auto"
             or checkpoint_interval is not None,
@@ -185,10 +187,16 @@ class QuantumLayer(LayerSpecMixin):
         if pairs:
             forward, reverse = zip(*pairs, strict=True)
             values = values.at[jnp.asarray(reverse)].set(-values[jnp.asarray(forward)])
+        for index, value in getattr(self, "_initialization_values", ()):
+            values = values.at[index].set(value)
         return values
 
     def _initialize_identity_blocks(self, pairs):
         self._identity_pairs = pairs
+        return self
+
+    def _initialize_quantum_template(self, pairs, constants):
+        self._identity_pairs, self._initialization_values = pairs, constants
         return self
 
     @classmethod

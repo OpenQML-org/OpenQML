@@ -26,6 +26,7 @@ from ._spec import (
     resolve_gradient_method,
 )
 from ._torch_ad import ExternalQuantumFunction as _ExternalQuantumFunction
+from ._torch_deep import QuantumDeepNetwork as QuantumDeepNetwork
 from ._torch_hybrid import HyperQuantumAdapter as HyperQuantumAdapter
 from ._torch_hybrid import IQPQuantumLayer as IQPQuantumLayer
 from ._torch_hybrid import _quantum_precision
@@ -110,6 +111,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
             self.observables,
             backend,
             "torch",
+            gradient_chunk_size=integer(gradient_chunk_size, "gradient_chunk_size", 2),
             native_contract=reduce_readout
             or execution_method != "auto"
             or checkpoint_interval is not None,
@@ -228,6 +230,13 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
         with torch.no_grad():
             for forward, reverse in pairs:
                 self.weights[reverse] = -self.weights[forward]
+        return self
+
+    def _initialize_quantum_template(self, pairs, constants):
+        self._initialize_identity_blocks(pairs)
+        with torch.no_grad():
+            for index, value in constants:
+                self.weights[index] = value
         return self
 
     @_quantum_precision

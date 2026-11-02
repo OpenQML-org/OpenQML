@@ -29,7 +29,9 @@ class TrainingWorkload:
     steps: int = 1
     gradient_evaluations: int = 0
     native_gradient_evaluations: int | None = None
+    submission_batch_size: int | None = None
     classical_seconds_per_step: float = 0
+    classical_cost_per_step: float = 0
 
     def __post_init__(self):
         if self.batch_size is not None:
@@ -38,8 +40,12 @@ class TrainingWorkload:
         integer(self.gradient_evaluations, "gradient_evaluations", 0)
         if self.native_gradient_evaluations is not None:
             integer(self.native_gradient_evaluations, "native_gradient_evaluations", 0)
+        if self.submission_batch_size is not None:
+            integer(self.submission_batch_size, "submission_batch_size", 1)
         if real(self.classical_seconds_per_step) < 0:
             raise ValidationError("classical_seconds_per_step must be nonnegative.")
+        if real(self.classical_cost_per_step) < 0:
+            raise ValidationError("classical_cost_per_step must be nonnegative.")
 
     @classmethod
     def parameter_shift(cls, circuit, observables, *, parameters=None, **kwargs):
@@ -187,6 +193,9 @@ class ExecutionCost:
     provider_jobs: int
     source: str
     observations: int = 0
+    pricing_known: bool = True
+    queue_known: bool = True
+    noise_known: bool = True
 
     def to_dict(self):
         return asdict(self)
@@ -241,9 +250,12 @@ def estimate_cost(profile, request, policy, *, exact=False, adjustable_shots=Fal
         physical = math.ceil(count * shots * profile.mitigation_overhead)
         # All optimizer steps are sequential. Only jobs within a phase may
         # overlap, and a partial final wave cannot borrow future step work.
-        jobs = math.ceil(count / profile.max_batch_size)
-        full, tail = divmod(count, profile.max_batch_size)
-        load = math.ceil(full / profile.concurrency) * profile.max_batch_size
+        batch_size = min(
+            profile.max_batch_size, work.submission_batch_size or profile.max_batch_size
+        )
+        jobs = math.ceil(count / batch_size)
+        full, tail = divmod(count, batch_size)
+        load = math.ceil(full / profile.concurrency) * batch_size
         if tail and full % profile.concurrency == 0:
             load += tail
         waves = math.ceil(jobs / profile.concurrency)
@@ -274,9 +286,22 @@ def estimate_cost(profile, request, policy, *, exact=False, adjustable_shots=Fal
         (a + b) * work.steps for a, b in zip(forward, gradient, strict=True)
     )
     wall += work.steps * work.classical_seconds_per_step
+    cost += work.steps * work.classical_cost_per_step
     margin = 1 + policy.risk_sigma * profile.relative_uncertainty
     return ExecutionCost(
-        wall, wall * margin, cost, cost * margin, rmse, shots, physical, count, jobs, profile.source
+        wall,
+        wall * margin,
+        cost,
+        cost * margin,
+        rmse,
+        shots,
+        physical,
+        count,
+        jobs,
+        profile.source,
+        pricing_known=profile.cost_per_second is not None,
+        queue_known=profile.queue_seconds is not None,
+        noise_known=exact or profile.noise_bias is not None,
     )
 
 

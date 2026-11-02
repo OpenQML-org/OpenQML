@@ -38,13 +38,14 @@ When a separator is too large, exact index slicing trades additional work for
 smaller live tensors. Every binary assignment is evaluated and summed. Budgets
 can reject paths that require excessive slicing or arithmetic. Profiles report
 tensor counts, planned intermediates, slicing and estimated complex arithmetic.
-The current executor streams slices; it is not a distributed cluster runtime.
+`TensorNetworkPlan` streams slices locally. `DistributedTensorPlan` distributes
+intermediate tensors across a Torch DeviceMesh; see [distributed execution](distributed-execution.md).
 
 The automatic CPU planner considers circuit contraction when other structured
 engines cannot serve the query, and compares its working model with dense
 execution. CUDA and native training admission can use it when symbolic Pauli or
-independent-factor execution is unsuitable. Configured compatible QPUs retain
-priority for automatic quantum execution. Explicit native contraction requests
+independent-factor execution is unsuitable. Automatic quantum execution compares
+feasible cost/quality quotes. Explicit native contraction requests
 preserve their framework differentiation contract.
 
 Current circuit graphs cover unitary IR with zero-state inputs and declared

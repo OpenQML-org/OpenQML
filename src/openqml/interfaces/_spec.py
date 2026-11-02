@@ -4,7 +4,9 @@ from ..errors import ValidationError
 from ..layers import LayerCheckpoint, LayerSpec, validate_layer
 
 
-def default_layer_backend(circuit, observables, backend, native, *, native_contract, limits):
+def default_layer_backend(
+    circuit, observables, backend, native, *, native_contract, limits, gradient_chunk_size=64
+):
     """Compare configured QPU quotes against native training work before pinning.
 
     Explicit tensor backends and native-only execution options pin their graph.
@@ -36,6 +38,9 @@ def default_layer_backend(circuit, observables, backend, native, *, native_contr
                 runtime.workload.gradient_evaluations, shifts.gradient_evaluations
             ),
             native_gradient_evaluations=1,
+            submission_batch_size=min(
+                gradient_chunk_size, runtime.workload.submission_batch_size or gradient_chunk_size
+            ),
         )
     route = runtime.plan(
         [circuit], observables=observables, options=ExecutionOptions(**limits), workload=work
@@ -44,6 +49,24 @@ def default_layer_backend(circuit, observables, backend, native, *, native_contr
 
 
 class LayerSpecMixin:
+    @classmethod
+    def deep(
+        cls,
+        num_qubits,
+        depth=4,
+        *,
+        reupload=True,
+        initial_mixing=0.1,
+        max_operations=100_000,
+        **kwargs,
+    ):
+        from ..deep import DeepQuantumPlan
+
+        plan = DeepQuantumPlan(num_qubits, depth, reupload, initial_mixing, max_operations)
+        return cls.from_spec(plan.spec, **kwargs)._initialize_quantum_template(
+            plan.initialization_pairs, plan.initialization_values
+        )
+
     @classmethod
     def multiscale(
         cls,

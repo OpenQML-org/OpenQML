@@ -15,7 +15,7 @@ critic supplies the value baseline. `ActorCriticOutput` contains `policy`,
 Arbitrary leading observation dimensions are preserved.
 
 The default universal circuit uses identity-paired RY/RZ/RZZ blocks. With
-`backend="auto"`, construction selects and pins a compatible QPU, GPU or CPU
+`backend="auto"`, construction uses the cost policy to select and pin a compatible QPU, GPU or CPU
 for the primal circuit and its parameter-shift derivatives. Pinning preserves
 provider-specific lowering, noise placement and stochastic reuse contracts
 through an update. Rebuild the layer after changing devices or their configuration.

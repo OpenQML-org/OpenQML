@@ -1,5 +1,6 @@
 """Capability admission and cost-aware dispatch before submitting work."""
 
+import hashlib
 import time
 from dataclasses import asdict, dataclass, field, replace
 from types import MappingProxyType
@@ -271,8 +272,15 @@ def _feedback_key(device, request, shots):
     # Shape/resource class, not parameter values or user data. Profile sources
     # distinguish layouts and calibration regimes chosen by a quote callback.
     width = max(c.num_qubits for c in request.circuits)
-    operations = max(sum(1 for _ in c.walk_operations()) for c in request.circuits)
-    return device.name, request.task, width, operations.bit_length(), shots
+    digest = hashlib.sha256()
+    for circuit in dict.fromkeys(request.circuits):
+        for path, op in circuit.walk_operations():
+            digest.update(
+                repr((path, op.name, op.qubits, op.clbits, len(op.params), op.condition)).encode()
+            )
+    digest.update(repr(request.observables).encode())
+    rows = len(request.circuits)
+    return device.name, request.task, width, digest.hexdigest(), rows.bit_length(), shots
 
 
 @dataclass(frozen=True)
@@ -352,6 +360,24 @@ class CostAwareBackend(PriorityBackend):
         ):
             raise ResourceError("Forecast exceeds the remaining session spending budget.")
         return profile, corrected, key
+
+    def native_plan(self, circuit, bindings, batch_shape, *, task, options):
+        import math
+
+        import numpy as np
+
+        try:
+            shape = np.broadcast_shapes(
+                *(np.shape(v) for v in (bindings or {}).values()),
+                () if batch_shape is None else tuple(batch_shape),
+            )
+        except ValueError as exc:
+            raise ValidationError("Native binding shapes cannot be broadcast together.") from exc
+        count = max(1, math.prod(shape))
+        if count * 8 * (1 + len(bindings or {})) > options.max_memory_mb * 2**20:
+            raise ResourceError("Native batch metadata exceeds the memory budget.")
+        work = replace(self.workload, batch_size=max(self.workload.batch_size or 0, count))
+        return self.plan([circuit], task=task, options=options, workload=work), count
 
     def plan(
         self,
@@ -461,7 +487,7 @@ class _ObservedBackend:
     def __getattr__(self, name):
         return getattr(self.backend, name)
 
-    def _invoke(self, method, circuits, *args, options):
+    def _invoke(self, method, circuits, *args, options, callback=None):
         request = SchedulingRequest(
             tuple(circuits),
             self.observables,
@@ -476,12 +502,17 @@ class _ObservedBackend:
         if self.scheduler.ledger is not None:
             self.scheduler.ledger.reserve(cost.upper_cost)
         start = time.perf_counter()
-        result = getattr(self.backend, method)(*args, options=options)
+        result = (
+            callback()
+            if callback is not None
+            else getattr(self.backend, method)(*args, options=options)
+        )
         raw = estimate_cost(
             profile,
             request,
             self.scheduler.policy,
-            exact=self.task == "expectations" and self.backend.capabilities.exact_expectations,
+            exact=self.task in {"statevector", "density"}
+            or (self.task == "expectations" and self.backend.capabilities.exact_expectations),
         )
         self.scheduler.feedback.observe(key, raw.seconds, time.perf_counter() - start)
         return result
@@ -491,6 +522,15 @@ class _ObservedBackend:
 
     def sample_batch(self, circuits, shots, *, options):
         return self._invoke("sample_batch", circuits, circuits, shots, options=options)
+
+    def run(self, circuit, *, options):
+        return self._invoke("run", [circuit], circuit, options=options)
+
+    def run_density(self, circuit, *, options):
+        return self._invoke("run_density", [circuit], circuit, options=options)
+
+    def run_native(self, callback, circuit, rows, *, options):
+        return self._invoke(None, (circuit,) * rows, options=options, callback=callback)
 
 
 def configure_runtime(*, policy=None, workload=None, profiles=None, ledger=None):

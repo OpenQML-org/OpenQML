@@ -20,6 +20,45 @@ from ._spec import LayerSpecMixin
 from .jax import QuantumLayer as FunctionalLayer
 
 
+class QuantumDeepNetwork(nn.Module):
+    """Linen encoder, deep CPTP quantum residual channel and readout head."""
+
+    input_size: int
+    output_size: int
+    num_qubits: int = 4
+    depth: int = 4
+    reupload: bool = True
+    initial_mixing: float = 0.1
+    backend: object = None
+    max_memory_mb: float = 256
+    dtype: object = jnp.float32
+
+    @nn.compact
+    def __call__(self, inputs):
+        import math
+
+        from ..errors import ValidationError
+        from ..ir import integer
+
+        integer(self.input_size, "input_size", 1)
+        integer(self.output_size, "output_size", 1)
+        if inputs.ndim < 1 or inputs.shape[-1] != self.input_size:
+            raise ValidationError("Input width differs from the deep quantum encoder.")
+        controls = math.pi * jnp.tanh(
+            nn.Dense(self.num_qubits, dtype=self.dtype, name="encoder")(inputs)
+        )
+        features = QuantumLayer.deep(
+            self.num_qubits,
+            self.depth,
+            reupload=self.reupload,
+            initial_mixing=self.initial_mixing,
+            backend=self.backend,
+            max_memory_mb=self.max_memory_mb,
+            dtype=self.dtype,
+        ).clone(parent=self, name="quantum")(controls)
+        return nn.Dense(self.output_size, dtype=self.dtype, name="readout")(features)
+
+
 class QuantumActorCritic(nn.Module):
     """Linen hybrid actor and independent classical value baseline."""
 
@@ -109,6 +148,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
     planning_options: object = None
     tensor_options: object = None
     initialization_pairs: tuple = ()
+    initialization_values: tuple = ()
 
     @property
     def num_outputs(self):
@@ -116,6 +156,9 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
 
     def _initialize_identity_blocks(self, pairs):
         return self.clone(initialization_pairs=pairs)
+
+    def _initialize_quantum_template(self, pairs, constants):
+        return self.clone(initialization_pairs=pairs, initialization_values=constants)
 
     @classmethod
     def from_checkpoint(cls, checkpoint, **kwargs):
@@ -154,6 +197,8 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
                 if self.initialization_pairs:
                     forward, reverse = zip(*self.initialization_pairs, strict=True)
                     value = value.at[jnp.asarray(reverse)].set(-value[jnp.asarray(forward)])
+                for index, constant in self.initialization_values:
+                    value = value.at[index].set(constant)
                 return value
 
             weights = self.param(

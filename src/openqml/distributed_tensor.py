@@ -233,7 +233,9 @@ class DistributedTensorPlan:
     def evaluate(self, bindings=None, *, mesh, like, batch_shape=None, return_report=False):
         """Collective call with identical inputs and loss on every tensor rank.
 
-        Replicated parameters receive the full derivative once. Use a separate
+        Replicated parameters receive the full first-order derivative once.
+        Higher-order distributed derivatives are rejected explicitly; use the
+        local TensorNetworkPlan for Hessians. Use a separate
         data-parallel process group for DDP; do not average these tensor ranks.
         All ranks must also participate in backward/checkpoint recomputation.
         """
@@ -328,6 +330,26 @@ class DistributedTensorPlan:
             result = checkpoint(forward, *values, use_reentrant=False, preserve_rng_state=False)
         else:
             result = forward(*values)
+
+        # DTensor layout transitions currently give reliable first-order
+        # pullbacks, but rewrapping local matrix layouts does not preserve a
+        # correct higher-order placement graph. Fail instead of returning a
+        # plausible, incorrectly scaled Hessian.
+        class FirstOrder(torch.autograd.Function):
+            @staticmethod
+            def forward(ctx, value):
+                return value
+
+            @staticmethod
+            def backward(ctx, gradient):
+                if torch.is_grad_enabled():
+                    raise ValidationError(
+                        "Distributed contractions support first-order gradients; "
+                        "use local TensorNetworkPlan for higher derivatives."
+                    )
+                return gradient
+
+        result = FirstOrder.apply(result)
         if not return_report:
             return result
         if cuda:

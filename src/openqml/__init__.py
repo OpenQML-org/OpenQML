@@ -26,6 +26,7 @@ from .backends import (
     unregister_backend,
 )
 from .batch import execute_batch, expectations_batch
+from .calibration import CalibrationModel, GateCalibration, NoiseEstimate
 from .compiler import CircuitStats, circuit_stats, decompose, inverse, simplify
 from .components import ComponentPlan, plan_components
 from .conversion import ConversionPlan, ConversionResult, convert, diagnose, plan_conversion
@@ -38,6 +39,7 @@ from .costs import (
     SchedulingRequest,
     TrainingWorkload,
 )
+from .deep import DeepQuantumPlan
 from .density import density_matrix
 from .distributed_tensor import DistributedTensorPlan, Interconnect
 from .environment import environment_report
@@ -171,7 +173,7 @@ def __dir__():
     return sorted(set(globals()) | _LAZY_MODULES.keys())
 
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 __all__ = [
     "AdaptiveMPSBackend",
@@ -185,6 +187,7 @@ __all__ = [
     "TensorNetworkPlan",
     "DistributedTensorPlan",
     "Interconnect",
+    "DeepQuantumPlan",
     "TensorTrainMatrix",
     "TensorTrainPlan",
     "DispatchCandidate",
@@ -192,6 +195,9 @@ __all__ = [
     "PriorityBackend",
     "CostAwareBackend",
     "ExecutionProfile",
+    "CalibrationModel",
+    "GateCalibration",
+    "NoiseEstimate",
     "ExecutionCost",
     "ExecutionFeedback",
     "SchedulingPolicy",
