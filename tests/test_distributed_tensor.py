@@ -76,6 +76,8 @@ def _worker(rank, directory, size, cuda):
             "w": torch.tensor(0.41, device=device, dtype=torch.float64, requires_grad=True),
             "x": torch.tensor([0.2, -0.3], device=device, dtype=torch.float64, requires_grad=True),
         }
+        if size == 4:
+            bindings["x"] = bindings["x"].reshape(2, 1)
         expected = q.TensorNetworkPlan(c, obs).evaluate(bindings, backend="torch", like=like)
         actual, report = plan.evaluate(bindings, mesh=mesh, like=like, return_report=True)
         torch.testing.assert_close(actual, expected, atol=2e-12, rtol=2e-12)

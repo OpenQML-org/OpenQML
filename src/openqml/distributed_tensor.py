@@ -410,6 +410,58 @@ class _DTensorExecutor:
             local, self.mesh, matrix_layout, run_check=False, shape=shape, stride=stride
         )
 
+    def _gemm(self, left, right):
+        import torch
+
+        shape = torch.broadcast_shapes(left.shape[:-2], right.shape[:-2])
+        if not shape:
+            return torch.mm(left, right)
+
+        def batched(value):
+            # Generic matmul flattens batch and multiply-sharded matrix modes,
+            # which DTensor cannot always unflatten. Use bmm directly and
+            # perform shape changes only on local buffers.
+            local = value.to_local(grad_placements=value.placements)
+            local = local.expand(tuple(shape) + tuple(local.shape[-2:]))
+            local = local.reshape((math.prod(shape),) + tuple(local.shape[-2:]))
+            placements = tuple(
+                self.shard(1 if p.dim == value.ndim - 2 else 2)
+                if p.is_shard()
+                else self.replicate()
+                for p in value.placements
+            )
+            full_shape = (math.prod(shape),) + tuple(value.shape[-2:])
+            return self.tensor_type.from_local(
+                local,
+                self.mesh,
+                placements,
+                run_check=False,
+                shape=full_shape,
+                stride=tuple(math.prod(full_shape[i + 1 :]) for i in range(3)),
+            )
+
+        value = torch.bmm(batched(left), batched(right))
+        # Complete reductions before changing shape; a partial local result
+        # must not be reinterpreted as an independently replicated value.
+        placements = tuple(
+            self.shard(p.dim) if p.is_shard() else self.replicate() for p in value.placements
+        )
+        value = value.redistribute(placements=placements)
+        local = value.to_local(grad_placements=placements)
+        local = local.reshape(tuple(shape) + tuple(local.shape[-2:]))
+        full_shape = tuple(shape) + tuple(value.shape[-2:])
+        expanded = tuple(
+            self.shard(len(shape) + p.dim - 1) if p.is_shard() else p for p in placements
+        )
+        return self.tensor_type.from_local(
+            local,
+            self.mesh,
+            expanded,
+            run_check=False,
+            shape=full_shape,
+            stride=tuple(math.prod(full_shape[i + 1 :]) for i in range(len(full_shape))),
+        )
+
     def contract(self, left, right, la, lb, shared, graph, step):
         layout = self.plan._schedules[graph][step]
 
@@ -422,7 +474,9 @@ class _DTensorExecutor:
         a = ordered(tuple(x for x in la if x not in shared))
         b = ordered(tuple(x for x in lb if x not in shared))
         k = ordered(shared)
-        value = self._matrix(left, la, a, k, layout) @ self._matrix(right, lb, k, b, layout)
+        value = self._gemm(
+            self._matrix(left, la, a, k, layout), self._matrix(right, lb, k, b, layout)
+        )
         prefix = value.ndim - 2
         placements = tuple(
             self.shard(prefix) if x in a else self.shard(prefix + 1) if x in b else self.replicate()
