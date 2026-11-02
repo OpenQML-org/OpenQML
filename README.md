@@ -2,7 +2,7 @@
 
 [PyPI](https://pypi.org/project/openqml/) · [CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml) · [Documentation](https://github.com/OpenQML-org/OpenQML/tree/main/docs)
 
-Build and train deep quantum–classical neural networks in PyTorch, JAX and Flax.
+Build quantum–classical convolutional, attention and graph networks in PyTorch, JAX and Flax.
 
 ## Installation
 
@@ -50,6 +50,11 @@ parameter layout. `DepthSchedule` grows active depth while preserving optimizer 
 | Task | Interface |
 | --- | --- |
 | Build a hybrid network | `HybridArchitecture` and `QuantumCellSpec` |
+| Image and temporal convolutions | `HybridArchitecture.convolutional(...)` |
+| Sequence attention | `HybridArchitecture.transformer(...)` |
+| Graph and geometric data | `HybridArchitecture.graph_network(...)` |
+| Compose or extend network blocks | `OperatorSpec` and `register_network_operator(...)` |
+| Use a custom quantum circuit | `QuantumCellSpec.from_spec(...)` |
 | Adjust quantum capacity | `QuantumLayer.multiscale(bond_qubits=..., depth=...)` |
 | Train an existing circuit | `QuantumLayer`; set `execution_method="tensor-network"` for native contraction |
 | Factor a dense projection | `TensorTrainLinear.from_dense(weight, bias)` |
@@ -75,7 +80,7 @@ circuit-width ceiling; memory, contraction width and work budgets determine capa
 The model planner schedules the whole network against shared time and cost limits.
 Distributed contractions shard intermediate tensors; GPU scaling requires hardware measurements.
 
-[Architecture](https://github.com/OpenQML-org/OpenQML/blob/main/docs/deep-learning.md) · [Distributed execution](https://github.com/OpenQML-org/OpenQML/blob/main/docs/distributed-execution.md) · [Training and execution](https://github.com/OpenQML-org/OpenQML/blob/main/docs/training-and-execution.md) · [Tensor networks](https://github.com/OpenQML-org/OpenQML/blob/main/docs/tensor-networks.md) · [Hybrid training](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md) · [Quantum RL](https://github.com/OpenQML-org/OpenQML/blob/main/docs/quantum-rl.md) · [Circuit conversion](https://github.com/OpenQML-org/OpenQML/blob/main/docs/semantic-kernels.md) · [QPU configuration](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md)
+[Models](https://github.com/OpenQML-org/OpenQML/blob/main/docs/models.md) · [Architecture](https://github.com/OpenQML-org/OpenQML/blob/main/docs/deep-learning.md) · [Distributed execution](https://github.com/OpenQML-org/OpenQML/blob/main/docs/distributed-execution.md) · [Training and execution](https://github.com/OpenQML-org/OpenQML/blob/main/docs/training-and-execution.md) · [Tensor networks](https://github.com/OpenQML-org/OpenQML/blob/main/docs/tensor-networks.md) · [Hybrid training](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md) · [Quantum RL](https://github.com/OpenQML-org/OpenQML/blob/main/docs/quantum-rl.md) · [Circuit conversion](https://github.com/OpenQML-org/OpenQML/blob/main/docs/semantic-kernels.md) · [QPU configuration](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md)
 
 ## License
 

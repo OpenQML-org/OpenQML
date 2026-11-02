@@ -275,11 +275,16 @@ def _feedback_key(device, request, shots):
     # distinguish layouts and calibration regimes chosen by a quote callback.
     width = max(c.num_qubits for c in request.circuits)
     digest = hashlib.sha256()
-    for circuit in dict.fromkeys(request.circuits):
+    topologies = set()
+    for circuit in request.circuits:
+        topology = hashlib.sha256()
         for path, op in circuit.walk_operations():
-            digest.update(
+            topology.update(
                 repr((path, op.name, op.qubits, op.clbits, len(op.params), op.condition)).encode()
             )
+        topologies.add(topology.digest())
+    for topology in sorted(topologies):
+        digest.update(topology)
     digest.update(repr(request.observables).encode())
     rows = max(len(request.circuits), request.workload.batch_size or 0)
     return device.name, request.task, width, digest.hexdigest(), rows.bit_length(), shots
@@ -359,6 +364,8 @@ class CostAwareBackend(PriorityBackend):
             upper_seconds=cost.upper_seconds * upper,
             observations=count,
         )
+        if request.workload.execution_batches is not None:
+            corrected = self._phase_feedback(device, profile, request, cost, exact, adjustable)
         check_cost(corrected, self.policy)
         if (
             self.ledger is not None
@@ -366,6 +373,55 @@ class CostAwareBackend(PriorityBackend):
         ):
             raise ResourceError("Forecast exceeds the remaining session spending budget.")
         return profile, corrected, key
+
+    def _phase_feedback(self, device, profile, request, cost, exact, adjustable):
+        """Correct known sequential call phases using their own observed batch classes."""
+        from collections import Counter
+
+        work, phases = request.workload, Counter()
+        gradient = (
+            work.native_gradient_evaluations
+            if exact and work.native_gradient_evaluations is not None
+            else work.gradient_evaluations
+        )
+        for size, repeats in Counter(work.execution_batches).items():
+            for quantity, chunk in ((size, None), (size * gradient, work.gradient_chunk_size)):
+                if not quantity:
+                    continue
+                client = min(quantity, work.submission_batch_size or quantity, chunk or quantity)
+                full, tail = divmod(quantity, client)
+                phases[client] += full * repeats * work.steps
+                if tail:
+                    phases[tail] += repeats * work.steps
+        seconds = work.steps * work.classical_seconds_per_step
+        upper = seconds * (1 + self.policy.risk_sigma * profile.relative_uncertainty)
+        observations = {}
+        for rows, repeats in phases.items():
+            local = replace(
+                work,
+                batch_size=rows,
+                steps=1,
+                gradient_evaluations=0,
+                native_gradient_evaluations=0,
+                execution_batches=None,
+                microbatch_size=None,
+                submission_batch_size=None,
+                gradient_chunk_size=None,
+                classical_seconds_per_step=0,
+                classical_cost_per_step=0,
+            )
+            subrequest = replace(request, workload=local, shots=cost.shots or None)
+            raw = estimate_cost(
+                profile, subrequest, self.policy, exact=exact, adjustable_shots=adjustable
+            )
+            key = (*_feedback_key(device, subrequest, cost.shots), profile.source)
+            median, margin, count = self.feedback.correction(key)
+            observations[key] = count
+            seconds += repeats * raw.seconds * median
+            upper += repeats * raw.upper_seconds * margin
+        return replace(
+            cost, seconds=seconds, upper_seconds=upper, observations=sum(observations.values())
+        )
 
     def native_plan(self, circuit, bindings, batch_shape, *, task, options):
         import math

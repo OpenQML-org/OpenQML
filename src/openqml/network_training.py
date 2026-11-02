@@ -1,10 +1,34 @@
 """Depth curricula and optimizers whose inactive stage state remains untouched."""
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from .errors import ValidationError
 from .ir import integer
+
+
+def select_network_input(batch, input_features, selector=None):
+    """Select structured model inputs without treating graph indices as features."""
+    if selector is not None:
+        return selector(batch)
+    if isinstance(batch, Mapping):
+        if "nodes" in batch or "x" in batch:
+            return batch
+        if "inputs" in batch:
+            return batch["inputs"]
+        values = batch.values()
+    elif isinstance(batch, (list, tuple)):
+        values = batch
+    else:
+        return (
+            batch if getattr(batch, "ndim", 0) > 1 and batch.shape[-1] == input_features else None
+        )
+    for value in values:
+        found = select_network_input(value, input_features)
+        if found is not None:
+            return found
+    return None
 
 
 def _batch_rows(leaves, input_features):

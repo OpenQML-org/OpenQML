@@ -12,7 +12,7 @@ from ..architecture_runtime import reserve_native_cost
 from ..backends import get_backend
 from ..distributed_tensor import DistributedTensorPlan
 from ..errors import ValidationError
-from ..network_training import DepthSchedule, _batch_rows
+from ..network_training import DepthSchedule, _batch_rows, select_network_input
 from ..runtime import CostAwareBackend
 from ._torch_training import HybridTrainer, _atomic_save, _leaves
 
@@ -169,11 +169,15 @@ class HybridNetwork(nn.Module):
         self.active_depth = self.architecture.active(depth)
         return self
 
-    def reschedule(self, *, workload=None):
+    def reschedule(self, *, workload=None, metadata=None, microbatch_samples=None):
         if not isinstance(self.runtime, CostAwareBackend) or self.tensor_mesh is not None:
             return self.execution_plan
         plan = self.architecture.schedule(
-            scheduler=self.runtime, workload=workload, active_depth=self.active_depth
+            scheduler=self.runtime,
+            workload=workload,
+            active_depth=self.active_depth,
+            metadata=metadata,
+            microbatch_samples=microbatch_samples,
         )
         first = next(iter(self.values.values()))
         replacements = []
@@ -211,7 +215,7 @@ class HybridNetwork(nn.Module):
         return plan
 
     def forward(self, inputs):
-        def run(index, parameters, value):
+        def run(index, parameters, value, context):
             execution = self._executions[index]
             names = tuple(
                 p.name for p in self.architecture.parameters if p.group == f"block_{index}"
@@ -220,7 +224,7 @@ class HybridNetwork(nn.Module):
             def block(x, *weights):
                 local = dict(zip(names, weights, strict=True))
                 return self.architecture.block(
-                    index, local, x, backend="torch", quantum_evaluator=execution
+                    index, local, x, backend="torch", quantum_evaluator=execution, context=context
                 )
 
             weights = tuple(parameters[name] for name in names)
@@ -278,9 +282,12 @@ class HybridNetwork(nn.Module):
 
 
 class NetworkTrainer(HybridTrainer):
-    def __init__(self, model, optimizer, *, depth_schedule=None, **options):
+    def __init__(self, model, optimizer, *, depth_schedule=None, input_selector=None, **options):
         super().__init__(model, optimizer, **options)
         self.network = model.module if self.distributed else model
+        if input_selector is not None and not callable(input_selector):
+            raise ValidationError("input_selector must be callable.")
+        self.input_selector = input_selector
         if not isinstance(self.network, HybridNetwork):
             raise ValidationError("NetworkTrainer requires a HybridNetwork.")
         self.depth_schedule = (
@@ -329,8 +336,15 @@ class NetworkTrainer(HybridTrainer):
                 steps=1,
                 microbatch_size=self.microbatch_size * max(1, rows // samples),
                 gradient_chunk_size=runtime.workload.gradient_chunk_size or 64,
+                execution_batches=None,
             )
-            plan = self.network.reschedule(workload=work)
+            inputs = select_network_input(
+                batch, self.network.architecture.input_features, self.input_selector
+            )
+            metadata = None if inputs is None else self.network.architecture.input_metadata(inputs)
+            plan = self.network.reschedule(
+                workload=work, metadata=metadata, microbatch_samples=self.microbatch_size
+            )
             reserve_native_cost(plan, runtime)
         result = super().step(batch, loss_function)
         result["active_depth"] = self.network.active_depth

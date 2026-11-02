@@ -79,6 +79,12 @@ from .measurement import (
 )
 from .mps import MPSBackend
 from .multiscale import MultiscalePlan
+from .network_operators import (
+    NetworkOperator,
+    OperatorSpec,
+    list_network_operators,
+    register_network_operator,
+)
 from .network_training import DepthSchedule, StagewiseOptimizer
 from .observables import (
     Hamiltonian,
@@ -94,6 +100,7 @@ from .planning import DensityPlan, plan_density
 from .program import QuantumProgram, as_circuit
 from .program_compilation import ProgramConversion, compile_program
 from .providers import CirqDensityBackend, QiskitEstimatorBackend, QiskitSamplerBackend
+from .quantum_cells import FeatureCircuitPlan
 from .quantum_tree import QuantumTreePlan
 from .readout import ReadoutPlan, plan_readout
 from .resources import ResourceEstimate, estimate_resources
@@ -176,7 +183,7 @@ def __dir__():
     return sorted(set(globals()) | _LAZY_MODULES.keys())
 
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 
 __all__ = [
     "AdaptiveMPSBackend",
@@ -192,6 +199,11 @@ __all__ = [
     "Interconnect",
     "DeepQuantumPlan",
     "HybridArchitecture",
+    "OperatorSpec",
+    "NetworkOperator",
+    "register_network_operator",
+    "list_network_operators",
+    "FeatureCircuitPlan",
     "QuantumCellSpec",
     "NetworkParameter",
     "NetworkExecutionPlan",

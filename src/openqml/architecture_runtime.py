@@ -58,6 +58,8 @@ def schedule_network(
     active_depth=None,
     max_states=64,
     native_devices=("CPU", "GPU"),
+    metadata=None,
+    microbatch_samples=None,
 ):
     scheduler = get_backend("auto") if scheduler is None else scheduler
     if not isinstance(scheduler, CostAwareBackend):
@@ -69,13 +71,34 @@ def schedule_network(
     depth = architecture.active(active_depth)
     options = ExecutionOptions(max_memory_mb=architecture.max_memory_mb)
     alternatives, baseline = [], []
-    for cell in architecture.cells[:depth]:
+    for index, cell in enumerate(architecture.cells[:depth]):
         spec = cell.to_spec()
         shift = TrainingWorkload.parameter_shift(spec.circuit, spec.observables)
+        batches = None
+        if metadata is not None:
+            architecture.operator_specs[index].implementation.validate_metadata(
+                metadata, architecture.operator_specs[index].config
+            )
+            batches = architecture.execution_batches(
+                metadata, microbatch_samples or metadata["samples"], index
+            )
+        elif architecture.operator_specs[index].kind != "pointwise":
+            # Constructor bootstrap is only a routing hint. Trainers provide
+            # actual input metadata before executing any optimizer update.
+            rows = workload.batch_size or 1
+            batches = (rows,) * len(
+                architecture.operator_specs[index].implementation.roles(
+                    architecture.operator_specs[index].config
+                )
+            )
         work = replace(
             workload,
+            batch_size=workload.batch_size if batches is None else sum(batches) or None,
+            execution_batches=batches,
             gradient_evaluations=shift.gradient_evaluations,
-            native_gradient_evaluations=1,
+            native_gradient_evaluations=(1 + int(architecture.rematerialize))
+            if workload.native_gradient_evaluations is None
+            else workload.native_gradient_evaluations,
             native_devices=tuple(native_devices),
             classical_seconds_per_step=0,
             classical_cost_per_step=0,
