@@ -321,8 +321,8 @@ def test_integrated_native_training_reserves_shared_budget_before_updates(framew
 
     assert ledger.reserved == 0
     update()
-    assert ledger.reserved == pytest.approx(1.3)
+    assert ledger.reserved == pytest.approx(1.9)
     assert trainer.updates == 1
     with pytest.raises(q.ResourceError, match="budget|schedule"):
         update()
-    assert trainer.updates == 1 and ledger.reserved == pytest.approx(1.3)
+    assert trainer.updates == 1 and ledger.reserved == pytest.approx(1.9)

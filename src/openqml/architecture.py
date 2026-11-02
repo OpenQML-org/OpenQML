@@ -8,7 +8,8 @@ Increasing active depth changes execution, never the allocated parameter tree.
 import hashlib
 import json
 import math
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
+from functools import partial
 from types import MappingProxyType
 
 import numpy as np
@@ -17,8 +18,10 @@ from .deep import DeepQuantumPlan
 from .errors import ResourceError, ValidationError
 from .ir import integer
 from .multiscale import MultiscalePlan
+from .network_operators import OperatorContext, OperatorSpec, input_metadata
 from .parameters import real
-from .simulator import _TensorOps, expectations
+from .quantum_cells import CustomCircuitPlan, FeatureCircuitPlan
+from .simulator import _TensorOps
 from .tensor_train import TensorTrainPlan
 
 
@@ -32,10 +35,18 @@ class QuantumCellSpec:
     reupload: bool = True
     initial_mixing: float = 0.1
     max_operations: int = 100_000
+    program_json: str | None = None
+    _custom_spec: object = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self):
-        if self.kind not in {"multiscale", "residual-channel"}:
-            raise ValidationError("Quantum cell must be multiscale or residual-channel.")
+        if self.kind not in {
+            "multiscale",
+            "residual-channel",
+            "qcnn",
+            "hardware-efficient",
+            "custom",
+        }:
+            raise ValidationError("Unknown quantum cell kind.")
         for name in ("num_qubits", "depth", "bond_qubits", "num_outputs", "max_operations"):
             object.__setattr__(self, name, integer(getattr(self, name), name, 1))
         if type(self.reupload) is not bool:
@@ -43,8 +54,64 @@ class QuantumCellSpec:
         if not 0 < real(self.initial_mixing) < 1:
             raise ValidationError("initial_mixing must lie strictly between zero and one.")
         object.__setattr__(self, "initial_mixing", real(self.initial_mixing))
+        if self.kind == "custom":
+            from .layers import LayerSpec
+
+            if not isinstance(self.program_json, str):
+                raise ValidationError("Custom cells require a portable LayerSpec JSON document.")
+            spec = LayerSpec.from_json(self.program_json, max_operations=self.max_operations)
+            if not spec.input_parameters:
+                raise ValidationError("A custom hybrid cell needs input parameters.")
+            object.__setattr__(self, "_custom_spec", spec)
+            object.__setattr__(self, "num_qubits", spec.circuit.num_qubits)
+            object.__setattr__(self, "num_outputs", len(spec.observables))
+            object.__setattr__(
+                self,
+                "program_json",
+                json.dumps(spec.to_dict(), sort_keys=True, separators=(",", ":")),
+            )
+        elif self.program_json is not None:
+            raise ValidationError("program_json is only valid for custom quantum cells.")
+
+    def to_dict(self):
+        value = {
+            name: getattr(self, name)
+            for name in (
+                "kind",
+                "num_qubits",
+                "depth",
+                "bond_qubits",
+                "num_outputs",
+                "reupload",
+                "initial_mixing",
+                "max_operations",
+            )
+        }
+        if self.program_json is not None:
+            value["program_json"] = self.program_json
+        return value
+
+    @classmethod
+    def from_spec(cls, spec, *, max_operations=100_000):
+        from .layers import LayerSpec
+
+        if not isinstance(spec, LayerSpec):
+            raise ValidationError("Provide a portable LayerSpec.")
+        return cls(kind="custom", program_json=spec.to_json(), max_operations=max_operations)
 
     def compile(self):
+        if self.kind == "custom":
+            return CustomCircuitPlan(self._custom_spec)
+        if self.kind in {"qcnn", "hardware-efficient"}:
+            return FeatureCircuitPlan(
+                self.num_qubits,
+                self.depth,
+                self.num_outputs,
+                self.reupload,
+                self.max_operations,
+                self.kind == "qcnn",
+                self.bond_qubits,
+            )
         return (
             DeepQuantumPlan(
                 self.num_qubits, self.depth, self.reupload, self.initial_mixing, self.max_operations
@@ -85,8 +152,11 @@ class HybridArchitecture:
     max_memory_mb: float = 256
     rematerialize: bool = True
     norm_epsilon: float = 1e-5
+    operators: object = field(default_factory=OperatorSpec)
+    readout_pooling: str = "none"
     parameters: tuple = field(init=False, repr=False)
     cells: tuple = field(init=False, repr=False)
+    operator_specs: tuple = field(init=False, repr=False)
     projections: object = field(init=False, repr=False)
     projection_shapes: object = field(init=False, repr=False)
     _by_name: object = field(init=False, repr=False)
@@ -110,6 +180,17 @@ class HybridArchitecture:
             raise ValidationError("rematerialize must be a boolean.")
         if self.projection_policy not in {"auto", "dense", "tensor-train"}:
             raise ValidationError("projection_policy must be auto, dense or tensor-train.")
+        if self.readout_pooling not in {"none", "mean", "sum", "first"}:
+            raise ValidationError("Readout pooling must be none, mean, sum or first.")
+        operators = (
+            (self.operators,) * self.depth
+            if isinstance(self.operators, OperatorSpec)
+            else tuple(self.operators)
+        )
+        if len(operators) != self.depth or any(not isinstance(o, OperatorSpec) for o in operators):
+            raise ValidationError("Provide one OperatorSpec or one operator per block.")
+        object.__setattr__(self, "operators", operators)
+        object.__setattr__(self, "operator_specs", operators)
         if self.depth * (2 * self.hidden_features + 2) > self.max_parameters:
             raise ResourceError("Architecture depth exceeds the parameter admission budget.")
         configurations = (
@@ -128,11 +209,20 @@ class HybridArchitecture:
         cells = tuple(cache[c] for c in configurations)
         if not isinstance(self.quantum, QuantumCellSpec):
             object.__setattr__(self, "quantum", configurations)
-        descriptors, projections, projection_shapes = [], {}, {}
+        descriptors, projections, projection_shapes, parameter_names = [], {}, {}, set()
         count = 0
 
         def parameter(name, shape, role, group, initialization="normal", scale=0.1):
             nonlocal count
+            if name in parameter_names:
+                raise ValidationError(f"Duplicate network parameter {name!r}.")
+            parameter_names.add(name)
+            shape = tuple(
+                integer(v, "parameter dimension", 0 if role == "quantum" else 1) for v in shape
+            )
+            if initialization not in {"normal", "zeros", "ones", "quantum"}:
+                raise ValidationError("Unknown network parameter initializer.")
+            scale = real(scale)
             count += math.prod(shape)
             if count > self.max_parameters or 8 * count > self.max_memory_mb * 2**20:
                 raise ResourceError("Hybrid model parameters exceed the requested budget.")
@@ -141,6 +231,9 @@ class HybridArchitecture:
             )
 
         def projection(name, a, b, group):
+            if name in projections:
+                raise ValidationError(f"Duplicate network projection {name!r}.")
+            a, b = integer(a, "in_features", 1), integer(b, "out_features", 1)
             plan = None
             if self.projection_policy != "dense":
                 try:
@@ -173,6 +266,12 @@ class HybridArchitecture:
             parameter(f"{name}_bias", (b,), "bias", group, "zeros")
 
         h = self.hidden_features
+
+        def declare_parameter(
+            group, name, shape, role="classical", initialization="normal", scale=0.1
+        ):
+            parameter(f"{group}_{name}", shape, role, group, initialization, scale)
+
         parameter(
             "stem_weight",
             (self.input_features, h),
@@ -181,18 +280,49 @@ class HybridArchitecture:
             scale=1 / math.sqrt(self.input_features),
         )
         parameter("stem_bias", (h,), "bias", "shared", "zeros")
-        for i, cell in enumerate(cells):
+        for i, (cell, operator) in enumerate(zip(cells, operators, strict=True)):
             group = f"block_{i}"
             parameter(f"{group}_norm_q", (h,), "norm", group, "ones")
             parameter(f"{group}_norm_ff", (h,), "norm", group, "ones")
             parameter(f"{group}_gain_q", (), "gate", group, "zeros")
             parameter(f"{group}_gain_ff", (), "gate", group, "zeros")
             spec = cell.to_spec()
-            projection(f"{group}_encode", h, len(spec.input_parameters), group)
-            parameter(
-                f"{group}_quantum", (len(spec.weight_parameters),), "quantum", group, "quantum"
+            kernel_width = integer(
+                operator.implementation.input_width(h, operator.config), "kernel input width", 1
             )
+            roles = tuple(operator.implementation.roles(operator.config))
+            if (
+                not roles
+                or roles[0] != ""
+                or len(set(roles)) != len(roles)
+                or any(
+                    not isinstance(role, str) or (role and not role.isidentifier())
+                    for role in roles
+                )
+            ):
+                raise ValidationError(
+                    "Operator quantum roles start with '' and use unique identifiers."
+                )
+            for role in roles:
+                suffix = "" if not role else f"_{role}"
+                projection(
+                    f"{group}_encode{suffix}", kernel_width, len(spec.input_parameters), group
+                )
+                parameter(
+                    f"{group}_quantum{suffix}",
+                    (len(spec.weight_parameters),),
+                    "quantum",
+                    group,
+                    "quantum",
+                )
             projection(f"{group}_decode", len(spec.observables), h, group)
+            operator.implementation.declare(
+                h,
+                len(spec.observables),
+                operator.config,
+                lambda name, a, b, group=group: projection(f"{group}_{name}", a, b, group),
+                partial(declare_parameter, group),
+            )
             projection(f"{group}_ff_gate", h, h * self.expansion, group)
             projection(f"{group}_ff_up", h, h * self.expansion, group)
             projection(f"{group}_ff_down", h * self.expansion, h, group)
@@ -224,7 +354,7 @@ class HybridArchitecture:
         return hashlib.sha256(json.dumps(self.to_dict(), sort_keys=True).encode()).hexdigest()
 
     def to_dict(self):
-        return {
+        value = {
             "format": "openqml.hybrid.v1",
             **{
                 name: getattr(self, name)
@@ -243,7 +373,7 @@ class HybridArchitecture:
                 )
             },
             "quantum": [
-                asdict(c)
+                c.to_dict()
                 for c in (
                     (self.quantum,) * self.depth
                     if isinstance(self.quantum, QuantumCellSpec)
@@ -251,6 +381,13 @@ class HybridArchitecture:
                 )
             ],
         }
+        # Default networks preserve the 0.9 serialization/fingerprint and can
+        # resume their existing optimizer trees without migration.
+        if any(o.kind != "pointwise" or o.config for o in self.operator_specs):
+            value["operators"] = [o.to_dict() for o in self.operator_specs]
+        if self.readout_pooling != "none":
+            value["readout_pooling"] = self.readout_pooling
+        return value
 
     @classmethod
     def from_dict(cls, value):
@@ -259,6 +396,8 @@ class HybridArchitecture:
             raise ValidationError("Unsupported hybrid architecture format.")
         try:
             data["quantum"] = tuple(QuantumCellSpec(**c) for c in data["quantum"])
+            if "operators" in data:
+                data["operators"] = tuple(OperatorSpec(**o) for o in data["operators"])
             return cls(**data)
         except (TypeError, KeyError) as exc:
             raise ValidationError("Malformed hybrid architecture.") from exc
@@ -326,7 +465,9 @@ class HybridArchitecture:
             ).reshape(shape + (plan.out_features,))
         return value + parameters[f"{name}_bias"]
 
-    def block(self, index, parameters, inputs, *, backend="numpy", quantum_evaluator=None):
+    def block(
+        self, index, parameters, inputs, *, backend="numpy", quantum_evaluator=None, context=None
+    ):
         ops = _TensorOps(backend, parameters[f"block_{index}_quantum"])
         group = f"block_{index}"
 
@@ -339,32 +480,52 @@ class HybridArchitecture:
             return value / ops.xp.sqrt(mean + self.norm_epsilon) * parameters[name]
 
         normalized = norm(inputs, f"{group}_norm_q")
-        controls = math.pi * ops.xp.tanh(
-            self._linear(f"{group}_encode", parameters, normalized, backend)
+        ctx = OperatorContext(
+            self, index, parameters, normalized, context or {}, backend, quantum_evaluator
         )
-        weights = parameters[f"{group}_quantum"]
-        if quantum_evaluator is None:
-            spec = self.cells[index].to_spec()
-            bindings = {name: controls[..., i] for i, name in enumerate(spec.input_parameters)}
-            bindings.update({name: weights[i] for i, name in enumerate(spec.weight_parameters)})
-            quantum = expectations(
-                spec.circuit,
-                spec.observables,
-                bindings,
-                backend=backend,
-                max_memory_mb=self.max_memory_mb,
-            )
-        else:
-            quantum = quantum_evaluator(weights, controls)
-        value = inputs + ops.xp.tanh(parameters[f"{group}_gain_q"]) * self._linear(
-            f"{group}_decode", parameters, quantum, backend
-        )
+        quantum = self.operator_specs[index].implementation.apply(ctx)
+        if tuple(quantum.shape) != tuple(inputs.shape):
+            raise ValidationError("A network operator must preserve its hidden feature shape.")
+        value = inputs + ops.xp.tanh(parameters[f"{group}_gain_q"]) * quantum
+        value = self._masked(value, context or {}, backend)
         normalized = norm(value, f"{group}_norm_ff")
         gate = self._linear(f"{group}_ff_gate", parameters, normalized, backend)
         up = self._linear(f"{group}_ff_up", parameters, normalized, backend)
         silu = gate * (1 + ops.xp.tanh(gate * 0.5)) * 0.5
-        return value + ops.xp.tanh(parameters[f"{group}_gain_ff"]) * self._linear(
-            f"{group}_ff_down", parameters, silu * up, backend
+        return self._masked(
+            value
+            + ops.xp.tanh(parameters[f"{group}_gain_ff"])
+            * self._linear(f"{group}_ff_down", parameters, silu * up, backend),
+            context or {},
+            backend,
+        )
+
+    @staticmethod
+    def _masked(value, context, backend):
+        mask = context.get("node_mask", context.get("mask"))
+        if mask is None:
+            return value
+        ops = _TensorOps(backend, value)
+        mask = (
+            ops.xp.as_tensor(mask, device=value.device, dtype=ops.xp.bool)
+            if backend == "torch"
+            else ops.xp.asarray(mask, dtype=bool)
+        )
+        return ops.xp.where(mask[..., None], value, 0)
+
+    def input_metadata(self, inputs):
+        return input_metadata(inputs, self.input_features)[2]
+
+    def execution_batches(self, metadata, microbatch_samples, index):
+        samples = metadata["samples"]
+        operator = self.operator_specs[index]
+        chunks = operator.implementation.row_chunks(metadata, operator.config)
+        roles = tuple(operator.implementation.roles(operator.config))
+        return tuple(
+            min(microbatch_samples, samples - start) * rows
+            for start in range(0, samples, microbatch_samples)
+            for _ in roles
+            for rows in chunks
         )
 
     def evaluate(
@@ -372,16 +533,44 @@ class HybridArchitecture:
     ):
         self.validate_parameters(parameters)
         depth = self.active(active_depth)
-        if inputs.ndim < 1 or inputs.shape[-1] != self.input_features:
-            raise ValidationError("Input feature width differs from the architecture.")
+        inputs, context, metadata = input_metadata(inputs, self.input_features)
+        inputs = self._masked(inputs, context, backend)
         value = inputs @ parameters["stem_weight"] + parameters["stem_bias"]
+        value = self._masked(value, context, backend)
         for index in range(depth):
-            value = (
-                self.block(index, parameters, value, backend=backend)
-                if block_runner is None
-                else block_runner(index, parameters, value)
+            self.operator_specs[index].implementation.validate_metadata(
+                metadata,
+                self.operator_specs[index].config,
             )
-        return value @ parameters["readout_weight"] + parameters["readout_bias"]
+            value = (
+                self.block(index, parameters, value, backend=backend, context=context)
+                if block_runner is None
+                else block_runner(index, parameters, value, context)
+            )
+        if self.readout_pooling != "none" and value.ndim > 2:
+            ops = _TensorOps(backend, value)
+            axes = tuple(range(1, value.ndim - 1))
+            if self.readout_pooling == "first":
+                value = value.reshape((value.shape[0], -1, value.shape[-1]))[:, 0]
+            else:
+                summed = value.sum(dim=axes) if backend == "torch" else ops.xp.sum(value, axis=axes)
+                if self.readout_pooling == "mean":
+                    ones = ops.xp.ones_like(value[..., :1])
+                    ones = self._masked(ones, context, backend)
+                    denominator = (
+                        ones.sum(dim=axes) if backend == "torch" else ops.xp.sum(ones, axis=axes)
+                    )
+                    denominator = (
+                        denominator.clamp_min(1)
+                        if backend == "torch"
+                        else ops.xp.maximum(denominator, 1)
+                    )
+                    summed = summed / denominator
+                value = summed
+            return value @ parameters["readout_weight"] + parameters["readout_bias"]
+        return self._masked(
+            value @ parameters["readout_weight"] + parameters["readout_bias"], context, backend
+        )
 
     def resource_profile(
         self, *, batch_size=1, active_depth=None, dtype_bytes=4, optimizer_slots=2
@@ -415,6 +604,7 @@ class HybridArchitecture:
                 for name, p in self.projections.items()
             },
             "quantum_cells": [self.cells[i].to_dict() for i in range(depth)],
+            "operators": [o.to_dict() for o in self.operator_specs[:depth]],
             "batch_size": batch_size,
         }
 
@@ -428,6 +618,81 @@ class HybridArchitecture:
         else:
             raise ValidationError("Architecture framework must be torch, jax or flax.")
         return HybridNetwork(self, **options)
+
+    @classmethod
+    def convolutional(
+        cls,
+        input_features,
+        output_features,
+        *,
+        spatial_dims=2,
+        kernel_size=3,
+        dilation=1,
+        padding="same",
+        quantum=None,
+        **options,
+    ):
+        return cls(
+            input_features,
+            output_features,
+            quantum=QuantumCellSpec(kind="qcnn") if quantum is None else quantum,
+            operators=OperatorSpec.convolution(
+                kernel_size, spatial_dims=spatial_dims, dilation=dilation, padding=padding
+            ),
+            readout_pooling=options.pop("readout_pooling", "mean"),
+            **options,
+        )
+
+    @classmethod
+    def transformer(
+        cls,
+        input_features,
+        output_features,
+        *,
+        heads=1,
+        key_features=8,
+        attention="gaussian",
+        causal=False,
+        positional=True,
+        quantum=None,
+        **options,
+    ):
+        return cls(
+            input_features,
+            output_features,
+            quantum=QuantumCellSpec(kind="hardware-efficient") if quantum is None else quantum,
+            operators=OperatorSpec.attention(
+                heads=heads,
+                key_features=key_features,
+                mode=attention,
+                causal=causal,
+                positional=positional,
+            ),
+            **options,
+        )
+
+    @classmethod
+    def graph_network(
+        cls,
+        input_features,
+        output_features,
+        *,
+        edge_features=0,
+        geometric=False,
+        aggregation="mean",
+        quantum=None,
+        **options,
+    ):
+        return cls(
+            input_features,
+            output_features,
+            quantum=QuantumCellSpec(kind="hardware-efficient") if quantum is None else quantum,
+            operators=OperatorSpec.graph(
+                edge_features=edge_features, geometric=geometric, aggregation=aggregation
+            ),
+            readout_pooling=options.pop("readout_pooling", "mean"),
+            **options,
+        )
 
     @classmethod
     def deep(

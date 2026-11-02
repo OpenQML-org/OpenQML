@@ -50,6 +50,36 @@ def default_layer_backend(
 
 class LayerSpecMixin:
     @classmethod
+    def qcnn(
+        cls,
+        num_qubits,
+        *,
+        depth=1,
+        num_outputs=3,
+        retained_qubits=1,
+        reupload=True,
+        max_operations=100_000,
+        **kwargs,
+    ):
+        from ..quantum_cells import FeatureCircuitPlan
+
+        plan = FeatureCircuitPlan(
+            num_qubits, depth, num_outputs, reupload, max_operations, True, retained_qubits
+        )
+        return cls.from_spec(plan.to_spec(), **kwargs)
+
+    @classmethod
+    def feature_circuit(
+        cls, num_qubits, *, depth=1, num_outputs=3, reupload=True, max_operations=100_000, **kwargs
+    ):
+        from ..quantum_cells import FeatureCircuitPlan
+
+        return cls.from_spec(
+            FeatureCircuitPlan(num_qubits, depth, num_outputs, reupload, max_operations).to_spec(),
+            **kwargs,
+        )
+
+    @classmethod
     def deep(
         cls,
         num_qubits,

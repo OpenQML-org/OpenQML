@@ -7,7 +7,7 @@ Predictions and observed wall times are deliberately separate.
 
 import math
 import time
-from collections import OrderedDict, deque
+from collections import Counter, OrderedDict, deque
 from dataclasses import asdict, dataclass
 from threading import RLock
 
@@ -33,6 +33,7 @@ class TrainingWorkload:
     submission_batch_size: int | None = None
     microbatch_size: int | None = None
     gradient_chunk_size: int | None = None
+    execution_batches: tuple | None = None
     classical_seconds_per_step: float = 0
     classical_cost_per_step: float = 0
 
@@ -64,6 +65,11 @@ class TrainingWorkload:
         for name in ("microbatch_size", "gradient_chunk_size"):
             if getattr(self, name) is not None:
                 object.__setattr__(self, name, integer(getattr(self, name), name, 1))
+        if self.execution_batches is not None:
+            batches = tuple(integer(v, "execution batch rows", 1) for v in self.execution_batches)
+            if self.batch_size is not None and sum(batches) != self.batch_size:
+                raise ValidationError("execution_batches must sum to batch_size.")
+            object.__setattr__(self, "execution_batches", batches)
         for name in ("classical_seconds_per_step", "classical_cost_per_step"):
             value = real(getattr(self, name))
             if value < 0:
@@ -289,17 +295,13 @@ def estimate_cost(profile, request, policy, *, exact=False, adjustable_shots=Fal
     }
     groups = 1 if exact else (profile.measurement_groups or max(1, len(words)))
 
-    def phase(count, chunk=None):
+    def provider_phase(count):
         if not count:
             return 0, 0, 0, 0, 0
         physical = math.ceil(count * groups * shots * profile.mitigation_overhead)
         # All optimizer steps are sequential. Only jobs within a phase may
         # overlap, and a partial final wave cannot borrow future step work.
-        batch_size = min(
-            profile.max_batch_size,
-            work.submission_batch_size or profile.max_batch_size,
-            chunk or profile.max_batch_size,
-        )
+        batch_size = profile.max_batch_size
         jobs = math.ceil(count / batch_size)
         full, tail = divmod(count, batch_size)
         load = math.ceil(full / profile.concurrency) * batch_size
@@ -326,12 +328,22 @@ def estimate_cost(profile, request, policy, *, exact=False, adjustable_shots=Fal
         )
         return wall, cost, count * groups, physical, jobs
 
+    def phase(count, chunk=None):
+        if not count:
+            return (0,) * 5
+        client_size = min(count, work.submission_batch_size or count, chunk or count)
+        full, tail = divmod(count, client_size)
+        a, b = provider_phase(client_size), provider_phase(tail)
+        return tuple(x * full + y for x, y in zip(a, b, strict=True))
+
     gradient_count = (
         work.native_gradient_evaluations
         if exact and work.native_gradient_evaluations is not None
         else work.gradient_evaluations
     )
-    if work.microbatch_size is None:
+    if work.execution_batches is not None:
+        segments = tuple(Counter(work.execution_batches).items())
+    elif work.microbatch_size is None:
         segments = ((rows, 1),)
     else:
         full, tail = divmod(rows, work.microbatch_size)

@@ -10,7 +10,7 @@ from ..architecture import HybridArchitecture
 from ..architecture_runtime import reserve_native_cost
 from ..backends import get_backend
 from ..errors import ValidationError
-from ..network_training import DepthSchedule, StagewiseOptimizer, _batch_rows
+from ..network_training import DepthSchedule, StagewiseOptimizer, _batch_rows, select_network_input
 from ..runtime import CostAwareBackend
 from ._jax_training import make_train_step
 
@@ -62,7 +62,7 @@ class HybridNetwork:
         value.active_depth = depth
         return value
 
-    def reschedule(self, *, workload=None):
+    def reschedule(self, *, workload=None, metadata=None, microbatch_samples=None):
         if not isinstance(self.runtime, CostAwareBackend):
             return self
         from .jax import QuantumLayer
@@ -73,6 +73,8 @@ class HybridNetwork:
             workload=workload,
             active_depth=self.active_depth,
             native_devices=(platform,),
+            metadata=metadata,
+            microbatch_samples=microbatch_samples,
         )
         keys = tuple(
             (
@@ -105,7 +107,7 @@ class HybridNetwork:
         return value
 
     def __call__(self, parameters, inputs):
-        def run(index, values, x):
+        def run(index, values, x, context):
             layer = self._layers[index]
             names = tuple(
                 p.name for p in self.architecture.parameters if p.group == f"block_{index}"
@@ -114,7 +116,12 @@ class HybridNetwork:
 
             def block(weights, features):
                 return self.architecture.block(
-                    index, weights, features, backend="jax", quantum_evaluator=layer
+                    index,
+                    weights,
+                    features,
+                    backend="jax",
+                    quantum_evaluator=layer,
+                    context=context,
                 )
 
             return (
@@ -125,7 +132,7 @@ class HybridNetwork:
 
         return self.architecture.evaluate(
             parameters,
-            jnp.asarray(inputs),
+            jax.tree_util.tree_map(jnp.asarray, inputs),
             backend="jax",
             active_depth=self.active_depth,
             block_runner=run,
@@ -164,6 +171,7 @@ class NetworkTrainer:
         parameters=None,
         key=None,
         depth_schedule=None,
+        input_selector=None,
         **options,
     ):
         if not isinstance(model, HybridNetwork) or not callable(loss_function):
@@ -183,6 +191,9 @@ class NetworkTrainer:
             raise ValidationError("depth_schedule must be DepthSchedule.")
         model.architecture.active(self.depth_schedule.stages[-1][1])
         self.options, self.updates, self.attempts = options, 0, 0
+        if input_selector is not None and not callable(input_selector):
+            raise ValidationError("input_selector must be callable.")
+        self.input_selector = input_selector
         self._compiled, self._compiled_model = None, None
 
     def step(self, batch):
@@ -197,8 +208,17 @@ class NetworkTrainer:
                 steps=1,
                 microbatch_size=self.options.get("microbatch_size", 32) * max(1, rows // samples),
                 gradient_chunk_size=model.runtime.workload.gradient_chunk_size or 64,
+                execution_batches=None,
             )
-            model = model.reschedule(workload=work)
+            inputs = select_network_input(
+                batch, model.architecture.input_features, self.input_selector
+            )
+            metadata = None if inputs is None else model.architecture.input_metadata(inputs)
+            model = model.reschedule(
+                workload=work,
+                metadata=metadata,
+                microbatch_samples=self.options.get("microbatch_size", 32),
+            )
             reserve_native_cost(
                 model.execution_plan,
                 model.runtime,
