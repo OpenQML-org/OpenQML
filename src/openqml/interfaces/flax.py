@@ -13,6 +13,7 @@ except ImportError as exc:
         'Cannot load Flax. Run: python -m pip install "openqml[flax]".'
     ) from exc
 
+from ._flax_channels import ChannelLayer as ChannelLayer
 from ._flax_network import HybridNetwork as HybridNetwork
 from ._jax_ppo import PPOTrainer as PPOTrainer
 from ._jax_training import accumulate_gradients as accumulate_gradients

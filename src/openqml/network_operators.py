@@ -44,6 +44,10 @@ class NetworkOperator:
     """
 
     version = 1
+    terminal = False
+    stateful = False
+    native_state = False
+    uses_decode = True
 
     def validate(self, config):
         if config:
@@ -190,6 +194,43 @@ class OperatorSpec:
             "pair-graph",
             dict(edge_features=edge_features, geometric=geometric, chunk_size=chunk_size),
         )
+
+    @classmethod
+    def quantum_kan(cls, *, chunk_size=64):
+        return cls("quantum-kan", dict(chunk_size=chunk_size))
+
+    @classmethod
+    def memory(cls, *, gated=True, scan="sequential", max_work=1_000_000_000):
+        return cls("quantum-memory", dict(gated=gated, scan=scan, max_work=max_work))
+
+    @classmethod
+    def born_readout(
+        cls,
+        visible_qubits=1,
+        *,
+        memory=False,
+        gated=True,
+        depolarization=0.001,
+        chunk_size=64,
+        measurement="basis",
+        memory_qubits=1,
+        povm_regularization=0.01,
+        scan="sequential",
+        max_work=1_000_000_000,
+    ):
+        config = dict(visible_qubits=visible_qubits, depolarization=depolarization)
+        if memory:
+            config.update(
+                gated=gated,
+                measurement=measurement,
+                memory_qubits=memory_qubits,
+                povm_regularization=povm_regularization,
+                scan=scan,
+                max_work=max_work,
+            )
+        else:
+            config["chunk_size"] = chunk_size
+        return cls("born-memory" if memory else "born", config)
 
 
 def _fields(config, required):
@@ -369,6 +410,214 @@ class _PairGraph(NetworkOperator):
         return quantum_pairs(ctx)
 
 
+class _QuantumKAN(NetworkOperator):
+    uses_decode = False
+
+    def validate(self, c):
+        _fields(c, ("chunk_size",))
+        integer(c["chunk_size"], "chunk_size", 1)
+
+    def input_width(self, hidden, c):
+        return 1
+
+    def declare(self, hidden, readouts, c, projection, parameter):
+        projection("kan_mix", hidden * readouts, hidden)
+
+    def row_chunks(self, metadata, c):
+        return _Convolution().row_chunks(
+            dict(metadata, sites=metadata["sites"] * metadata["hidden_features"]), c
+        )
+
+    def apply(self, ctx):
+        x, size = ctx.inputs, ctx.spec.config["chunk_size"]
+        flat = x.reshape((x.shape[0], -1, 1))
+        ctx.check_workspace(x.shape[0] * x[0].numel() if ctx.backend == "torch" else x.size)
+        values = [
+            ctx.kernel(flat[:, start : start + size]) for start in range(0, flat.shape[1], size)
+        ]
+        basis = ctx.cat(values, axis=1).reshape(x.shape[:-1] + (-1,))
+        return ctx.project("kan_mix", basis)
+
+
+class _Memory(NetworkOperator):
+    stateful = native_state = True
+
+    def validate(self, c):
+        _fields(c, ("gated", "scan", "max_work"))
+        if type(c["gated"]) is not bool or c["scan"] not in {"sequential", "parallel"}:
+            raise ValidationError("Memory requires a boolean gate and sequential/parallel scan.")
+        integer(c["max_work"], "max_work", 1)
+
+    def validate_metadata(self, metadata, c):
+        if "shape" in metadata and len(metadata["shape"]) != 3:
+            raise ValidationError("Quantum memory expects features[B,T,H].")
+
+    def declare(self, hidden, readouts, c, projection, parameter):
+        if c["gated"]:
+            projection("memory_gate", hidden, 1)
+
+    def row_chunks(self, metadata, c):
+        return (metadata["sites"],) if c["scan"] == "parallel" else (1,) * metadata["sites"]
+
+    def _scan(self, ctx, **options):
+        c, x = ctx.spec.config, ctx.inputs
+        if x.ndim != 3:
+            raise ValidationError("Quantum memory expects features[B,T,H].")
+        cell = ctx.architecture.cells[ctx.index]
+        controls = math.pi * ctx.xp.tanh(ctx.project("encode", x))
+        weights = ctx.parameters[f"{ctx.group}_quantum"]
+        mixing = None
+        if c["gated"]:
+            configuration = ctx.architecture.quantum
+            configuration = (
+                configuration
+                if hasattr(configuration, "initial_mixing")
+                else configuration[ctx.index]
+            )
+            logit = math.log(configuration.initial_mixing / (1 - configuration.initial_mixing))
+            mixing = 0.5 * (1 + ctx.xp.tanh((ctx.project("memory_gate", x)[..., 0] + logit) * 0.5))
+        kwargs = dict(
+            state=ctx.context.get("_state"),
+            mask=ctx.context.get("mask"),
+            reset_mask=ctx.context.get("reset_mask"),
+            mixing=mixing,
+            method=c["scan"],
+            max_work=c["max_work"],
+            **options,
+        )
+        return (
+            cell.scan(weights, controls, backend=ctx.backend, **kwargs)
+            if ctx.evaluator is None
+            else ctx.evaluator(weights, controls, **kwargs)
+        )
+
+    def apply(self, ctx):
+        output, state = self._scan(ctx)
+        return ctx.project("decode", output), state
+
+
+class _Born(NetworkOperator):
+    terminal = True
+    uses_decode = False
+
+    def validate(self, c):
+        from .parameters import real
+
+        _fields(c, ("visible_qubits", "depolarization", "chunk_size"))
+        integer(c["visible_qubits"], "visible_qubits", 1)
+        integer(c["chunk_size"], "chunk_size", 1)
+        if not 0 <= real(c["depolarization"]) < 1:
+            raise ValidationError("depolarization must lie in [0,1).")
+
+    def validate_cell(self, spec, c):
+        k, n = c["visible_qubits"], spec.circuit.num_qubits
+        if (
+            k > n
+            or len(spec.observables).bit_length() != k
+            or len(spec.observables) != (1 << k) - 1
+        ):
+            raise ValidationError("Born readout requires the complete ordered visible Z basis.")
+        for i, ob in enumerate(spec.observables, 1):
+            expected = "".join("Z" if i & (1 << (k - q - 1)) else "I" for q in range(k)) + "I" * (
+                n - k
+            )
+            if not hasattr(ob, "paulis") or ob.paulis != expected or ob.coefficient != 1:
+                raise ValidationError("Born readout requires the complete ordered visible Z basis.")
+
+    def row_chunks(self, metadata, c):
+        return _Convolution().row_chunks(metadata, c)
+
+    def apply(self, ctx):
+        from .quantum_generative import born_probabilities
+
+        x, size = ctx.inputs, ctx.spec.config["chunk_size"]
+        flat = x.reshape((x.shape[0], -1, x.shape[-1]))
+        rows = [ctx.kernel(flat[:, i : i + size]) for i in range(0, flat.shape[1], size)]
+        moments = ctx.cat(rows, axis=1).reshape(x.shape[:-1] + (-1,))
+        return ctx.architecture._masked(
+            born_probabilities(
+                moments, backend=ctx.backend, depolarization=ctx.spec.config["depolarization"]
+            ),
+            ctx.context,
+            ctx.backend,
+        )
+
+
+class _BornMemory(_Memory):
+    terminal = True
+    uses_decode = False
+
+    def validate(self, c):
+        from .parameters import real
+
+        _fields(
+            c,
+            (
+                "visible_qubits",
+                "depolarization",
+                "gated",
+                "measurement",
+                "memory_qubits",
+                "povm_regularization",
+                "scan",
+                "max_work",
+            ),
+        )
+        _Memory().validate({k: c[k] for k in ("gated", "scan", "max_work")})
+        for name in ("visible_qubits", "memory_qubits"):
+            integer(c[name], name, 1)
+        if (
+            c["measurement"] not in {"basis", "povm"}
+            or not 0 <= real(c["depolarization"]) < 1
+            or real(c["povm_regularization"]) <= 0
+        ):
+            raise ValidationError("Invalid Born memory measurement configuration.")
+        if c["measurement"] == "basis" and c["visible_qubits"] > c["memory_qubits"]:
+            raise ValidationError("Basis readout cannot exceed the memory width.")
+
+    def declare(self, hidden, readouts, c, projection, parameter):
+        from .quantum_measurement import QuantumPOVMPlan
+
+        super().declare(hidden, readouts, c, projection, parameter)
+        if c["measurement"] == "povm":
+            plan = QuantumPOVMPlan(
+                c["memory_qubits"],
+                1 << c["visible_qubits"],
+                c["povm_regularization"],
+                c["depolarization"],
+            )
+            parameter(
+                "povm_frame",
+                plan.parameter_shape,
+                "quantum",
+                scale=1 / math.sqrt(plan.outcomes * (1 << plan.memory_qubits)),
+            )
+
+    def apply(self, ctx):
+        from .quantum_measurement import QuantumPOVMPlan
+
+        c = ctx.spec.config
+        cell = ctx.architecture.cells[ctx.index]
+        if cell.memory_qubits != c["memory_qubits"]:
+            raise ValidationError("Born measurement and memory cell widths must match.")
+        povm = None
+        if c["measurement"] == "povm":
+            plan = QuantumPOVMPlan(
+                c["memory_qubits"],
+                1 << c["visible_qubits"],
+                c["povm_regularization"],
+                c["depolarization"],
+                ctx.architecture.max_memory_mb,
+            )
+            povm = plan.prepare(ctx.parameters[f"{ctx.group}_povm_frame"], backend=ctx.backend)
+        return self._scan(
+            ctx,
+            visible_qubits=c["visible_qubits"] if povm is None else 0,
+            depolarization=c["depolarization"],
+            povm=povm,
+        )
+
+
 def input_metadata(inputs, input_features):
     context = inputs if isinstance(inputs, Mapping) else {}
     x = context.get("nodes", context.get("x")) if context else inputs
@@ -487,5 +736,9 @@ for _name, _operator in (
     ("graph", _Graph()),
     ("state-attention", _StateAttention()),
     ("pair-graph", _PairGraph()),
+    ("quantum-kan", _QuantumKAN()),
+    ("quantum-memory", _Memory()),
+    ("born", _Born()),
+    ("born-memory", _BornMemory()),
 ):
     register_network_operator(_name, _operator)

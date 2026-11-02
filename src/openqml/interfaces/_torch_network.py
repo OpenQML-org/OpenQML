@@ -13,7 +13,7 @@ from ..backends import get_backend
 from ..distributed_tensor import DistributedTensorPlan
 from ..errors import ValidationError
 from ..network_training import DepthSchedule, _batch_rows, select_network_input
-from ..runtime import CostAwareBackend
+from ..runtime import CostAwareBackend, PriorityBackend
 from ._torch_training import HybridTrainer, _atomic_save, _leaves
 
 
@@ -34,6 +34,29 @@ class _QuantumExecution:
 
         self.spec = architecture.cells[index].to_spec()
         self.target = target
+        self.native_state = architecture.operator_specs[index].implementation.native_state
+        if self.native_state:
+            from ._channel_execution import ChannelExecution
+
+            if mesh is not None:
+                raise ValidationError("Explicit density carries do not support tensor meshes.")
+            if isinstance(backend, PriorityBackend):
+                route = backend.plan(
+                    self.spec.circuit,
+                    observables=self.spec.observables,
+                    allowed_devices=("GPU", "CPU"),
+                )
+                self.target = "cuda" if route.device == "GPU" else "cpu"
+            elif not isinstance(backend, str) or backend not in {"torch", "cpu", "gpu"}:
+                raise ValidationError(
+                    "Density carry requires native Torch execution; "
+                    "export an unroll for QPU execution."
+                )
+            elif backend in {"cpu", "gpu"}:
+                self.target = "cpu" if backend == "cpu" else "cuda"
+            self.layer = ChannelExecution(architecture.cells[index], "torch", self.target)
+            self.external, self.distributed = False, False
+            return
         self.distributed = mesh is not None and not self.spec.circuit.has_effects
         self.external = not (isinstance(backend, str) and backend == "torch")
         if self.distributed:
@@ -72,7 +95,9 @@ class _QuantumExecution:
                 )
             del self.layer._parameters["weights"]
 
-    def __call__(self, weights, inputs):
+    def __call__(self, weights, inputs, **scan_options):
+        if self.native_state:
+            return self.layer(weights, inputs, **scan_options)
         output_device, output_dtype = inputs.device, inputs.dtype
         if self.distributed:
             inputs = inputs.to(dtype=weights.dtype)
@@ -189,7 +214,9 @@ class HybridNetwork(nn.Module):
         first = next(iter(self.values.values()))
         replacements = []
         route_keys = []
-        for index, stage in enumerate(plan.stages):
+        for index, stage in zip(
+            self.architecture.execution_indices(self.active_depth), plan.stages, strict=True
+        ):
             cost = next(c.estimate for c in stage.candidates if c.backend == stage.backend)
             key = (
                 stage.backend,
@@ -216,16 +243,22 @@ class HybridNetwork(nn.Module):
             )
         # Install only after the entire network has a feasible plan and all
         # views pass admission. Canonical Parameter objects never change.
-        self._executions[: len(replacements)] = replacements
-        self._route_keys[: len(route_keys)] = route_keys
+        for index, execution, key in zip(
+            self.architecture.execution_indices(self.active_depth),
+            replacements,
+            route_keys,
+            strict=True,
+        ):
+            self._executions[index] = execution
+            self._route_keys[index] = key
         self.execution_plan = plan
         return plan
 
-    def forward(self, inputs):
+    def forward(self, inputs, *, state=None, return_state=False):
         def run(index, parameters, value, context):
             execution = self._executions[index]
             names = tuple(
-                p.name for p in self.architecture.parameters if p.group == f"block_{index}"
+                p.name for p in self.architecture.parameters if p.name.startswith(f"block_{index}_")
             )
 
             def block(x, *weights):
@@ -248,7 +281,13 @@ class HybridNetwork(nn.Module):
             return block(value, *weights)
 
         return self.architecture.evaluate(
-            self.values, inputs, backend="torch", active_depth=self.active_depth, block_runner=run
+            self.values,
+            inputs,
+            backend="torch",
+            active_depth=self.active_depth,
+            block_runner=run,
+            state=state,
+            return_state=return_state,
         )
 
     def parameter_groups(self, *, lr=1e-3, quantum_lr=None, weight_decay=0):
@@ -268,6 +307,22 @@ class HybridNetwork(nn.Module):
             {"params": groups["decay"], "lr": lr, "weight_decay": weight_decay},
             {"params": groups["plain"], "lr": lr, "weight_decay": 0},
         ]
+
+    def sample_tokens(self, steps, *, prompt=None, batch_size=1, seed=0):
+        from ..autoregressive import sample_tokens
+
+        self.architecture.validate_streaming_born()
+        return sample_tokens(
+            lambda x, state: self(x, state=state, return_state=True),
+            self.architecture.output_features,
+            steps,
+            prompt=prompt,
+            batch_size=batch_size,
+            seed=seed,
+            backend="torch",
+            like=self.values["stem_weight"],
+            max_memory_mb=self.architecture.max_memory_mb,
+        )
 
     def trainer(self, optimizer=None, *, lr=1e-3, quantum_lr=None, weight_decay=0, **options):
         optimizer = (
