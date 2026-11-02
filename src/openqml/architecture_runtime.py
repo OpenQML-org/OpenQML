@@ -60,6 +60,7 @@ def schedule_network(
     native_devices=("CPU", "GPU"),
     metadata=None,
     microbatch_samples=None,
+    native_candidates=(),
 ):
     scheduler = get_backend("auto") if scheduler is None else scheduler
     if not isinstance(scheduler, CostAwareBackend):
@@ -104,7 +105,11 @@ def schedule_network(
             classical_cost_per_step=0,
         )
         choices = scheduler.alternatives(
-            spec.circuit, observables=spec.observables, options=options, workload=work
+            spec.circuit,
+            observables=spec.observables,
+            options=options,
+            workload=work,
+            native_candidates=native_candidates,
         )
         baseline.append(choices[0])
         alternatives.append(tuple((p, _selected_cost(p)) for p in choices))

@@ -183,7 +183,7 @@ def __dir__():
     return sorted(set(globals()) | _LAZY_MODULES.keys())
 
 
-__version__ = "0.10.0"
+__version__ = "0.10.1"
 
 __all__ = [
     "AdaptiveMPSBackend",
