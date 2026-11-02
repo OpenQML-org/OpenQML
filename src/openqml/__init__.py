@@ -15,6 +15,7 @@ from .adjoint import AdjointPlan, adjoint_jvp, adjoint_vjp
 from .aer import AerBackend
 from .architecture import HybridArchitecture, NetworkParameter, QuantumCellSpec
 from .architecture_runtime import NetworkExecutionPlan
+from .autoregressive import detach_quantum_state, sample_tokens
 from .backends import (
     BackendCapabilities,
     DensityMatrixBackend,
@@ -102,7 +103,17 @@ from .planning import DensityPlan, plan_density
 from .program import QuantumProgram, as_circuit
 from .program_compilation import ProgramConversion, compile_program
 from .providers import CirqDensityBackend, QiskitEstimatorBackend, QiskitSamplerBackend
+from .quantum_activations import QuantumActivationPlan
 from .quantum_cells import FeatureCircuitPlan
+from .quantum_channels import QuantumChannelPlan
+from .quantum_generative import (
+    BornCircuitPlan,
+    QuantumDiffusionPlan,
+    born_nll,
+    born_probabilities,
+    shifted_tokens,
+)
+from .quantum_measurement import QuantumPOVMPlan
 from .quantum_tree import QuantumTreePlan
 from .readout import ReadoutPlan, plan_readout
 from .resources import ResourceEstimate, estimate_resources
@@ -185,9 +196,19 @@ def __dir__():
     return sorted(set(globals()) | _LAZY_MODULES.keys())
 
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 
 __all__ = [
+    "QuantumActivationPlan",
+    "QuantumChannelPlan",
+    "BornCircuitPlan",
+    "QuantumDiffusionPlan",
+    "QuantumPOVMPlan",
+    "born_probabilities",
+    "born_nll",
+    "shifted_tokens",
+    "sample_tokens",
+    "detach_quantum_state",
     "AdaptiveMPSBackend",
     "AdaptiveMPSResult",
     "MultiscalePlan",

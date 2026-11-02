@@ -11,7 +11,7 @@ from ..architecture_runtime import reserve_native_cost
 from ..backends import get_backend
 from ..errors import ValidationError
 from ..network_training import DepthSchedule, StagewiseOptimizer, _batch_rows, select_network_input
-from ..runtime import CostAwareBackend
+from ..runtime import CostAwareBackend, PriorityBackend
 from ._jax_backend import JAXNativeBackend
 from ._jax_training import make_train_step
 
@@ -20,25 +20,12 @@ class HybridNetwork:
     def __init__(self, architecture, *, active_depth=None, backend=None):
         if not isinstance(architecture, HybridArchitecture):
             raise ValidationError("Provide a HybridArchitecture.")
-        from .jax import QuantumLayer
-
         self.architecture = architecture
         self.active_depth = architecture.active(active_depth)
         self._native_candidate = JAXNativeBackend()
         self.runtime = get_backend("auto") if backend is None or backend == "auto" else backend
         pinned = "jax" if isinstance(self.runtime, CostAwareBackend) else self.runtime
-        self._layers = tuple(
-            QuantumLayer.from_spec(
-                cell.to_spec(),
-                backend=pinned,
-                max_memory_mb=architecture.max_memory_mb,
-                execution_method=architecture.native_execution if pinned == "jax" else "auto",
-                tensor_options={"reuse_intermediates": True}
-                if pinned == "jax" and architecture.native_execution == "tensor-network"
-                else None,
-            )
-            for cell in architecture.cells
-        )
+        self._layers = tuple(self._execution(index, pinned) for index in range(architecture.depth))
         self.execution_plan, self._route_keys = None, None
         if isinstance(self.runtime, CostAwareBackend):
             routed = self.reschedule()
@@ -47,6 +34,35 @@ class HybridNetwork:
                 routed.execution_plan,
                 routed._route_keys,
             )
+
+    def _execution(self, index, backend):
+        from ._channel_execution import ChannelExecution
+        from .jax import QuantumLayer
+
+        if self.architecture.operator_specs[index].implementation.native_state:
+            if isinstance(backend, PriorityBackend):
+                platform = "GPU" if jax.default_backend() == "gpu" else "CPU"
+                backend.plan(
+                    self.architecture.cells[index].to_spec().circuit,
+                    observables=self.architecture.cells[index].to_spec().observables,
+                    allowed_devices=(platform,),
+                    native_candidates=(self._native_candidate,) if platform == "GPU" else (),
+                )
+            elif not isinstance(backend, str) or backend != "jax":
+                raise ValidationError(
+                    "Density carry requires native JAX execution; "
+                    "export an unroll for QPU execution."
+                )
+            return ChannelExecution(self.architecture.cells[index], "jax")
+        return QuantumLayer.from_spec(
+            self.architecture.cells[index].to_spec(),
+            backend=backend,
+            max_memory_mb=self.architecture.max_memory_mb,
+            execution_method=self.architecture.native_execution if backend == "jax" else "auto",
+            tensor_options={"reuse_intermediates": True}
+            if backend == "jax" and self.architecture.native_execution == "tensor-network"
+            else None,
+        )
 
     def init(self, key, *, dtype=jnp.float32):
         if jnp.dtype(dtype) not in {jnp.dtype("float32"), jnp.dtype("float64")}:
@@ -73,8 +89,6 @@ class HybridNetwork:
     def reschedule(self, *, workload=None, metadata=None, microbatch_samples=None):
         if not isinstance(self.runtime, CostAwareBackend):
             return self
-        from .jax import QuantumLayer
-
         platform = "GPU" if jax.default_backend() == "gpu" else "CPU"
         plan = self.architecture.schedule(
             scheduler=self.runtime,
@@ -105,27 +119,21 @@ class HybridNetwork:
             return self
         value = copy.copy(self)
         layers = list(self._layers)
-        for index, stage in enumerate(plan.stages):
+        for index, stage in zip(
+            self.architecture.execution_indices(self.active_depth), plan.stages, strict=True
+        ):
             # A single JIT graph retains its native JAX platform. Other devices
             # use the explicit numeric bridge, whose shift cost was quoted.
             backend = "jax" if stage.device == platform else stage._backend
-            layers[index] = QuantumLayer.from_spec(
-                self.architecture.cells[index].to_spec(),
-                backend=backend,
-                max_memory_mb=self.architecture.max_memory_mb,
-                execution_method=self.architecture.native_execution if backend == "jax" else "auto",
-                tensor_options={"reuse_intermediates": True}
-                if backend == "jax" and self.architecture.native_execution == "tensor-network"
-                else None,
-            )
+            layers[index] = self._execution(index, backend)
         value._layers, value.execution_plan, value._route_keys = tuple(layers), plan, keys
         return value
 
-    def __call__(self, parameters, inputs):
+    def __call__(self, parameters, inputs, *, state=None, return_state=False):
         def run(index, values, x, context):
             layer = self._layers[index]
             names = tuple(
-                p.name for p in self.architecture.parameters if p.group == f"block_{index}"
+                p.name for p in self.architecture.parameters if p.name.startswith(f"block_{index}_")
             )
             local = {name: values[name] for name in names}
 
@@ -151,10 +159,28 @@ class HybridNetwork:
             backend="jax",
             active_depth=self.active_depth,
             block_runner=run,
+            state=state,
+            return_state=return_state,
         )
 
     def optimizer(self, optimizer):
         return StagewiseOptimizer(self.architecture, optimizer, self.active_depth)
+
+    def sample_tokens(self, parameters, key, steps, *, prompt=None, batch_size=1):
+        from ..autoregressive import sample_tokens
+
+        self.architecture.validate_streaming_born()
+        return sample_tokens(
+            lambda x, state: self(parameters, x, state=state, return_state=True),
+            self.architecture.output_features,
+            steps,
+            prompt=prompt,
+            batch_size=batch_size,
+            key=key,
+            backend="jax",
+            like=parameters["stem_weight"],
+            max_memory_mb=self.architecture.max_memory_mb,
+        )
 
     def make_train_step(self, optimizer, loss_function, **options):
         options.setdefault("gradient_metrics", self.architecture.gradient_metrics)

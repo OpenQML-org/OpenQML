@@ -148,6 +148,7 @@ class PriorityBackend:
         shots=None,
         workload=None,
         native_candidates=(),
+        allowed_devices=None,
         _collect=False,
     ):
         """Inspect an automatic route without executing a circuit or cloud job."""
@@ -163,6 +164,12 @@ class PriorityBackend:
         }
         if task not in methods:
             raise ValidationError("Unknown dispatch task.")
+        if allowed_devices is not None:
+            if isinstance(allowed_devices, str):
+                raise ValidationError("allowed_devices must be a collection of device types.")
+            allowed_devices = frozenset(allowed_devices)
+            if not allowed_devices or allowed_devices - {"QPU", "GPU", "CPU"}:
+                raise ValidationError("allowed_devices must contain QPU, GPU or CPU.")
         circuits = (circuits,) if isinstance(circuits, Circuit) else tuple(circuits)
         observables = tuple(observables)
         if not circuits:
@@ -204,6 +211,8 @@ class PriorityBackend:
                 device = get_backend(device)
             try:
                 caps = device.capabilities
+                if allowed_devices is not None and caps.device_type not in allowed_devices:
+                    raise ResourceError("Device is outside the required execution contract.")
                 available = getattr(device, "is_available", lambda: True)()
                 if type(available) is not bool:
                     raise ValidationError("Device availability must be a boolean.")
@@ -472,6 +481,7 @@ class CostAwareBackend(PriorityBackend):
         workload=None,
         only_backend=None,
         native_candidates=(),
+        allowed_devices=None,
         _alternatives=False,
     ):
         from .ir import Circuit, integer
@@ -490,6 +500,7 @@ class CostAwareBackend(PriorityBackend):
             observables=observables,
             options=options,
             native_candidates=native_candidates,
+            allowed_devices=allowed_devices,
             _collect=True,
         )
         if only_backend is not None:

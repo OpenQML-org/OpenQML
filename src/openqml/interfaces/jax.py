@@ -15,6 +15,7 @@ except ImportError as exc:
 from ..errors import ValidationError
 from ..parameters import real as _real
 from ..simulator import _checkpoint_interval, expectations
+from ._jax_channels import ChannelLayer as ChannelLayer
 from ._jax_deep import QuantumDeepNetwork as QuantumDeepNetwork
 from ._jax_hybrid import HyperQuantumAdapter as HyperQuantumAdapter
 from ._jax_hybrid import IQPQuantumLayer as IQPQuantumLayer

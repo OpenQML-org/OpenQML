@@ -2,7 +2,7 @@
 
 [PyPI](https://pypi.org/project/openqml/) · [CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml) · [Documentation](https://github.com/OpenQML-org/OpenQML/tree/main/docs)
 
-Build quantum–classical convolutional, attention and graph networks in PyTorch, JAX and Flax.
+Build and train quantum–classical neural networks in PyTorch, JAX and Flax.
 
 ## Installation
 
@@ -52,7 +52,12 @@ parameter layout. `DepthSchedule` grows active depth while preserving optimizer 
 | Build a hybrid network | `HybridArchitecture` and `QuantumCellSpec` |
 | Image and temporal convolutions | `HybridArchitecture.convolutional(...)` |
 | Reduced-state quantum attention | `HybridArchitecture.transformer(..., attention="state")` |
-| Sparse graph messages / higher-order pairs | `HybridArchitecture.graph_network(..., order=1 / 2)` |
+| Higher-order graph networks | `HybridArchitecture.graph_network(..., order=2)` |
+| Quantum KAN activations | `HybridArchitecture.kan(...)` |
+| Recurrent quantum memory | `HybridArchitecture.recurrent(...)` |
+| Born probability generators | `HybridArchitecture.generative(...)` |
+| Autoregressive quantum sequence models | `HybridArchitecture.language_model(...)` |
+| Mixed-state quantum diffusion | `QuantumDiffusionPlan` and `ChannelLayer` |
 | Compose or extend network blocks | `OperatorSpec` and `register_network_operator(...)` |
 | Use a custom quantum circuit | `QuantumCellSpec.from_spec(...)` |
 | Adjust quantum capacity | `QuantumLayer.multiscale(bond_qubits=..., depth=...)` |
@@ -68,6 +73,7 @@ Use `native_execution="pauli-transfer"` on an architecture to compile restricted
 circuits into batched exact Pauli transfers. State attention shares one quantum
 feature bank across heads; pair graphs retain quadratic node-pair states.
 See [Models](https://github.com/OpenQML-org/OpenQML/blob/main/docs/models.md) for costs and input formats.
+See [Stateful and generative models](https://github.com/OpenQML-org/OpenQML/blob/main/docs/frontier-models.md) for sequence training, density carries and method sources.
 
 Framework layers are available under `oq.torch`, `oq.jax` and `oq.flax`.
 JAX uses `layer.init(key)` and `layer(parameters, inputs)`; Flax uses Linen `init`/`apply`.

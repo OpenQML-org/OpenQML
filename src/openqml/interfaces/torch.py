@@ -26,6 +26,7 @@ from ._spec import (
     resolve_gradient_method,
 )
 from ._torch_ad import ExternalQuantumFunction as _ExternalQuantumFunction
+from ._torch_channels import ChannelLayer as ChannelLayer
 from ._torch_deep import QuantumDeepNetwork as QuantumDeepNetwork
 from ._torch_hybrid import HyperQuantumAdapter as HyperQuantumAdapter
 from ._torch_hybrid import IQPQuantumLayer as IQPQuantumLayer

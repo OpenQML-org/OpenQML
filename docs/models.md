@@ -1,5 +1,8 @@
 # Structured quantum–classical models
 
+For KAN, recurrent memory, Born generators, autoregressive sequence models and
+quantum-state diffusion, see [Stateful and generative models](frontier-models.md).
+
 The model families use `HybridArchitecture` and share parameter names, depth
 curricula, optimizers, checkpoints and execution planning across PyTorch, JAX
 and Flax. Constructors return architecture specifications; call

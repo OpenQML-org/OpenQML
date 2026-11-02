@@ -9,7 +9,6 @@ import hashlib
 import json
 import math
 from dataclasses import dataclass, field
-from functools import partial
 from types import MappingProxyType
 
 import numpy as np
@@ -25,6 +24,13 @@ from .simulator import _TensorOps
 from .tensor_train import TensorTrainPlan
 
 
+def _constructor_admission(depth, visible_qubits, options):
+    limit = integer(options.get("max_parameters", 1_000_000), "max_parameters", 1)
+    hidden = integer(options.get("hidden_features", 32), "hidden_features", 1)
+    if depth * (2 * hidden + 2) > limit or visible_qubits >= limit.bit_length():
+        raise ResourceError("Requested model exceeds the parameter admission budget.")
+
+
 @dataclass(frozen=True)
 class QuantumCellSpec:
     kind: str = "multiscale"
@@ -36,6 +42,8 @@ class QuantumCellSpec:
     initial_mixing: float = 0.1
     max_operations: int = 100_000
     program_json: str | None = None
+    memory_qubits: int = 0
+    visible_qubits: int = 0
     _custom_spec: object = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self):
@@ -45,10 +53,25 @@ class QuantumCellSpec:
             "qcnn",
             "hardware-efficient",
             "custom",
+            "activation",
+            "memory",
+            "born",
         }:
             raise ValidationError("Unknown quantum cell kind.")
         for name in ("num_qubits", "depth", "bond_qubits", "num_outputs", "max_operations"):
             object.__setattr__(self, name, integer(getattr(self, name), name, 1))
+        for name in ("memory_qubits", "visible_qubits"):
+            object.__setattr__(self, name, integer(getattr(self, name), name, 0))
+        if self.kind == "activation" and self.num_qubits != 1:
+            raise ValidationError("Univariate quantum activations use one qubit.")
+        if self.kind == "memory" and not 0 < self.memory_qubits < self.num_qubits:
+            raise ValidationError(
+                "Quantum memory requires a memory and fresh environment register."
+            )
+        if self.kind == "born" and not 0 < self.visible_qubits <= self.num_qubits:
+            raise ValidationError("Born cells need a visible register within their circuit.")
+        if self.kind == "memory" and self.visible_qubits > self.memory_qubits:
+            raise ValidationError("Visible register exceeds the memory width.")
         if type(self.reupload) is not bool:
             raise ValidationError("reupload must be a boolean.")
         if not 0 < real(self.initial_mixing) < 1:
@@ -93,6 +116,9 @@ class QuantumCellSpec:
         }
         if self.program_json is not None:
             value["program_json"] = self.program_json
+        for name in ("memory_qubits", "visible_qubits"):
+            if getattr(self, name):
+                value[name] = getattr(self, name)
         return value
 
     @classmethod
@@ -103,7 +129,35 @@ class QuantumCellSpec:
             raise ValidationError("Provide a portable LayerSpec.")
         return cls(kind="custom", program_json=spec.to_json(), max_operations=max_operations)
 
-    def compile(self):
+    def compile(self, *, max_memory_mb=256):
+        if self.kind == "activation":
+            from .quantum_activations import QuantumActivationPlan
+
+            return QuantumActivationPlan(self.depth, self.num_outputs, self.max_operations)
+        if self.kind == "memory":
+            from .quantum_channels import QuantumChannelPlan
+
+            return QuantumChannelPlan(
+                self.memory_qubits,
+                self.num_qubits - self.memory_qubits,
+                self.depth,
+                self.num_outputs,
+                self.reupload,
+                self.max_operations,
+                max_memory_mb,
+                self.visible_qubits,
+            )
+        if self.kind == "born":
+            from .quantum_generative import BornCircuitPlan
+
+            return BornCircuitPlan(
+                self.num_qubits,
+                self.visible_qubits,
+                self.depth,
+                self.reupload,
+                self.max_operations,
+                max_memory_mb,
+            )
         if self.kind == "custom":
             return CustomCircuitPlan(self._custom_spec)
         if self.kind in {"qcnn", "hardware-efficient"}:
@@ -209,9 +263,17 @@ class HybridArchitecture:
             raise ValidationError("Provide one OperatorSpec or one operator per block.")
         object.__setattr__(self, "operators", operators)
         object.__setattr__(self, "operator_specs", operators)
+        for index, op in enumerate(operators):
+            if op.implementation.terminal and index != self.depth - 1:
+                raise ValidationError("A probability readout must be the final network operator.")
+        if operators[-1].implementation.terminal:
+            if self.output_features != 1 << operators[-1].config["visible_qubits"]:
+                raise ValidationError("Probability output width must equal 2**visible_qubits.")
+            if self.readout_pooling not in {"none", "mean", "first"}:
+                raise ValidationError("Probability outputs support none, mean or first pooling.")
         if self.input_lift == "graph-pairs" and (
             operators[0].kind != "pair-graph"
-            or any(o.kind not in {"pair-graph", "pointwise"} for o in operators)
+            or any(o.kind not in {"pair-graph", "pointwise", "born"} for o in operators)
         ):
             raise ValidationError("graph-pairs uses pair-graph first, then pair/pointwise blocks.")
         if self.depth * (2 * self.hidden_features + 2) > self.max_parameters:
@@ -228,7 +290,7 @@ class HybridArchitecture:
         cache = {}
         for configuration in configurations:
             if configuration not in cache:
-                cache[configuration] = configuration.compile()
+                cache[configuration] = configuration.compile(max_memory_mb=self.max_memory_mb)
         cells = tuple(cache[c] for c in configurations)
         if not isinstance(self.quantum, QuantumCellSpec):
             object.__setattr__(self, "quantum", configurations)
@@ -290,11 +352,6 @@ class HybridArchitecture:
 
         h = self.hidden_features
 
-        def declare_parameter(
-            group, name, shape, role="classical", initialization="normal", scale=0.1
-        ):
-            parameter(f"{group}_{name}", shape, role, group, initialization, scale)
-
         stem_width = self.input_features
         if self.input_lift == "graph-pairs":
             config = operators[0].config
@@ -309,12 +366,20 @@ class HybridArchitecture:
         parameter("stem_bias", (h,), "bias", "shared", "zeros")
         for i, (cell, operator) in enumerate(zip(cells, operators, strict=True)):
             group = f"block_{i}"
-            parameter(f"{group}_norm_q", (h,), "norm", group, "ones")
-            parameter(f"{group}_norm_ff", (h,), "norm", group, "ones")
-            parameter(f"{group}_gain_q", (), "gate", group, "zeros")
-            parameter(f"{group}_gain_ff", (), "gate", group, "zeros")
+            terminal = operator.implementation.terminal
+            owner = "shared" if terminal else group
+            parameter(f"{group}_norm_q", (h,), "norm", owner, "ones")
+            if not terminal:
+                parameter(f"{group}_norm_ff", (h,), "norm", owner, "ones")
+                parameter(f"{group}_gain_q", (), "gate", owner, "zeros")
+                parameter(f"{group}_gain_ff", (), "gate", owner, "zeros")
             spec = cell.to_spec()
             operator.implementation.validate_cell(spec, operator.config)
+            if operator.implementation.native_state:
+                from .quantum_channels import QuantumChannelPlan
+
+                if not isinstance(cell, QuantumChannelPlan):
+                    raise ValidationError("A stateful quantum operator requires a memory cell.")
             kernel_width = integer(
                 operator.implementation.input_width(h, operator.config), "kernel input width", 1
             )
@@ -334,34 +399,52 @@ class HybridArchitecture:
             for role in roles:
                 suffix = "" if not role else f"_{role}"
                 projection(
-                    f"{group}_encode{suffix}", kernel_width, len(spec.input_parameters), group
+                    f"{group}_encode{suffix}", kernel_width, len(spec.input_parameters), owner
                 )
                 parameter(
                     f"{group}_quantum{suffix}",
                     (len(spec.weight_parameters),),
                     "quantum",
-                    group,
+                    owner,
                     "quantum",
                 )
-            projection(f"{group}_decode", len(spec.observables), h, group)
+            if operator.implementation.uses_decode:
+                projection(f"{group}_decode", len(spec.observables), h, owner)
+
+            def declare_extra(
+                name,
+                shape,
+                role="classical",
+                initialization="normal",
+                scale=0.1,
+                group=group,
+                owner=owner,
+            ):
+                parameter(f"{group}_{name}", shape, role, owner, initialization, scale)
+
             operator.implementation.declare(
                 h,
                 len(spec.observables),
                 operator.config,
-                lambda name, a, b, group=group: projection(f"{group}_{name}", a, b, group),
-                partial(declare_parameter, group),
+                lambda name, a, b, group=group, owner=owner: projection(
+                    f"{group}_{name}", a, b, owner
+                ),
+                declare_extra,
             )
+            if terminal:
+                continue
             projection(f"{group}_ff_gate", h, h * self.expansion, group)
             projection(f"{group}_ff_up", h, h * self.expansion, group)
             projection(f"{group}_ff_down", h * self.expansion, h, group)
-        parameter(
-            "readout_weight",
-            (h * (2 if self.readout_pooling == "pair-invariant" else 1), self.output_features),
-            "classical",
-            "shared",
-            scale=1 / math.sqrt(h),
-        )
-        parameter("readout_bias", (self.output_features,), "bias", "shared", "zeros")
+        if not self.has_terminal:
+            parameter(
+                "readout_weight",
+                (h * (2 if self.readout_pooling == "pair-invariant" else 1), self.output_features),
+                "classical",
+                "shared",
+                scale=1 / math.sqrt(h),
+            )
+            parameter("readout_bias", (self.output_features,), "bias", "shared", "zeros")
         for name, value in (
             ("parameters", tuple(descriptors)),
             ("cells", cells),
@@ -376,6 +459,18 @@ class HybridArchitecture:
         if depth > self.depth:
             raise ValidationError("Active depth exceeds the allocated architecture.")
         return depth
+
+    @property
+    def has_terminal(self):
+        return self.operator_specs[-1].implementation.terminal
+
+    def execution_indices(self, depth=None):
+        depth = self.active(depth)
+        return (
+            tuple(range(min(depth, self.depth - 1))) + (self.depth - 1,)
+            if self.has_terminal
+            else tuple(range(depth))
+        )
 
     @property
     def fingerprint(self):
@@ -440,7 +535,7 @@ class HybridArchitecture:
             return full(p.shape, int(p.initialization == "ones"))
         value = normal(p.shape) * p.scale
         if p.role == "quantum":
-            cell = self.cells[int(p.group.split("_")[1])]
+            cell = self.cells[int(p.name.split("_")[1])]
             for a, b in getattr(cell, "initialization_pairs", ()):
                 if backend == "jax":
                     value = value.at[b].set(-value[a])
@@ -515,7 +610,15 @@ class HybridArchitecture:
         ctx = OperatorContext(
             self, index, parameters, normalized, context or {}, backend, quantum_evaluator
         )
-        quantum = self.operator_specs[index].implementation.apply(ctx)
+        implementation = self.operator_specs[index].implementation
+        quantum = implementation.apply(ctx)
+        next_state = None
+        if implementation.stateful:
+            quantum, next_state = quantum
+        if implementation.terminal:
+            if quantum.shape != inputs.shape[:-1] + (self.output_features,):
+                raise ValidationError("Probability readout returned an invalid shape.")
+            return (quantum, next_state) if implementation.stateful else quantum
         if tuple(quantum.shape) != tuple(inputs.shape):
             raise ValidationError("A network operator must preserve its hidden feature shape.")
         value = inputs + ops.xp.tanh(parameters[f"{group}_gain_q"]) * quantum
@@ -524,13 +627,14 @@ class HybridArchitecture:
         gate = self._linear(f"{group}_ff_gate", parameters, normalized, backend)
         up = self._linear(f"{group}_ff_up", parameters, normalized, backend)
         silu = gate * (1 + ops.xp.tanh(gate * 0.5)) * 0.5
-        return self._masked(
+        output = self._masked(
             value
             + ops.xp.tanh(parameters[f"{group}_gain_ff"])
             * self._linear(f"{group}_ff_down", parameters, silu * up, backend),
             context or {},
             backend,
         )
+        return (output, next_state) if implementation.stateful else output
 
     @staticmethod
     def _masked(value, context, backend):
@@ -556,7 +660,9 @@ class HybridArchitecture:
     def execution_batches(self, metadata, microbatch_samples, index):
         samples = metadata["samples"]
         operator = self.operator_specs[index]
-        chunks = operator.implementation.row_chunks(metadata, operator.config)
+        chunks = operator.implementation.row_chunks(
+            dict(metadata, hidden_features=self.hidden_features), operator.config
+        )
         roles = tuple(operator.implementation.roles(operator.config))
         return tuple(
             min(microbatch_samples, samples - start) * rows
@@ -566,10 +672,27 @@ class HybridArchitecture:
         )
 
     def evaluate(
-        self, parameters, inputs, *, backend="numpy", active_depth=None, block_runner=None
+        self,
+        parameters,
+        inputs,
+        *,
+        backend="numpy",
+        active_depth=None,
+        block_runner=None,
+        state=None,
+        return_state=False,
     ):
         self.validate_parameters(parameters)
         depth = self.active(active_depth)
+        from collections.abc import Mapping
+
+        state = {} if state is None else state
+        allowed = {
+            f"block_{i}" for i, op in enumerate(self.operator_specs) if op.implementation.stateful
+        }
+        if not isinstance(state, Mapping) or set(state) - allowed:
+            raise ValidationError("State must map stateful block names to density carries.")
+        next_states = dict(state)
         inputs, context, metadata = input_metadata(inputs, self.input_features)
         inputs = self._masked(inputs, context, backend)
         if self.input_lift == "graph-pairs":
@@ -580,17 +703,21 @@ class HybridArchitecture:
             inputs, context = lift_graph_pairs(ctx)
         value = inputs @ parameters["stem_weight"] + parameters["stem_bias"]
         value = self._masked(value, context, backend)
-        for index in range(depth):
+        for index in self.execution_indices(depth):
             self.operator_specs[index].implementation.validate_metadata(
                 metadata,
                 self.operator_specs[index].config,
             )
+            local_context = dict(context, _state=state.get(f"block_{index}"))
             value = (
-                self.block(index, parameters, value, backend=backend, context=context)
+                self.block(index, parameters, value, backend=backend, context=local_context)
                 if block_runner is None
-                else block_runner(index, parameters, value, context)
+                else block_runner(index, parameters, value, local_context)
             )
-        if self.readout_pooling != "none" and value.ndim > 2:
+            if self.operator_specs[index].implementation.stateful:
+                value, next_states[f"block_{index}"] = value
+        pooled = self.readout_pooling != "none" and value.ndim > 2
+        if pooled:
             ops = _TensorOps(backend, value)
             axes = tuple(range(1, value.ndim - 1))
             if self.readout_pooling == "pair-invariant":
@@ -614,10 +741,11 @@ class HybridArchitecture:
                     )
                     summed = summed / denominator
                 value = summed
-            return value @ parameters["readout_weight"] + parameters["readout_bias"]
-        return self._masked(
-            value @ parameters["readout_weight"] + parameters["readout_bias"], context, backend
-        )
+        if not self.has_terminal:
+            value = value @ parameters["readout_weight"] + parameters["readout_bias"]
+            if not pooled:
+                value = self._masked(value, context, backend)
+        return (value, next_states) if return_state else value
 
     def resource_profile(
         self, *, batch_size=1, active_depth=None, dtype_bytes=4, optimizer_slots=2
@@ -650,10 +778,11 @@ class HybridArchitecture:
                 name: "dense" if p is None else "tensor-train"
                 for name, p in self.projections.items()
             },
-            "quantum_cells": [self.cells[i].to_dict() for i in range(depth)],
-            "operators": [o.to_dict() for o in self.operator_specs[:depth]],
+            "quantum_cells": [self.cells[i].to_dict() for i in self.execution_indices(depth)],
+            "operators": [self.operator_specs[i].to_dict() for i in self.execution_indices(depth)],
             "quantum_roles": [
-                list(o.implementation.roles(o.config)) for o in self.operator_specs[:depth]
+                list(self.operator_specs[i].implementation.roles(self.operator_specs[i].config))
+                for i in self.execution_indices(depth)
             ],
             "batch_size": batch_size,
         }
@@ -757,6 +886,149 @@ class HybridArchitecture:
             input_lift="graph-pairs" if order == 2 else "none",
             **options,
         )
+
+    @classmethod
+    def kan(cls, input_features, output_features, *, quantum=None, **options):
+        return cls(
+            input_features,
+            output_features,
+            quantum=QuantumCellSpec(kind="activation", num_qubits=1, depth=3)
+            if quantum is None
+            else quantum,
+            operators=OperatorSpec.quantum_kan(),
+            **options,
+        )
+
+    @classmethod
+    def recurrent(
+        cls,
+        input_features,
+        output_features,
+        *,
+        memory_qubits=1,
+        environment_qubits=1,
+        quantum_depth=1,
+        quantum=None,
+        gated=True,
+        scan="sequential",
+        max_work=1_000_000_000,
+        **options,
+    ):
+        return cls(
+            input_features,
+            output_features,
+            quantum=QuantumCellSpec(
+                kind="memory",
+                num_qubits=memory_qubits + environment_qubits,
+                memory_qubits=memory_qubits,
+                depth=quantum_depth,
+            )
+            if quantum is None
+            else quantum,
+            operators=OperatorSpec.memory(gated=gated, scan=scan, max_work=max_work),
+            **options,
+        )
+
+    @classmethod
+    def generative(
+        cls,
+        input_features,
+        visible_qubits=1,
+        *,
+        depth=3,
+        quantum=None,
+        operators=None,
+        readout_qubits=None,
+        readout_depth=2,
+        depolarization=0.001,
+        **options,
+    ):
+        depth = integer(depth, "depth", 0)
+        k = integer(visible_qubits, "visible_qubits", 1)
+        _constructor_admission(depth + 1, k, options)
+        prefix = (
+            QuantumCellSpec(kind="hardware-efficient", num_qubits=2) if quantum is None else quantum
+        )
+        cells = (prefix,) * depth if isinstance(prefix, QuantumCellSpec) else tuple(prefix)
+        ops = OperatorSpec() if operators is None else operators
+        ops = (ops,) * depth if isinstance(ops, OperatorSpec) else tuple(ops)
+        head = QuantumCellSpec(
+            kind="born",
+            num_qubits=k if readout_qubits is None else readout_qubits,
+            visible_qubits=k,
+            depth=readout_depth,
+        )
+        return cls(
+            input_features,
+            1 << k,
+            depth=depth + 1,
+            quantum=cells + (head,),
+            operators=ops + (OperatorSpec.born_readout(k, depolarization=depolarization),),
+            **options,
+        )
+
+    @classmethod
+    def language_model(
+        cls,
+        vocab_qubits=1,
+        *,
+        memory_qubits=1,
+        environment_qubits=1,
+        depth=2,
+        quantum_depth=1,
+        gated=True,
+        depolarization=0.001,
+        measurement="povm",
+        povm_regularization=0.01,
+        scan="sequential",
+        max_work=1_000_000_000,
+        **options,
+    ):
+        depth = integer(depth, "depth", 0)
+        k = integer(vocab_qubits, "vocab_qubits", 1)
+        _constructor_admission(depth + 1, k, options)
+        m = integer(memory_qubits, "memory_qubits", 1)
+        e = integer(environment_qubits, "environment_qubits", 1)
+        cell = QuantumCellSpec(
+            kind="memory", num_qubits=m + e, memory_qubits=m, depth=quantum_depth
+        )
+        head = QuantumCellSpec(
+            kind="memory",
+            num_qubits=m + e,
+            memory_qubits=m,
+            visible_qubits=k if measurement == "basis" else 0,
+            depth=quantum_depth,
+        )
+        return cls(
+            1 << k,
+            1 << k,
+            depth=depth + 1,
+            quantum=(cell,) * depth + (head,),
+            operators=(OperatorSpec.memory(gated=gated, scan=scan, max_work=max_work),) * depth
+            + (
+                OperatorSpec.born_readout(
+                    k,
+                    memory=True,
+                    gated=gated,
+                    depolarization=depolarization,
+                    measurement=measurement,
+                    memory_qubits=m,
+                    povm_regularization=povm_regularization,
+                    scan=scan,
+                    max_work=max_work,
+                ),
+            ),
+            **options,
+        )
+
+    def validate_streaming_born(self):
+        if self.operator_specs[-1].kind != "born-memory" or any(
+            op.kind not in {"quantum-memory", "pointwise", "quantum-kan"}
+            for op in self.operator_specs[:-1]
+        ):
+            raise ValidationError(
+                "Streaming generation needs a Born-memory head and memory/pointwise/KAN prefix."
+            )
 
     @classmethod
     def deep(

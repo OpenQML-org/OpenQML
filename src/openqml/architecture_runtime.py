@@ -16,9 +16,10 @@ class NetworkExecutionPlan:
     stages: tuple
     forecast: object
     searched_states: int
+    stage_indices: tuple = ()
 
     def to_dict(self):
-        return {
+        value = {
             "architecture": self.fingerprint,
             "active_depth": self.active_depth,
             "forecast": None if self.forecast is None else self.forecast.to_dict(),
@@ -26,6 +27,9 @@ class NetworkExecutionPlan:
             "searched_states": self.searched_states,
             "scope": "quantum_stage_forecasts_plus_declared_classical_work; not_measured_speedup",
         }
+        if self.stage_indices and self.stage_indices != tuple(range(self.active_depth)):
+            value["stage_indices"] = list(self.stage_indices)
+        return value
 
 
 def reserve_native_cost(plan, scheduler, *, native_devices=("CPU", "GPU")):
@@ -72,7 +76,9 @@ def schedule_network(
     depth = architecture.active(active_depth)
     options = ExecutionOptions(max_memory_mb=architecture.max_memory_mb)
     alternatives, baseline = [], []
-    for index, cell in enumerate(architecture.cells[:depth]):
+    indices = architecture.execution_indices(depth)
+    for index in indices:
+        cell = architecture.cells[index]
         spec = cell.to_spec()
         shift = TrainingWorkload.parameter_shift(spec.circuit, spec.observables)
         batches = None
@@ -110,11 +116,16 @@ def schedule_network(
             options=options,
             workload=work,
             native_candidates=native_candidates,
+            allowed_devices=native_devices
+            if architecture.operator_specs[index].implementation.native_state
+            else None,
         )
         baseline.append(choices[0])
         alternatives.append(tuple((p, _selected_cost(p)) for p in choices))
     if any(cost is None for choices in alternatives for _, cost in choices):
-        return NetworkExecutionPlan(architecture.fingerprint, depth, tuple(baseline), None, 0)
+        return NetworkExecutionPlan(
+            architecture.fingerprint, depth, tuple(baseline), None, 0, indices
+        )
     initial = ExecutionCost(
         workload.steps * workload.classical_seconds_per_step,
         workload.steps * workload.classical_seconds_per_step,
@@ -175,4 +186,4 @@ def schedule_network(
     selected, _ = select_cost([c for _, c in states], scheduler.policy)
     path, cost = states[selected]
     check_cost(cost, scheduler.policy)
-    return NetworkExecutionPlan(architecture.fingerprint, depth, path, cost, searched)
+    return NetworkExecutionPlan(architecture.fingerprint, depth, path, cost, searched, indices)

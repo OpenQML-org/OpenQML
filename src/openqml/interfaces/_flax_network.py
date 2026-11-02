@@ -17,7 +17,7 @@ class HybridNetwork(nn.Module):
     dtype: object = jnp.float32
 
     @nn.compact
-    def __call__(self, inputs):
+    def __call__(self, inputs, *, state=None, return_state=False):
         parameters = {}
         for spec in self.architecture.parameters:
 
@@ -33,12 +33,17 @@ class HybridNetwork(nn.Module):
         model = FunctionalNetwork(
             self.architecture, active_depth=self.active_depth, backend=self.backend
         )
-        return model(parameters, inputs)
+        return model(parameters, inputs, state=state, return_state=return_state)
 
     def optimizer(self, optimizer):
         return StagewiseOptimizer(
             self.architecture, optimizer, self.architecture.active(self.active_depth)
         )
+
+    def sample_tokens(self, variables, key, steps, *, prompt=None, batch_size=1):
+        return FunctionalNetwork(
+            self.architecture, active_depth=self.active_depth, backend=self.backend
+        ).sample_tokens(variables["params"], key, steps, prompt=prompt, batch_size=batch_size)
 
     def make_train_step(self, optimizer, loss_function, **options):
         """Optimize the flat variables['params'] tree; loss(params,batch) is per-example."""
