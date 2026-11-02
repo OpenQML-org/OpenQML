@@ -96,6 +96,8 @@ from .observables import (
 from .optimization import CertifiedOptimization, OptimizationResult, optimize, optimize_verified
 from .parameters import Expression, Parameter
 from .pauli import PauliPlan
+from .pauli_fusion import PauliFusionResult, fuse_pauli_rotations
+from .pauli_transfer import PauliTransferPlan
 from .planning import DensityPlan, plan_density
 from .program import QuantumProgram, as_circuit
 from .program_compilation import ProgramConversion, compile_program
@@ -183,7 +185,7 @@ def __dir__():
     return sorted(set(globals()) | _LAZY_MODULES.keys())
 
 
-__version__ = "0.10.1"
+__version__ = "0.11.0"
 
 __all__ = [
     "AdaptiveMPSBackend",
@@ -283,6 +285,9 @@ __all__ = [
     "ExpectationPlan",
     "ExecutionGroup",
     "PauliPlan",
+    "PauliTransferPlan",
+    "PauliFusionResult",
+    "fuse_pauli_rotations",
     "ReadoutPlan",
     "plan_readout",
     "AdjointPlan",

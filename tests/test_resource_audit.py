@@ -229,7 +229,7 @@ def test_statevector_policy_rejects_insufficient_budget():
 
 
 @pytest.mark.parametrize("framework", ["torch", "jax"])
-def test_warm_bridge_keeps_one_preparation_and_one_submission_per_forward(framework):
+def test_warm_bridge_prepares_once_and_submits_one_deterministic_row_per_forward(framework):
     lib = pytest.importorskip(framework)
 
     class Backend:
@@ -266,4 +266,4 @@ def test_warm_bridge_keeps_one_preparation_and_one_submission_per_forward(framew
         for value in (0.1, 0.3, 0.5):
             actual = np.asarray(call(jnp.array([0.4]), jnp.full((16, 1), value)))
             np.testing.assert_allclose(actual, np.cos(value * 0.4), atol=1e-6)
-    assert backend.preparations == 1 and backend.sizes == [16, 16, 16]
+    assert backend.preparations == 1 and backend.sizes == [1, 1, 1]

@@ -85,6 +85,62 @@ batches use padding and masks; no dense adjacency matrix is constructed. Invalid
 active indices raise eagerly; inside JAX compilation they produce nonfinite
 graph outputs, which the integrated trainer rejects without an optimizer update.
 
+## Shared features and higher-order structure
+
+`HybridArchitecture.transformer(C,D,attention="state")` uses one trainable quantum
+encoder per token for similarities and values. `OperatorSpec.state_attention`
+controls heads, causality, positions, chunk size and depolarization. The default
+QCNN exposes a complete local X/Y/Z readout. Custom cells must expose complete,
+unit-coefficient local X/Y/Z triples; several measured qubits are supported.
+
+Each head learns a CPTP Pauli channel through four softmax probabilities, followed
+by fixed depolarization. Its kernel is the mean local Hilbert–Schmidt overlap
+`k_h(x,y)=mean_q Tr(E_h(rho_q(x)) E_h(rho_q(y)))`. The feature representation
+`[1,lambda_x*r_x,lambda_y*r_y,lambda_z*r_z]/sqrt(2Q)` gives this kernel exactly.
+Sufficient statistics compute normalized attention without pairwise overlap
+circuits or an N×N score matrix. Causal mode uses prefix statistics. Quantum row
+evaluations fall from three independent branches to one shared bank, independent
+of head count. This changes model capacity and parameterization; it does not
+preserve arbitrary independent Q/K/V circuits.
+
+Measured Bloch vectors are projected to the physical unit ball, introducing bias
+for noisy estimates. The kernel is positive semidefinite and nonnegative; fixed
+depolarization keeps nonempty exact-state denominators positive. Computation
+remains hybrid and local reduced states omit global correlations. Coherent
+attention and quantum advantage are not claimed.
+
+`HybridArchitecture.graph_network(C,D,order=2)` lifts sparse graph inputs to
+persistent ordered-pair states `[B,N,N,H]`. Initial features include both nodes,
+summed edge multiplicity/features, diagonal equality and optional squared distance.
+No node identifiers are added. Each block evaluates one circuit per pair and
+contracts learned factors as `M_ij,c=sum_k L_ik,c R_kj,c`. The quantum feature bank
+feeds both factors and the local branch, avoiding a circuit per `(i,k,j)` triple.
+This is a higher-order update, rather than ordinary local edge aggregation.
+
+The default invariant readout concatenates mean pair and mean diagonal features.
+`readout_pooling="none"` returns pair predictions `[B,N,N,D]`. Padding, repeated
+edges, geometric invariance and parameter ownership follow the shared model.
+`input_lift="graph-pairs"` permits pair-graph and pointwise blocks; the first block
+defines input edge/geometry fields. `order=1` keeps sparse O(E) messages. Pair
+states need O(B N² H) storage; classical contraction costs O(B N³ H). Admission
+checks occur before quadratic allocation, with no fixed node-count limit. The
+finite-width factorized model does not inherit a full 3-WL theorem. A functional
+regression separates C6 from two triangles with identical node features, which
+ordinary 1-WL message passing cannot distinguish.
+
+`native_execution="pauli-transfer"` selects exact compiled sparse Pauli transfers
+for PyTorch/JAX/Flax cells. All observables share propagation frontiers; topology
+is compiled once per execution view and bindings are evaluated in batches.
+Compilation and batch memory have explicit limits. Exponentially growing
+frontiers are rejected, never silently truncated. QPU routes retain source
+circuits and their numerical gradient contract.
+
+Numeric bridge forwards and shifted pullbacks merge identical rows only when the
+backend declares `deterministic_expectations=True`. Gradients preserve distinct
+input cotangents and accumulate shared weights. Reuse is bounded to each call;
+no results survive parameter updates. Finite-shot QPUs keep independent estimates.
+Forecasts conservatively budget unmerged rows: duplication is input dependent.
+
 ## Composition and extensions
 
 Pass a tuple of `OperatorSpec` objects to `HybridArchitecture(operators=...)`
@@ -133,8 +189,16 @@ The positive-feature mode uses [linear attention](https://arxiv.org/abs/2006.162
 with learned quantum embeddings. Graph aggregation uses shared message functions
 and [distance-invariant geometry](https://arxiv.org/abs/2102.09844).
 
+State attention combines [projected quantum readouts, Nature Communications
+(2021)](https://arxiv.org/abs/2011.01938) with a learned physical kernel and linear
+sufficient statistics. Pair graphs adapt the matrix-product update in
+[Provably Powerful Graph Networks (2019)](https://arxiv.org/abs/1905.11136), using
+shared quantum features. Sparse transfer execution adapts structure/parameter
+separation from [PADO-Pauli (October 2026 preprint)](https://arxiv.org/abs/2610.17755).
+These combinations do not reproduce the papers' complete systems or results.
+
 These implementations adapt applicable ideas rather than inherit paper accuracy
-or speedup results. Local quantum messages retain ordinary message-passing
+or speedup results. The `order=1` local messages retain ordinary message-passing
 expressivity limits; the coherent higher-WL construction in
 [2026 quantum graph work](https://arxiv.org/abs/2606.26873) is a different model.
 Quantum circuit evaluation can remain exponential. No pretrained weights,

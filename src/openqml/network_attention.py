@@ -45,7 +45,7 @@ def quantum_attention(ctx):
 
 
 def _linear(ctx, q, k, v, mask):
-    xp, c = ctx.xp, ctx.spec.config
+    xp = ctx.xp
     # Keep reductions in float32 under mixed precision.
     if ctx.backend == "torch" and q.dtype in (xp.float16, xp.bfloat16):
         q, k, v = q.float(), k.float(), v.float()
@@ -53,15 +53,29 @@ def _linear(ctx, q, k, v, mask):
     def phi(value):
         return xp.logaddexp(ctx.array(0), value) + 1e-6
 
-    q, k = phi(q), phi(k) * mask[:, None, :, None]
+    return _moments(ctx, phi(q), phi(k), v, mask, epsilon=1e-6)
+
+
+def _moments(ctx, q, k, v, mask, *, epsilon=0):
+    """Exact kernel normalization from sufficient statistics; no N x N scores."""
+    xp, c = ctx.xp, ctx.spec.config
+    k = k * mask[:, None, :, None]
     v = v * mask[:, None, :, None]
+
+    def normalize(numerator, denominator):
+        denominator = denominator + epsilon
+        # Empty prefixes/graphs divide by one. A tiny clamp would overflow the
+        # derivative of 1/d in float32 before the zero mask removes the row.
+        denominator = xp.where(denominator > 0, denominator, 1)
+        return numerator / denominator
+
     if not c["causal"]:
         ctx.check_workspace(q.shape[0] * q.shape[1] * q.shape[-1] * v.shape[-1])
         state = xp.einsum("bhnd,bhnv->bhdv", k, v)
         normalizer = ctx.sum(k, 2)
         numerator = xp.einsum("bhnd,bhdv->bhnv", q, state)
         denominator = xp.einsum("bhnd,bhd->bhn", q, normalizer)[..., None]
-        return numerator / (denominator + 1e-6) * mask[:, None, :, None]
+        return normalize(numerator, denominator) * mask[:, None, :, None]
     outputs, state, normalizer = [], 0, 0
     for start in range(0, q.shape[2], c["chunk_size"]):
         stop = min(q.shape[2], start + c["chunk_size"])
@@ -76,9 +90,89 @@ def _linear(ctx, q, k, v, mask):
         )
         numerator = xp.einsum("bhnd,bhndv->bhnv", qc, cumulative)
         denominator = xp.einsum("bhnd,bhnd->bhn", qc, sums)[..., None]
-        outputs.append(numerator / (denominator + 1e-6))
+        outputs.append(normalize(numerator, denominator))
         state, normalizer = cumulative[:, :, -1], sums[:, :, -1]
     return ctx.cat(outputs, axis=2) * mask[:, None, :, None]
+
+
+def reduced_state_groups(spec):
+    """Require complete, unit-coefficient local X/Y/Z measurements, in any order."""
+    from .observables import PauliString
+
+    groups = {}
+    for i, ob in enumerate(spec.observables):
+        if not isinstance(ob, PauliString) or ob.coefficient != 1:
+            raise ValidationError("State attention requires complete local X/Y/Z readouts.")
+        support = [(j, p) for j, p in enumerate(ob.paulis) if p != "I"]
+        if len(support) != 1:
+            raise ValidationError("State attention requires complete local X/Y/Z readouts.")
+        wire, axis = support[0]
+        group = groups.setdefault(wire, {})
+        if axis in group:
+            raise ValidationError("State attention readouts must not repeat a local Pauli.")
+        group[axis] = i
+    if not groups or any(set(g) != set("XYZ") for g in groups.values()):
+        raise ValidationError("State attention requires complete local X/Y/Z readouts.")
+    return tuple(tuple(g[a] for a in "XYZ") for g in groups.values())
+
+
+def state_attention(ctx):
+    """Tr(E_h(rho_x) E_h(rho_y)) attention, using one encoder per token.
+
+    E_h is a learned Pauli channel followed by fixed depolarization. Local
+    Bloch vectors are projected onto the physical ball (explicit shot-noise
+    bias). This projected quantum kernel is hybrid, not coherent attention.
+    """
+    x, c, xp = ctx.inputs, ctx.spec.config, ctx.xp
+    batch, width, heads = x.shape[0], x.shape[-1], c["heads"]
+    tokens = math.prod(x.shape[1:-1])
+    groups = reduced_state_groups(ctx.architecture.cells[ctx.index].to_spec())
+    ctx.check_workspace(batch * tokens * (3 * len(groups) + 4 * heads * len(groups) + width))
+    source = x.reshape((batch, tokens, width))
+    if c["positional"]:
+        pos = np.arange(tokens)[:, None] / 10000 ** (2 * (np.arange(width) // 2)[None, :] / width)
+        pos[:, 0::2], pos[:, 1::2] = np.sin(pos[:, 0::2]), np.cos(pos[:, 1::2])
+        source = source + ctx.array(pos)[None]
+    # Compile/evaluate topology once per execution view; bindings live only in
+    # this forward. Values and all heads consume the same measured feature bank.
+    features = ctx.cat(
+        [ctx.kernel(source[:, i : i + c["chunk_size"]]) for i in range(0, tokens, c["chunk_size"])],
+        axis=1,
+    )
+    if ctx.backend == "torch" and features.dtype in (xp.float16, xp.bfloat16):
+        features = features.float()
+    r = features[..., ctx.array(groups, integer=True)]
+    norm2 = ctx.sum(r * r, -1, True)
+    norm2 = norm2.clamp_min(1) if ctx.backend == "torch" else xp.maximum(norm2, 1)
+    r = r / xp.sqrt(norm2)
+    logits = ctx.parameters[f"{ctx.group}_state_channel"] + ctx.array([2, 0, 0, 0])
+    maximum = (
+        logits.amax(dim=-1, keepdim=True)
+        if ctx.backend == "torch"
+        else xp.max(logits, axis=-1, keepdims=True)
+    )
+    probabilities = xp.exp(logits - maximum)
+    probabilities = probabilities / ctx.sum(probabilities, -1, True)
+    eigenvalues = (2 * (probabilities[..., :1] + probabilities[..., 1:]) - 1) * (
+        1 - c["depolarization"]
+    )
+    r = r[:, None] * eigenvalues[None, :, None]
+    phi = ctx.cat((xp.ones_like(r[..., :1]), r)).reshape((batch, heads, tokens, -1))
+    phi = phi / math.sqrt(2 * len(groups))
+    v = ctx.project("decode", features).reshape((batch, tokens, heads, width // heads))
+    if ctx.backend == "torch":
+        v = v.to(phi.dtype)
+    v = v.permute(0, 2, 1, 3) if ctx.backend == "torch" else xp.transpose(v, (0, 2, 1, 3))
+    mask = ctx.context.get("node_mask", ctx.context.get("mask"))
+    mask = ctx.array(
+        np.ones((batch, tokens), dtype=bool) if mask is None else mask.reshape((batch, tokens)),
+        boolean=True,
+    )
+    result = _moments(ctx, phi, phi, v, mask)
+    result = (
+        result.permute(0, 2, 1, 3) if ctx.backend == "torch" else xp.transpose(result, (0, 2, 1, 3))
+    )
+    return result.reshape(x.shape)
 
 
 def _gaussian(ctx, q, k, v, mask):

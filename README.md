@@ -51,8 +51,8 @@ parameter layout. `DepthSchedule` grows active depth while preserving optimizer 
 | --- | --- |
 | Build a hybrid network | `HybridArchitecture` and `QuantumCellSpec` |
 | Image and temporal convolutions | `HybridArchitecture.convolutional(...)` |
-| Sequence attention | `HybridArchitecture.transformer(...)` |
-| Graph and geometric data | `HybridArchitecture.graph_network(...)` |
+| Reduced-state quantum attention | `HybridArchitecture.transformer(..., attention="state")` |
+| Sparse graph messages / higher-order pairs | `HybridArchitecture.graph_network(..., order=1 / 2)` |
 | Compose or extend network blocks | `OperatorSpec` and `register_network_operator(...)` |
 | Use a custom quantum circuit | `QuantumCellSpec.from_spec(...)` |
 | Adjust quantum capacity | `QuantumLayer.multiscale(bond_qubits=..., depth=...)` |
@@ -63,6 +63,11 @@ parameter layout. `DepthSchedule` grows active depth while preserving optimizer 
 | Add a quantum residual cell | `QuantumLayer.deep` |
 | Schedule time, price and precision | `CostAwareBackend` and `TrainingWorkload` |
 | Distribute circuit contractions | `DistributedTensorPlan` with a Torch `DeviceMesh` |
+
+Use `native_execution="pauli-transfer"` on an architecture to compile restricted
+circuits into batched exact Pauli transfers. State attention shares one quantum
+feature bank across heads; pair graphs retain quadratic node-pair states.
+See [Models](https://github.com/OpenQML-org/OpenQML/blob/main/docs/models.md) for costs and input formats.
 
 Framework layers are available under `oq.torch`, `oq.jax` and `oq.flax`.
 JAX uses `layer.init(key)` and `layer(parameters, inputs)`; Flax uses Linen `init`/`apply`.

@@ -152,7 +152,15 @@ def optimize_verified(circuit, *, proof_options=None, **optimization_options):
     return CertifiedOptimization(optimized, proof)
 
 
-def optimize(circuit, *, max_operations=100_000, max_depth=64, max_passes=4):
+def optimize(
+    circuit,
+    *,
+    max_operations=100_000,
+    max_depth=64,
+    max_passes=4,
+    pauli_fusion=False,
+    max_pauli_work=1_000_000,
+):
     """Fold known guards, merge stable adjacent decisions, then simplify gates.
 
     Exact logical semantics and explicit IR channels/measurement writes are
@@ -168,6 +176,9 @@ def optimize(circuit, *, max_operations=100_000, max_depth=64, max_passes=4):
     integer(max_passes, "max_passes", 1)
     if max_passes > 32:
         raise ValidationError("max_passes cannot exceed 32.")
+    if type(pauli_fusion) is not bool:
+        raise ValidationError("pauli_fusion must be a boolean.")
+    integer(max_pauli_work, "max_pauli_work", 1)
     pending, count = [(circuit, 0)], 0
     while pending:
         block, depth = pending.pop()
@@ -246,6 +257,12 @@ def optimize(circuit, *, max_operations=100_000, max_depth=64, max_passes=4):
     for _ in range(max_passes):
         passes += 1
         updated = walk(current, _Facts())
+        if pauli_fusion and not updated.has_effects:
+            from .pauli_fusion import fuse_pauli_rotations
+
+            updated = fuse_pauli_rotations(
+                updated, max_operations=max_operations, max_work=max_pauli_work
+            ).circuit
         if updated == current:
             converged = True
             break

@@ -89,6 +89,24 @@ position and stochastic state owned by a custom loss/data loader remain caller-o
 
 ## Execution and optimization
 
+Set `native_execution="pauli-transfer"` on `HybridArchitecture` to compile exact
+batched sparse Pauli transfers for native Torch/JAX cells. It is useful when
+restricted observables have small propagation frontiers; growth beyond explicit
+work/memory limits raises an error. Other native choices are `auto`, `pauli`,
+`planned` and `tensor-network` (with bounded shared-contraction reuse enabled).
+Torch layers prepare transfer index/sign constants on their construction device
+once; moving a layer remains valid and direct plans can call `prepare_torch(like)`.
+This selects a local algorithm; QPU routes still
+execute source circuits and quoted numerical gradients.
+
+For restricted unitary compilation, `fuse_pauli_rotations(circuit)` returns a
+signed Clifford-frame fusion report with before/after resources. It crosses only
+commuting Pauli rotations and fixed Clifford gates, retaining barriers and full
+global phase. `optimize(...,pauli_fusion=True)` and a layer's
+`optimization_options={"pauli_fusion":True}` with `optimize=True` enable the pass
+in training. `max_pauli_work` bounds its search; this is not an optimal synthesis
+or a complete [Symphony](https://arxiv.org/abs/2608.11579) implementation.
+
 `architecture.schedule(scheduler=..., workload=...)` plans the entire active
 network. It combines per-cell nondominated hardware choices under shared cost,
 latency and readout-error constraints; it can select different devices for

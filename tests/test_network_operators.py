@@ -40,7 +40,9 @@ def graph_inputs():
     )
 
 
-@pytest.mark.parametrize("kind", ["conv1d", "conv2d", "gaussian", "linear", "graph"])
+@pytest.mark.parametrize(
+    "kind", ["conv1d", "conv2d", "gaussian", "linear", "graph", "state", "pair"]
+)
 def test_structured_model_outputs_and_all_parameter_gradients_match_across_frameworks(kind):
     torch, jax = pytest.importorskip("torch"), pytest.importorskip("jax")
     jnp = pytest.importorskip("jax.numpy")
@@ -49,10 +51,16 @@ def test_structured_model_outputs_and_all_parameter_gradients_match_across_frame
         op = q.OperatorSpec.convolution(spatial_dims=dimensions, chunk_size=2)
         shape = (2, 4, 2) if dimensions == 1 else (2, 2, 3, 2)
         data = np.random.default_rng(12).normal(size=shape).astype("float32")
-    elif kind == "graph":
+    elif kind in {"graph", "pair"}:
         op, data = (
             q.OperatorSpec.graph(edge_features=1, geometric=True, chunk_size=2),
             graph_inputs(),
+        )
+    elif kind == "state":
+        op = q.OperatorSpec.state_attention(heads=2, causal=True, chunk_size=2)
+        data = dict(
+            x=np.random.default_rng(12).normal(size=(2, 4, 2)).astype("float32"),
+            mask=np.asarray([[1, 1, 1, 0], [0, 0, 0, 0]], dtype=bool),
         )
     else:
         op = q.OperatorSpec.attention(heads=2, key_features=3, mode=kind, causal=True, chunk_size=2)
@@ -60,7 +68,25 @@ def test_structured_model_outputs_and_all_parameter_gradients_match_across_frame
             x=np.random.default_rng(12).normal(size=(2, 4, 2)).astype("float32"),
             mask=np.asarray([[1, 1, 1, 0], [0, 0, 0, 0]], dtype=bool),
         )
-    p, values = plan(op), None
+    p, values = (None if kind == "state" else plan(op)), None
+    if kind == "state":
+        p = plan(
+            op,
+            quantum=q.QuantumCellSpec(kind="qcnn", num_qubits=2),
+            native_execution="pauli-transfer",
+        )
+    elif kind == "pair":
+        p = q.HybridArchitecture.graph_network(
+            2,
+            2,
+            order=2,
+            edge_features=1,
+            geometric=True,
+            hidden_features=4,
+            depth=1,
+            quantum=q.QuantumCellSpec(kind="hardware-efficient", num_qubits=2),
+            native_execution="pauli-transfer",
+        )
     values = opened(p)
     expected = p.evaluate(values, data)
     model = p.build("torch", backend="torch", device="cpu")
@@ -97,14 +123,20 @@ def test_structured_model_outputs_and_all_parameter_gradients_match_across_frame
     jax.clear_caches()
 
 
-@pytest.mark.parametrize("mode", ["gaussian", "linear", "convolution"])
+@pytest.mark.parametrize("mode", ["gaussian", "linear", "convolution", "state"])
 def test_causal_prefix_and_padding_semantics(mode):
     op = (
         q.OperatorSpec.convolution(padding="causal", chunk_size=2)
         if mode == "convolution"
+        else q.OperatorSpec.state_attention(causal=True, chunk_size=2)
+        if mode == "state"
         else q.OperatorSpec.attention(mode=mode, causal=True, chunk_size=2)
     )
-    p = plan(op)
+    p = (
+        plan(op, quantum=q.QuantumCellSpec(kind="qcnn", num_qubits=2))
+        if mode == "state"
+        else plan(op)
+    )
     values = opened(p, dtype="float64")
     data = dict(
         x=np.random.default_rng(4).normal(size=(2, 6, 2)),
@@ -120,8 +152,25 @@ def test_causal_prefix_and_padding_semantics(mode):
     np.testing.assert_allclose(p.evaluate(values, changed), before, atol=1e-12)
 
 
-def test_graph_permutation_and_euclidean_invariance_and_padding():
-    p = plan(q.OperatorSpec.graph(edge_features=1, geometric=True, chunk_size=2))
+@pytest.mark.parametrize("order", [1, 2])
+def test_graph_permutation_and_euclidean_invariance_and_padding(order):
+    p = (
+        plan(q.OperatorSpec.graph(edge_features=1, geometric=True, chunk_size=2))
+        if order == 1
+        else (
+            q.HybridArchitecture.graph_network(
+                2,
+                2,
+                hidden_features=4,
+                depth=1,
+                order=2,
+                edge_features=1,
+                geometric=True,
+                readout_pooling="none",
+                quantum=q.QuantumCellSpec(kind="hardware-efficient", num_qubits=2),
+            )
+        )
+    )
     values, data = opened(p), graph_inputs()
     expected = p.evaluate(values, data)
     perm = np.asarray([2, 0, 3, 1])
@@ -131,7 +180,10 @@ def test_graph_permutation_and_euclidean_invariance_and_padding():
         transformed[key] = transformed[key][:, perm]
     transformed["edge_index"] = inverse[np.maximum(data["edge_index"], 0)]
     np.testing.assert_allclose(
-        p.evaluate(values, transformed), expected[:, perm], atol=3e-6, rtol=3e-5
+        p.evaluate(values, transformed),
+        expected[:, perm] if order == 1 else expected[:, perm][:, :, perm],
+        atol=3e-6,
+        rtol=3e-5,
     )
     transformed = copy.deepcopy(data)
     rotation = np.linalg.qr(np.random.default_rng(15).normal(size=(3, 3)))[0].astype("float32")
@@ -210,7 +262,7 @@ def test_planner_counts_windows_tokens_edges_and_sequential_call_batches():
         assert forecast.forecast.upper_cost == calls * 3
 
 
-@pytest.mark.parametrize("family", ["convolution", "attention", "graph"])
+@pytest.mark.parametrize("family", ["convolution", "attention", "graph", "state", "pair"])
 def test_complete_models_train_and_resume_without_replacing_parameters(family, tmp_path):
     torch = pytest.importorskip("torch")
     if family == "convolution":
@@ -221,16 +273,19 @@ def test_complete_models_train_and_resume_without_replacing_parameters(family, t
             np.random.default_rng(23).normal(size=(3, 2, 2, 2)), dtype=torch.float32
         )
         target = data.mean(dim=(1, 2))
-    elif family == "attention":
+    elif family in {"attention", "state"}:
         p = q.HybridArchitecture.transformer(
             2,
             2,
             hidden_features=4,
             depth=2,
             heads=2,
-            attention="linear",
+            attention="state" if family == "state" else "linear",
             readout_pooling="mean",
-            quantum=q.QuantumCellSpec(kind="hardware-efficient", num_qubits=2),
+            quantum=q.QuantumCellSpec(
+                kind="qcnn" if family == "state" else "hardware-efficient", num_qubits=2
+            ),
+            native_execution="pauli-transfer" if family == "state" else "auto",
         )
         data = torch.tensor(np.random.default_rng(23).normal(size=(3, 4, 2)), dtype=torch.float32)
         target = data.mean(dim=1)
@@ -242,7 +297,9 @@ def test_complete_models_train_and_resume_without_replacing_parameters(family, t
             depth=2,
             edge_features=1,
             geometric=True,
+            order=2 if family == "pair" else 1,
             quantum=q.QuantumCellSpec(kind="hardware-efficient", num_qubits=2),
+            native_execution="pauli-transfer" if family == "pair" else "auto",
         )
         data = {k: torch.from_numpy(v) for k, v in graph_inputs().items()}
         target = data["nodes"][:, :3].mean(dim=1)
