@@ -44,6 +44,11 @@ uses `softmax(-||q-k||²/sqrt(d))`. PyTorch expresses this as augmented Q/K/V
 tensors and delegates to SDPA, enabling fused kernels when the device and dtype
 support them. Queries are chunked to bound forward score workspace.
 
+JAX models admit their own `jax-gpu` candidate from JAX's active platform,
+independently of Torch installation. Configure its time/price profile under
+`profiles["jax-gpu"]`; this keeps framework-specific observations separate.
+Native JAX GPU execution stays in the differentiable JAX graph.
+
 `attention="linear"` uses positive quantum feature maps with
 `S=sum(phi(k) outer v)`, `z=sum(phi(k))`, and `y=phi(q) S/(phi(q) z+epsilon)`.
 It avoids an `N x N` score matrix. Causal mode uses chunked prefix sums;

@@ -147,6 +147,7 @@ class PriorityBackend:
         options=None,
         shots=None,
         workload=None,
+        native_candidates=(),
         _collect=False,
     ):
         """Inspect an automatic route without executing a circuit or cloud job."""
@@ -177,9 +178,28 @@ class PriorityBackend:
             raise ResourceError("Circuit exceeds the requested qubit limit.")
         with _LOCK:
             devices = [d for d in _REGISTRY.values() if d.capabilities.device_type == "QPU"]
+            names = set(_REGISTRY) | {"gpu", "cpu"}
+        native_candidates = tuple(native_candidates)
+        for device in native_candidates:
+            if (
+                not isinstance(getattr(device, "name", None), str)
+                or not device.name
+                or device.name in names
+                or not isinstance(getattr(device, "capabilities", None), BackendCapabilities)
+                or getattr(getattr(device, "capabilities", None), "device_type", None)
+                not in {"GPU", "CPU"}
+            ):
+                raise ValidationError(
+                    "Native candidates need unique local backend names and capabilities."
+                )
+            names.add(device.name)
         candidates, eligible = [], []
         # Lazy resolution keeps Torch and cloud SDKs outside a core-only import.
-        for device in (*devices, "gpu", "cpu"):
+        native_gpu = tuple(d for d in native_candidates if d.capabilities.device_type == "GPU")
+        native_cpu = tuple(d for d in native_candidates if d.capabilities.device_type == "CPU")
+        # A framework-native candidate replaces the generic implementation for
+        # its platform, so its quote is applied to the engine actually used.
+        for device in (*devices, *(native_gpu or ("gpu",)), *(native_cpu or ("cpu",))):
             if isinstance(device, str):
                 device = get_backend(device)
             try:
@@ -451,6 +471,7 @@ class CostAwareBackend(PriorityBackend):
         shots=None,
         workload=None,
         only_backend=None,
+        native_candidates=(),
         _alternatives=False,
     ):
         from .ir import Circuit, integer
@@ -464,7 +485,12 @@ class CostAwareBackend(PriorityBackend):
             raise ValidationError("workload must be TrainingWorkload.")
         options = ExecutionOptions() if options is None else options
         devices, admission = super().plan(
-            circuits, task=task, observables=observables, options=options, _collect=True
+            circuits,
+            task=task,
+            observables=observables,
+            options=options,
+            native_candidates=native_candidates,
+            _collect=True,
         )
         if only_backend is not None:
             if not isinstance(only_backend, str):

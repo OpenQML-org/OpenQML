@@ -12,6 +12,7 @@ from ..backends import get_backend
 from ..errors import ValidationError
 from ..network_training import DepthSchedule, StagewiseOptimizer, _batch_rows, select_network_input
 from ..runtime import CostAwareBackend
+from ._jax_backend import JAXNativeBackend
 from ._jax_training import make_train_step
 
 
@@ -23,6 +24,7 @@ class HybridNetwork:
 
         self.architecture = architecture
         self.active_depth = architecture.active(active_depth)
+        self._native_candidate = JAXNativeBackend()
         self.runtime = get_backend("auto") if backend is None or backend == "auto" else backend
         pinned = "jax" if isinstance(self.runtime, CostAwareBackend) else self.runtime
         self._layers = tuple(
@@ -75,12 +77,15 @@ class HybridNetwork:
             native_devices=(platform,),
             metadata=metadata,
             microbatch_samples=microbatch_samples,
+            native_candidates=(self._native_candidate,) if platform == "GPU" else (),
         )
         keys = tuple(
             (
                 s.backend,
                 s.device,
-                id(get_backend(s.backend)),
+                id(self._native_candidate)
+                if s.backend == self._native_candidate.name
+                else id(get_backend(s.backend)),
                 next(
                     c.estimate.get("shots", 0) if c.estimate else 0
                     for c in s.candidates

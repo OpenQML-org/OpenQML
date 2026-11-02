@@ -437,3 +437,77 @@ def test_flax_graph_attention_model_progressive_training_and_checkpoint(tmp_path
     for name in trainer.parameters:
         np.testing.assert_array_equal(trainer.parameters[name], restored.parameters[name])
     jax.clear_caches()
+
+
+def test_jax_native_gpu_admission_control_without_a_torch_gpu(monkeypatch):
+    """Control-path unit test only; this does not claim physical GPU execution."""
+    jax, jnp = pytest.importorskip("jax"), pytest.importorskip("jax.numpy")
+    optax = pytest.importorskip("optax")
+    from openqml import backends
+    from openqml._cuda_backend import CUDABackend
+
+    monkeypatch.setattr(jax, "default_backend", lambda: "gpu")
+
+    def forbid_torch_probe(self):
+        raise AssertionError("JAX native GPU admission must not probe Torch CUDA")
+
+    monkeypatch.setattr(CUDABackend, "is_available", forbid_torch_probe)
+    monkeypatch.setitem(backends._REGISTRY, "gpu", CUDABackend())
+    ledger = q.BudgetLedger(1)
+    runtime = q.CostAwareBackend(
+        ledger=ledger,
+        profiles={
+            "jax-gpu": q.ExecutionProfile(
+                0.01,
+                queue_seconds=0,
+                cost_per_second=0,
+                cost_per_circuit=0.001,
+                relative_uncertainty=0,
+            )
+        },
+    )
+    p = plan(q.OperatorSpec.attention(mode="linear"))
+    model = p.build("jax", backend=runtime)
+    assert all(stage.backend == "jax-gpu" for stage in model.execution_plan.stages)
+    assert all(layer.execution_backend == "jax" for layer in model._layers)
+    trainer = model.trainer(
+        optax.adam(0.01),
+        lambda m, w, b: jnp.mean((m(w, b[0]) - b[1]) ** 2, axis=(1, 2)),
+        key=jax.random.key(3),
+        microbatch_size=1,
+    )
+    x = jnp.asarray(np.random.default_rng(7).normal(size=(2, 3, 2)), dtype=jnp.float32)
+    for _ in range(2):
+        metrics = trainer.step((x, x * 0.7))
+    assert trainer.updates == 2 and not bool(metrics["skipped"])
+    assert ledger.reserved == pytest.approx(0.108)
+    candidate = model._native_candidate
+    circuit = q.Circuit(1).ry(0.2, 0)
+    numeric = candidate.expectations_batch(
+        [circuit], (q.PauliString("Z"),), options=q.ExecutionOptions()
+    )
+    np.testing.assert_allclose(numeric, [[np.cos(0.2)]], atol=1e-6)
+    with pytest.raises(q.ValidationError, match="unique"):
+        q.CostAwareBackend().plan(
+            circuit, observables=(q.PauliString("Z"),), native_candidates=(candidate, candidate)
+        )
+    jax.clear_caches()
+
+
+def test_physical_jax_gpu_keeps_native_gradients_without_torch_dispatch(monkeypatch):
+    jax, jnp = pytest.importorskip("jax"), pytest.importorskip("jax.numpy")
+    if jax.default_backend() != "gpu":
+        pytest.skip("A physical JAX GPU backend is required")
+    from openqml import backends
+    from openqml._cuda_backend import CUDABackend
+
+    monkeypatch.setattr(CUDABackend, "is_available", lambda self: False)
+    monkeypatch.setitem(backends._REGISTRY, "gpu", CUDABackend())
+    p = plan(q.OperatorSpec.attention(mode="linear"))
+    model = p.build("jax")
+    params = model.init(jax.random.key(8))
+    x = jnp.ones((2, 3, 2), dtype=jnp.float32)
+    grads = jax.jit(jax.grad(lambda w: jnp.sum(model(w, x) ** 2)))(params)
+    assert all(stage.backend == "jax-gpu" for stage in model.execution_plan.stages)
+    assert all(device.platform == "gpu" for value in grads.values() for device in value.devices())
+    assert all(np.isfinite(value).all() for value in grads.values())
