@@ -205,11 +205,14 @@ def slicing_circuit():
     return builder.build()
 
 
-def test_exact_slicing_reduces_live_memory_and_never_prunes_amplitudes():
+@pytest.mark.parametrize("reuse", [False, True])
+def test_exact_slicing_reduces_live_memory_and_never_prunes_amplitudes(reuse):
     circuit, obs = slicing_circuit(), (q.PauliString("Z" * 10),)
     whole = q.TensorNetworkPlan(circuit, obs, max_memory_mb=64, max_slices=1)
     budget = (whole._metadata_bytes + 0.6 * (whole.working_bytes - whole._metadata_bytes)) / 2**20
-    sliced = q.TensorNetworkPlan(circuit, obs, max_memory_mb=budget, max_slices=64)
+    sliced = q.TensorNetworkPlan(
+        circuit, obs, max_memory_mb=budget, max_slices=64, reuse_intermediates=reuse
+    )
     assert sliced.working_bytes <= budget * 2**20 < whole.working_bytes
     assert sliced.to_dict()["contractions"][0]["slices"] > 1
     np.testing.assert_allclose(

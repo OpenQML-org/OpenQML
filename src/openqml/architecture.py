@@ -158,6 +158,8 @@ class HybridArchitecture:
     norm_epsilon: float = 1e-5
     operators: object = field(default_factory=OperatorSpec)
     readout_pooling: str = "none"
+    input_lift: str = "none"
+    native_execution: str = "auto"
     parameters: tuple = field(init=False, repr=False)
     cells: tuple = field(init=False, repr=False)
     operator_specs: tuple = field(init=False, repr=False)
@@ -184,8 +186,20 @@ class HybridArchitecture:
             raise ValidationError("rematerialize must be a boolean.")
         if self.projection_policy not in {"auto", "dense", "tensor-train"}:
             raise ValidationError("projection_policy must be auto, dense or tensor-train.")
-        if self.readout_pooling not in {"none", "mean", "sum", "first"}:
-            raise ValidationError("Readout pooling must be none, mean, sum or first.")
+        if self.native_execution not in {
+            "auto",
+            "pauli",
+            "pauli-transfer",
+            "planned",
+            "tensor-network",
+        }:
+            raise ValidationError("Unknown native execution method.")
+        if self.readout_pooling not in {"none", "mean", "sum", "first", "pair-invariant"}:
+            raise ValidationError("Unknown readout pooling.")
+        if self.input_lift not in {"none", "graph-pairs"}:
+            raise ValidationError("input_lift must be none or graph-pairs.")
+        if self.readout_pooling == "pair-invariant" and self.input_lift != "graph-pairs":
+            raise ValidationError("pair-invariant readout requires graph-pairs input lifting.")
         operators = (
             (self.operators,) * self.depth
             if isinstance(self.operators, OperatorSpec)
@@ -195,6 +209,11 @@ class HybridArchitecture:
             raise ValidationError("Provide one OperatorSpec or one operator per block.")
         object.__setattr__(self, "operators", operators)
         object.__setattr__(self, "operator_specs", operators)
+        if self.input_lift == "graph-pairs" and (
+            operators[0].kind != "pair-graph"
+            or any(o.kind not in {"pair-graph", "pointwise"} for o in operators)
+        ):
+            raise ValidationError("graph-pairs uses pair-graph first, then pair/pointwise blocks.")
         if self.depth * (2 * self.hidden_features + 2) > self.max_parameters:
             raise ResourceError("Architecture depth exceeds the parameter admission budget.")
         configurations = (
@@ -276,12 +295,16 @@ class HybridArchitecture:
         ):
             parameter(f"{group}_{name}", shape, role, group, initialization, scale)
 
+        stem_width = self.input_features
+        if self.input_lift == "graph-pairs":
+            config = operators[0].config
+            stem_width = 2 * stem_width + 2 + config["edge_features"] + int(config["geometric"])
         parameter(
             "stem_weight",
-            (self.input_features, h),
+            (stem_width, h),
             "classical",
             "shared",
-            scale=1 / math.sqrt(self.input_features),
+            scale=1 / math.sqrt(stem_width),
         )
         parameter("stem_bias", (h,), "bias", "shared", "zeros")
         for i, (cell, operator) in enumerate(zip(cells, operators, strict=True)):
@@ -291,6 +314,7 @@ class HybridArchitecture:
             parameter(f"{group}_gain_q", (), "gate", group, "zeros")
             parameter(f"{group}_gain_ff", (), "gate", group, "zeros")
             spec = cell.to_spec()
+            operator.implementation.validate_cell(spec, operator.config)
             kernel_width = integer(
                 operator.implementation.input_width(h, operator.config), "kernel input width", 1
             )
@@ -332,7 +356,7 @@ class HybridArchitecture:
             projection(f"{group}_ff_down", h * self.expansion, h, group)
         parameter(
             "readout_weight",
-            (h, self.output_features),
+            (h * (2 if self.readout_pooling == "pair-invariant" else 1), self.output_features),
             "classical",
             "shared",
             scale=1 / math.sqrt(h),
@@ -391,6 +415,10 @@ class HybridArchitecture:
             value["operators"] = [o.to_dict() for o in self.operator_specs]
         if self.readout_pooling != "none":
             value["readout_pooling"] = self.readout_pooling
+        if self.input_lift != "none":
+            value["input_lift"] = self.input_lift
+        if self.native_execution != "auto":
+            value["native_execution"] = self.native_execution
         return value
 
     @classmethod
@@ -518,7 +546,12 @@ class HybridArchitecture:
         return ops.xp.where(mask[..., None], value, 0)
 
     def input_metadata(self, inputs):
-        return input_metadata(inputs, self.input_features)[2]
+        meta = input_metadata(inputs, self.input_features)[2]
+        if self.input_lift == "graph-pairs":
+            if "edges" not in meta:
+                raise ValidationError("Pair graphs require edge_index and nodes[B,N,F].")
+            meta = dict(meta, pair_nodes=meta["sites"], sites=meta["sites"] ** 2)
+        return meta
 
     def execution_batches(self, metadata, microbatch_samples, index):
         samples = metadata["samples"]
@@ -539,6 +572,12 @@ class HybridArchitecture:
         depth = self.active(active_depth)
         inputs, context, metadata = input_metadata(inputs, self.input_features)
         inputs = self._masked(inputs, context, backend)
+        if self.input_lift == "graph-pairs":
+            from .network_graph import lift_graph_pairs
+
+            metadata = self.input_metadata(context)
+            ctx = OperatorContext(self, 0, parameters, inputs, context, backend, None)
+            inputs, context = lift_graph_pairs(ctx)
         value = inputs @ parameters["stem_weight"] + parameters["stem_bias"]
         value = self._masked(value, context, backend)
         for index in range(depth):
@@ -554,7 +593,11 @@ class HybridArchitecture:
         if self.readout_pooling != "none" and value.ndim > 2:
             ops = _TensorOps(backend, value)
             axes = tuple(range(1, value.ndim - 1))
-            if self.readout_pooling == "first":
+            if self.readout_pooling == "pair-invariant":
+                from .network_graph import invariant_pair_readout
+
+                value = invariant_pair_readout(value, context, backend)
+            elif self.readout_pooling == "first":
                 value = value.reshape((value.shape[0], -1, value.shape[-1]))[:, 0]
             else:
                 summed = value.sum(dim=axes) if backend == "torch" else ops.xp.sum(value, axis=axes)
@@ -667,8 +710,14 @@ class HybridArchitecture:
         return cls(
             input_features,
             output_features,
-            quantum=QuantumCellSpec(kind="hardware-efficient") if quantum is None else quantum,
-            operators=OperatorSpec.attention(
+            quantum=QuantumCellSpec(kind="qcnn" if attention == "state" else "hardware-efficient")
+            if quantum is None
+            else quantum,
+            operators=OperatorSpec.state_attention(
+                heads=heads, causal=causal, positional=positional
+            )
+            if attention == "state"
+            else OperatorSpec.attention(
                 heads=heads,
                 key_features=key_features,
                 mode=attention,
@@ -687,17 +736,25 @@ class HybridArchitecture:
         edge_features=0,
         geometric=False,
         aggregation="mean",
+        order=1,
         quantum=None,
         **options,
     ):
+        if integer(order, "order", 1) not in (1, 2):
+            raise ValidationError("Graph order must be 1 (sparse messages) or 2 (ordered pairs).")
         return cls(
             input_features,
             output_features,
             quantum=QuantumCellSpec(kind="hardware-efficient") if quantum is None else quantum,
-            operators=OperatorSpec.graph(
+            operators=OperatorSpec.pair_graph(edge_features=edge_features, geometric=geometric)
+            if order == 2
+            else OperatorSpec.graph(
                 edge_features=edge_features, geometric=geometric, aggregation=aggregation
             ),
-            readout_pooling=options.pop("readout_pooling", "mean"),
+            readout_pooling=options.pop(
+                "readout_pooling", "pair-invariant" if order == 2 else "mean"
+            ),
+            input_lift="graph-pairs" if order == 2 else "none",
             **options,
         )
 

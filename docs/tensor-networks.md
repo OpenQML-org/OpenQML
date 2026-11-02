@@ -20,6 +20,17 @@ autodiff-tape bounds. No global qubit-count ceiling is introduced.
 
 ## Differentiable circuit contraction
 
+`TensorNetworkPlan(...,reuse_intermediates=True)` reserves a bounded part of its
+memory budget for common contraction subexpressions across readouts and exact
+slices. Matching tensors, contraction axes and dependencies are interned; shared
+native autodiff nodes accumulate their adjoints. Eviction only repeats work and
+never changes values. The cache is discarded after every evaluation, including
+each rematerialized replay. Distributed placement uses its own executor and does
+not use this local cache. This adapts shared-work DAG ideas from
+[Jet](https://arxiv.org/abs/2107.09793); effectiveness depends on overlap between
+chosen contraction trees. Use `tensor_options={"reuse_intermediates":True}` on a
+native tensor-network `QuantumLayer` to enable it in training.
+
 `QuantumLayer(..., execution_method="tensor-network")` works in Torch, JAX and
 Flax. `tensor_options` controls `optimizer`, `search_trials`, `max_work`,
 `max_operations`, `max_slices` and `max_flops`. The pure-Python bounded greedy

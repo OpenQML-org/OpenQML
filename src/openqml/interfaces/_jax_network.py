@@ -29,7 +29,13 @@ class HybridNetwork:
         pinned = "jax" if isinstance(self.runtime, CostAwareBackend) else self.runtime
         self._layers = tuple(
             QuantumLayer.from_spec(
-                cell.to_spec(), backend=pinned, max_memory_mb=architecture.max_memory_mb
+                cell.to_spec(),
+                backend=pinned,
+                max_memory_mb=architecture.max_memory_mb,
+                execution_method=architecture.native_execution if pinned == "jax" else "auto",
+                tensor_options={"reuse_intermediates": True}
+                if pinned == "jax" and architecture.native_execution == "tensor-network"
+                else None,
             )
             for cell in architecture.cells
         )
@@ -107,6 +113,10 @@ class HybridNetwork:
                 self.architecture.cells[index].to_spec(),
                 backend=backend,
                 max_memory_mb=self.architecture.max_memory_mb,
+                execution_method=self.architecture.native_execution if backend == "jax" else "auto",
+                tensor_options={"reuse_intermediates": True}
+                if backend == "jax" and self.architecture.native_execution == "tensor-network"
+                else None,
             )
         value._layers, value.execution_plan, value._route_keys = tuple(layers), plan, keys
         return value

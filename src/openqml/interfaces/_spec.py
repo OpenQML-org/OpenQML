@@ -231,7 +231,13 @@ def prepare_layer(circuit, inputs, weights, observables, *, optimize, optimizati
         from ..optimization import optimize as optimize_circuit
 
         options = {} if optimization_options is None else dict(optimization_options)
-        if set(options) - {"max_operations", "max_depth", "max_passes"}:
+        if set(options) - {
+            "max_operations",
+            "max_depth",
+            "max_passes",
+            "pauli_fusion",
+            "max_pauli_work",
+        }:
             raise ValidationError("Unknown layer optimization option.")
         report = optimize_circuit(circuit, **options)
     return (*names, circuit if report is None else report.circuit, report)
@@ -277,19 +283,21 @@ def prepare_execution(
     if not isinstance(method, str) or method not in {
         "auto",
         "pauli",
+        "pauli-transfer",
         "planned",
         "components",
         "tensor-network",
     }:
         raise ValidationError(
-            "execution_method must be auto, pauli, planned, components or tensor-network."
+            "execution_method must be auto, pauli, pauli-transfer, planned, "
+            "components or tensor-network."
         )
     if tensor_options is not None and (
         method != "tensor-network" or not isinstance(tensor_options, Mapping)
     ):
         raise ValidationError("tensor_options requires tensor-network execution and a mapping.")
     if options is not None and (
-        method not in {"pauli", "planned"} or not isinstance(options, Mapping)
+        method not in {"pauli", "pauli-transfer", "planned"} or not isinstance(options, Mapping)
     ):
         raise ValidationError("pauli_options requires pauli/planned execution and a mapping.")
     if planning_options is not None and (
@@ -331,6 +339,7 @@ def prepare_execution(
             "optimizer",
             "search_trials",
             "rematerialize",
+            "reuse_intermediates",
         }:
             raise ValidationError("Unknown tensor contraction option.")
         return TensorNetworkPlan(
@@ -352,6 +361,12 @@ def prepare_execution(
             raise ValidationError("Unknown expectation planning option.")
         return ExpectationPlan(
             circuit, observables, max_memory_mb=limits["max_memory_mb"], **settings, **planning
+        )
+    if method == "pauli-transfer":
+        from ..pauli_transfer import PauliTransferPlan
+
+        return PauliTransferPlan(
+            circuit, observables, max_memory_mb=limits["max_memory_mb"], **settings
         )
     return PauliPlan(circuit, observables, max_memory_mb=limits["max_memory_mb"], **settings)
 
@@ -475,15 +490,27 @@ def numeric_expectations(layer, weights, inputs):
         return layer.adjoint_plan.expectations(
             columns, batch_size=count, batch_chunk_size=layer.batch_chunk_size
         )
+    import numpy as np
+
     from ..batch import expectations_batch
 
     backend = layer.shift_plan._backend()
     rows = numeric_rows(layer, weights, inputs)
+    inverse = None
+    if layer.shift_plan.coalesce:
+        # Same determinism contract as the shifted pullback. Do not merge
+        # independent finite-shot estimates or persist results across updates.
+        columns, count = numeric_columns(layer, weights, inputs)
+        for row in rows:
+            layer.circuit.bind(row)
+        unique, inverse = [], np.empty(count, dtype=int)
+        for members in layer.shift_plan._groups(columns, count):
+            inverse[list(members)] = len(unique)
+            unique.append(rows[members[0]])
+        rows = unique
     size = layer.batch_chunk_size
     if size is not None and len(rows) > size:
-        import numpy as np
-
-        return np.concatenate(
+        result = np.concatenate(
             [
                 expectations_batch(
                     layer.circuit,
@@ -496,13 +523,15 @@ def numeric_expectations(layer, weights, inputs):
             ],
             axis=0,
         )
-    return expectations_batch(
-        layer.circuit,
-        layer.observables,
-        rows,
-        backend=backend,
-        **layer.limits,
-    )
+    else:
+        result = expectations_batch(
+            layer.circuit,
+            layer.observables,
+            rows,
+            backend=backend,
+            **layer.limits,
+        )
+    return result if inverse is None else result[inverse]
 
 
 def numeric_rows(layer, weights, inputs):

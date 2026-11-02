@@ -194,6 +194,10 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
         self.weights = nn.Parameter(
             torch.randn(len(self.weight_parameters), dtype=dtype, device=device) * init_scale
         )
+        from ..pauli_transfer import PauliTransferPlan
+
+        if isinstance(self.execution_plan, PauliTransferPlan):
+            self.execution_plan.prepare_torch(self.weights)
 
     @classmethod
     def from_checkpoint(cls, checkpoint, **kwargs):

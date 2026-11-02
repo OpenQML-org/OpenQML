@@ -61,6 +61,9 @@ class NetworkOperator:
     def validate_metadata(self, metadata, config):
         pass
 
+    def validate_cell(self, spec, config):
+        pass
+
     def apply(self, context):
         return context.project("decode", context.kernel(context.inputs))
 
@@ -162,6 +165,30 @@ class OperatorSpec:
                 aggregation=aggregation,
                 chunk_size=chunk_size,
             ),
+        )
+
+    @classmethod
+    def state_attention(
+        cls, *, heads=1, causal=False, positional=True, chunk_size=64, depolarization=0.01
+    ):
+        """One quantum feature bank and a learned physical reduced-state kernel."""
+        return cls(
+            "state-attention",
+            dict(
+                heads=heads,
+                causal=causal,
+                positional=positional,
+                chunk_size=chunk_size,
+                depolarization=depolarization,
+            ),
+        )
+
+    @classmethod
+    def pair_graph(cls, *, edge_features=0, geometric=False, chunk_size=64):
+        """Persistent ordered-pair states with a factorized higher-order update."""
+        return cls(
+            "pair-graph",
+            dict(edge_features=edge_features, geometric=geometric, chunk_size=chunk_size),
         )
 
 
@@ -282,6 +309,66 @@ class _Graph(NetworkOperator):
         return quantum_messages(ctx)
 
 
+class _StateAttention(NetworkOperator):
+    def validate(self, c):
+        from .parameters import real
+
+        _fields(c, ("heads", "causal", "positional", "chunk_size", "depolarization"))
+        for key in ("heads", "chunk_size"):
+            integer(c[key], key, 1)
+        if any(type(c[k]) is not bool for k in ("causal", "positional")):
+            raise ValidationError("State attention flags must be boolean.")
+        if not 0 < real(c["depolarization"]) < 1:
+            raise ValidationError("depolarization must lie strictly between zero and one.")
+
+    def validate_cell(self, spec, c):
+        from .network_attention import reduced_state_groups
+
+        reduced_state_groups(spec)
+
+    def validate_metadata(self, metadata, c):
+        _Attention().validate_metadata(metadata, c)
+
+    def declare(self, hidden, readouts, c, projection, parameter):
+        if hidden % c["heads"]:
+            raise ValidationError("Hidden width must be divisible by attention heads.")
+        parameter("state_channel", (c["heads"], readouts // 3, 4), scale=0.05)
+
+    def row_chunks(self, metadata, c):
+        return _Convolution().row_chunks(metadata, c)
+
+    def apply(self, ctx):
+        from .network_attention import state_attention
+
+        return state_attention(ctx)
+
+
+class _PairGraph(NetworkOperator):
+    def validate(self, c):
+        _fields(c, ("edge_features", "geometric", "chunk_size"))
+        integer(c["edge_features"], "edge_features", 0)
+        integer(c["chunk_size"], "chunk_size", 1)
+        if type(c["geometric"]) is not bool:
+            raise ValidationError("geometric must be boolean.")
+
+    def validate_metadata(self, metadata, c):
+        if "pair_nodes" not in metadata:
+            raise ValidationError("pair-graph requires input_lift='graph-pairs'.")
+
+    def declare(self, hidden, readouts, c, projection, parameter):
+        projection("pair_left", hidden + readouts, hidden)
+        projection("pair_right", hidden + readouts, hidden)
+        projection("pair_contract", hidden, hidden)
+
+    def row_chunks(self, metadata, c):
+        return _Convolution().row_chunks(metadata, c)
+
+    def apply(self, ctx):
+        from .network_graph import quantum_pairs
+
+        return quantum_pairs(ctx)
+
+
 def input_metadata(inputs, input_features):
     context = inputs if isinstance(inputs, Mapping) else {}
     x = context.get("nodes", context.get("x")) if context else inputs
@@ -348,6 +435,11 @@ class OperatorContext:
             else self.xp.sum(value, axis=axis, keepdims=keepdims)
         )
 
+    def zeros(self, shape):
+        if self.backend == "torch":
+            return self.xp.zeros(shape, dtype=self.inputs.dtype, device=self.inputs.device)
+        return self.xp.zeros(shape, dtype=self.inputs.dtype)
+
     def project(self, name, value):
         return self.architecture._linear(
             f"{self.group}_{name}", self.parameters, value, self.backend
@@ -393,5 +485,7 @@ for _name, _operator in (
     ("convolution", _Convolution()),
     ("attention", _Attention()),
     ("graph", _Graph()),
+    ("state-attention", _StateAttention()),
+    ("pair-graph", _PairGraph()),
 ):
     register_network_operator(_name, _operator)

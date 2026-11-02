@@ -172,16 +172,20 @@ class TensorNetworkPlan:
     optimizer: str = "greedy"
     search_trials: int = 16
     rematerialize: bool = False
+    reuse_intermediates: bool = False
     _graphs: tuple = field(init=False, repr=False)
     _routes: tuple = field(init=False, repr=False)
     _metadata_bytes: int = field(init=False, repr=False)
     active_parameters: tuple = field(init=False)
     working_bytes: int = field(init=False)
     planning_work: int = field(init=False)
+    _reuse_bytes: int = field(init=False, repr=False)
 
     def __post_init__(self):
         if type(self.rematerialize) is not bool:
             raise ValidationError("rematerialize must be a boolean.")
+        if type(self.reuse_intermediates) is not bool:
+            raise ValidationError("reuse_intermediates must be a boolean.")
         _check_circuit_limits(self.circuit, max_operations=self.max_operations)
         if self.circuit.has_effects:
             raise ValidationError("Circuit tensor contractions currently require unitary circuits.")
@@ -215,6 +219,8 @@ class TensorNetworkPlan:
                 raise ResourceError("Tensor contraction descriptors exceed max_memory_mb.")
             raw.append((c, desc, labels))
         capacity = int(budget * 2**20) - metadata
+        reuse_bytes = capacity // 5 if self.reuse_intermediates else 0
+        capacity -= reuse_bytes
         if capacity <= 0:
             raise ResourceError("Tensor contraction descriptors exceed max_memory_mb.")
         graphs, active, maximum, total_flops = [], set(), 1, 0
@@ -264,7 +270,8 @@ class TensorNetworkPlan:
             ("_graphs", tuple(graphs)),
             ("_routes", routes),
             ("_metadata_bytes", metadata),
-            ("working_bytes", metadata + maximum),
+            ("working_bytes", metadata + maximum + reuse_bytes),
+            ("_reuse_bytes", reuse_bytes),
             ("active_parameters", tuple(sorted(active))),
             ("planning_work", work),
             ("max_memory_mb", budget),
@@ -275,8 +282,8 @@ class TensorNetworkPlan:
     def batch_capacity(self):
         return max(
             1,
-            int(self.max_memory_mb * 2**20 - self._metadata_bytes)
-            // max(1, self.working_bytes - self._metadata_bytes),
+            int(self.max_memory_mb * 2**20 - self._metadata_bytes - self._reuse_bytes)
+            // max(1, self.working_bytes - self._metadata_bytes - self._reuse_bytes),
         )
 
     def to_dict(self):
@@ -284,6 +291,8 @@ class TensorNetworkPlan:
             "representation": "exact_circuit_tensor_network",
             "optimizer": self.optimizer,
             "rematerialize": self.rematerialize,
+            "reuse_intermediates": self.reuse_intermediates,
+            "reuse_cache_bytes": self._reuse_bytes,
             "num_qubits": self.circuit.num_qubits,
             "readouts": len(self.observables),
             "working_bytes": self.working_bytes,
@@ -349,29 +358,55 @@ class TensorNetworkPlan:
             zero = zero + (value * 0) ** 2
         constants = {p: ops.array(m) for p, m in zip("IXYZ", (_I, _X, _Y, _Z), strict=True)}
         constants["zero"] = ops.array((1, 0))
+        from ._contraction_reuse import ContractionReuse
+
+        reuse = (
+            ContractionReuse(self._reuse_bytes)
+            if self.reuse_intermediates and _executor is None
+            else None
+        )
         readouts = []
         for graph_index, (desc, original, labels, steps, sliced, _, _, _) in enumerate(
             self._graphs
         ):
             # Gate tensors are pure functions of this call's bindings. Reuse
             # ket tensors for their conjugates and across all exact slices.
-            gates, raw = {}, []
+            gates, raw, origins = {}, [], []
             for j, (kind, op, bra) in enumerate(desc):
                 if kind == "gate":
-                    key = id(op)
+                    key = (op.name, op.params, op.matrix)
                     if key not in gates:
-                        angles = tuple(p.evaluate(local) for p in op.params)
-                        gates[key] = _gate_matrix(op.name, angles, ops, op.matrix)
+                        gate_id = reuse.node(("gate", key)) if reuse else None
+                        matrix = reuse.get(gate_id) if reuse else None
+                        if matrix is None:
+                            angles = tuple(p.evaluate(local) for p in op.params)
+                            matrix = _gate_matrix(op.name, angles, ops, op.matrix)
+                            if reuse:
+                                reuse.put(gate_id, matrix)
+                        gates[key] = matrix
                     matrix = gates[key]
                     value = ops.conj(matrix) if bra else matrix
                     value = value.reshape(value.shape[:-2] + (2,) * len(original[j]))
                 else:
                     value = constants["zero" if kind == "zero" else op]
                 raw.append(value)
+                origins.append(
+                    reuse.node(
+                        (
+                            "input",
+                            kind,
+                            key if kind == "gate" else op,
+                            bra if kind == "gate" else False,
+                            len(original[j]),
+                        )
+                    )
+                    if reuse
+                    else None
+                )
             total = zero
             for assignment in range(1 << len(sliced)):
                 fixed = {index: (assignment >> j) & 1 for j, index in enumerate(sliced)}
-                values = {}
+                values, identities = {}, {}
                 for j, value in enumerate(raw):
                     prefix = value.ndim - len(original[j])
                     select = (slice(None),) * prefix + tuple(
@@ -381,13 +416,42 @@ class TensorNetworkPlan:
                     values[j] = (
                         selected if _executor is None else _executor.input(selected, labels[j])
                     )
+                    identities[j] = (
+                        reuse.node(
+                            ("slice", origins[j], tuple(fixed.get(index) for index in original[j]))
+                        )
+                        if reuse and origins[j] is not None
+                        else None
+                    )
                 for k, (a, b, la, lb, shared, _) in enumerate(steps):
                     left, right = values.pop(a), values.pop(b)
-                    values[len(desc) + k] = (
-                        _contract(left, right, la, lb, shared, ops)
-                        if _executor is None
-                        else _executor.contract(left, right, la, lb, shared, graph_index, k)
+                    ia, ib = identities.pop(a), identities.pop(b)
+                    key = (
+                        reuse.node(
+                            (
+                                "contract",
+                                ia,
+                                ib,
+                                tuple(la.index(i) for i in shared),
+                                tuple(lb.index(i) for i in shared),
+                            )
+                        )
+                        if reuse and ia is not None and ib is not None
+                        else None
                     )
+                    cached = reuse.get(key) if reuse else None
+                    result = (
+                        cached
+                        if cached is not None
+                        else (
+                            _contract(left, right, la, lb, shared, ops)
+                            if _executor is None
+                            else _executor.contract(left, right, la, lb, shared, graph_index, k)
+                        )
+                    )
+                    values[len(desc) + k], identities[len(desc) + k] = result, key
+                    if reuse and cached is None:
+                        reuse.put(key, result)
                 result = next(iter(values.values()))
                 if _executor is not None:
                     result = _executor.finish(result)

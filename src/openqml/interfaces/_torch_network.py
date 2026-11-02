@@ -37,6 +37,8 @@ class _QuantumExecution:
         self.distributed = mesh is not None and not self.spec.circuit.has_effects
         self.external = not (isinstance(backend, str) and backend == "torch")
         if self.distributed:
+            if architecture.native_execution not in {"auto", "tensor-network"}:
+                raise ValidationError("A pinned tensor mesh requires tensor-network execution.")
             self.plan = DistributedTensorPlan(
                 self.spec.circuit,
                 self.spec.observables,
@@ -50,18 +52,23 @@ class _QuantumExecution:
             # The network's ParameterDict is the sole parameter owner. The
             # execution view receives explicit weights and owns no duplicate
             # quantum Parameter or optimizer state. Preserve caller RNG state.
+            execution_device = target if target is not None else device
             devices = (
                 []
-                if device is None or torch.device(device).type != "cuda"
-                else [torch.device(device).index]
+                if execution_device is None or torch.device(execution_device).type != "cuda"
+                else [torch.device(execution_device).index]
             )
             with torch.random.fork_rng(devices=devices):
                 self.layer = QuantumLayer.from_spec(
                     self.spec,
                     backend=backend,
                     dtype=dtype,
-                    device=device,
+                    device=execution_device,
                     max_memory_mb=architecture.max_memory_mb,
+                    execution_method="auto" if self.external else architecture.native_execution,
+                    tensor_options={"reuse_intermediates": True}
+                    if not self.external and architecture.native_execution == "tensor-network"
+                    else None,
                 )
             del self.layer._parameters["weights"]
 
