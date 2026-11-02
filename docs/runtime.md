@@ -21,7 +21,9 @@ the actual transpiled layout, provider grouping and calibration regime.
 | `TrainingWorkload.batch_size`, `steps` | Circuit rows per sequential optimizer step and number of steps |
 | `gradient_evaluations` | Shifted circuits per row; `parameter_shift(circuit, observables)` counts occurrences and controlled-gate recipes |
 | `native_gradient_evaluations` | Separate native forward/backward forecast for framework layers |
+| `native_devices` | Platforms supporting native autodiff; other platforms include parameter-shift work |
 | `submission_batch_size` | Client chunking limit, combined with provider batch limits |
+| `microbatch_size`, `gradient_chunk_size` | Sequential training microbatches and shifted-row submission chunks |
 | `classical_seconds_per_step`, `classical_cost_per_step` | Encoder, optimizer and other classical work |
 | `ExecutionProfile` | Queue, job latency, circuit/shot time, prices, concurrency, groups, mitigation overhead and uncertainty |
 | `SchedulingPolicy` | Cost/deadline/error limits, time/cost/error preferences and uncertainty margin |
@@ -32,6 +34,14 @@ Billing sums total device use, even when jobs overlap. All quotes use the
 policy's currency. QPU quotes require explicit queue, pricing and noise values;
 zero must be an intentional declaration. Unknown fields are labelled in plans.
 Timestamped quotes expire; static declarations remain estimates, not measurements.
+
+`max_batch_size` limits parameter rows per submission. All readouts for a row
+are submitted together; `measurement_groups` multiplies physical circuit and
+shot work, rather than parameter rows. The default conservatively counts distinct
+nonidentity Pauli words; a quote can declare the provider's compiled grouping.
+Numeric execution enforces the quoted row limit and preserves result order.
+`concurrency > 1` authorizes concurrent provider calls and requires a thread-safe
+provider. Optimizer and microbatch dependencies remain sequential.
 
 For a normalized readout the shot model is `RMSE² = bias² + variance / shots`.
 Observable coefficient norms scale it. The scheduler chooses the smallest
@@ -58,7 +68,7 @@ remain external. Native framework graphs keep their own optimizer/device scope.
 
 `register_qpu_backend` wraps a caller-initialized execution provider. Availability
 is an explicit boolean or caller-owned zero-argument callback. Registration does
-not discover credentials, select a cloud account or contact a device. Multiple
+not discover credentials, select a cloud account or contact a device.
 `profile=` accepts the same quote object/callback. Device width, gates, quantum effects,
 requested output and resource policy determine eligibility.
 

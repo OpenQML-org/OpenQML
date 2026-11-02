@@ -188,6 +188,36 @@ def test_microbatch_phases_keep_primal_and_gradient_chunk_limits_separate():
     assert cost.seconds == pytest.approx(36 + 1.1)
 
 
+def test_profile_batch_limit_and_readout_groups_match_actual_submissions(devices):
+    device = devices[0]
+    scheduler = q.CostAwareBackend(
+        profiles={device.name: profile(0.01, max_batch_size=2, concurrency=2, cost_per_job=1)}
+    )
+    x = q.Parameter("x")
+    circuit, obs = (
+        q.Circuit(1).ry(x, 0),
+        (q.PauliString("X"), q.PauliString("Y"), q.PauliString("Z")),
+    )
+    values = np.arange(5) * 0.2
+    actual = q.expectations_batch(circuit, obs, [{"x": v} for v in values], backend=scheduler)
+    np.testing.assert_allclose(actual[:, 0], np.sin(values), atol=1e-14)
+    np.testing.assert_allclose(actual[:, 2], np.cos(values), atol=1e-14)
+    assert sorted(n for n, _ in device.calls) == [1, 2, 2]
+    quote = scheduler.plan([circuit] * 5, observables=obs)
+    estimate = next(c.estimate for c in quote.candidates if c.backend == device.name)
+    assert estimate["provider_jobs"] == 3 and estimate["physical_shots"] == 1500
+
+
+def test_numpy_scalar_profiles_are_json_serializable(devices):
+    import json
+
+    scheduler = q.CostAwareBackend(
+        profiles={devices[0].name: profile(np.float32(0.01), max_batch_size=np.int64(2))},
+        workload=q.TrainingWorkload(steps=np.int64(3)),
+    )
+    json.dumps(scheduler.plan(q.Circuit(1), observables=(q.PauliString("Z"),)).to_dict())
+
+
 def test_feedback_is_bounded_and_can_deprioritize_a_slow_device(devices):
     profiles = {"cost-qpu": profile(0.1), "gpu": profile(0.2)}
     feedback = q.ExecutionFeedback(capacity=2, window=3)

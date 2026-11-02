@@ -133,9 +133,13 @@ def test_readme_uses_the_public_package_import():
     assert blocks
     namespace = {}
     for block in blocks:
-        if "oq.torch" in block:
-            pytest.importorskip("torch")
         program = ast.parse(block)
+        if "oq.torch" in block or any(
+            (isinstance(node, ast.Import) and any(a.name == "torch" for a in node.names))
+            or (isinstance(node, ast.ImportFrom) and node.module == "torch")
+            for node in ast.walk(program)
+        ):
+            pytest.importorskip("torch")
         imports = [
             alias
             for node in ast.walk(program)

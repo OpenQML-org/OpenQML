@@ -38,24 +38,37 @@ class TrainingWorkload:
 
     def __post_init__(self):
         if self.batch_size is not None:
-            integer(self.batch_size, "batch_size", 1)
-        integer(self.steps, "steps", 1)
-        integer(self.gradient_evaluations, "gradient_evaluations", 0)
+            object.__setattr__(self, "batch_size", integer(self.batch_size, "batch_size", 1))
+        object.__setattr__(self, "steps", integer(self.steps, "steps", 1))
+        object.__setattr__(
+            self,
+            "gradient_evaluations",
+            integer(self.gradient_evaluations, "gradient_evaluations", 0),
+        )
         if self.native_gradient_evaluations is not None:
-            integer(self.native_gradient_evaluations, "native_gradient_evaluations", 0)
+            object.__setattr__(
+                self,
+                "native_gradient_evaluations",
+                integer(self.native_gradient_evaluations, "native_gradient_evaluations", 0),
+            )
         devices = tuple(self.native_devices)
         if any(device not in {"CPU", "GPU"} for device in devices):
             raise ValidationError("Native gradient devices must be CPU/GPU.")
         object.__setattr__(self, "native_devices", devices)
         if self.submission_batch_size is not None:
-            integer(self.submission_batch_size, "submission_batch_size", 1)
+            object.__setattr__(
+                self,
+                "submission_batch_size",
+                integer(self.submission_batch_size, "submission_batch_size", 1),
+            )
         for name in ("microbatch_size", "gradient_chunk_size"):
             if getattr(self, name) is not None:
-                integer(getattr(self, name), name, 1)
-        if real(self.classical_seconds_per_step) < 0:
-            raise ValidationError("classical_seconds_per_step must be nonnegative.")
-        if real(self.classical_cost_per_step) < 0:
-            raise ValidationError("classical_cost_per_step must be nonnegative.")
+                object.__setattr__(self, name, integer(getattr(self, name), name, 1))
+        for name in ("classical_seconds_per_step", "classical_cost_per_step"):
+            value = real(getattr(self, name))
+            if value < 0:
+                raise ValidationError(f"{name} must be nonnegative.")
+            object.__setattr__(self, name, value)
 
     @classmethod
     def parameter_shift(cls, circuit, observables, *, parameters=None, **kwargs):
@@ -87,11 +100,16 @@ class SchedulingPolicy:
     def __post_init__(self):
         for name in ("max_cost", "max_seconds", "max_rmse"):
             value = getattr(self, name)
-            if value is not None and real(value) < 0:
-                raise ValidationError(f"{name} must be nonnegative.")
+            if value is not None:
+                value = real(value)
+                if value < 0:
+                    raise ValidationError(f"{name} must be nonnegative.")
+                object.__setattr__(self, name, value)
         for name in ("time_weight", "cost_weight", "error_weight", "risk_sigma"):
-            if real(getattr(self, name)) < 0:
+            value = real(getattr(self, name))
+            if value < 0:
                 raise ValidationError(f"{name} must be nonnegative.")
+            object.__setattr__(self, name, value)
         if not self.time_weight + self.cost_weight + self.error_weight:
             raise ValidationError("At least one scheduling weight must be positive.")
         if type(self.require_profiles) is not bool:
@@ -153,8 +171,10 @@ class ExecutionProfile:
                 continue
             if real(value) < 0:
                 raise ValidationError(f"{name} must be nonnegative.")
+            object.__setattr__(self, name, real(value))
         if real(self.mitigation_overhead) < 1:
             raise ValidationError("mitigation_overhead must be at least one.")
+        object.__setattr__(self, "mitigation_overhead", real(self.mitigation_overhead))
         for name in (
             "shots",
             "min_shots",
@@ -162,13 +182,20 @@ class ExecutionProfile:
             "max_batch_size",
             "concurrency",
         ):
-            integer(getattr(self, name), name, 1)
+            object.__setattr__(self, name, integer(getattr(self, name), name, 1))
         if self.measurement_groups is not None:
-            integer(self.measurement_groups, "measurement_groups", 1)
+            object.__setattr__(
+                self,
+                "measurement_groups",
+                integer(self.measurement_groups, "measurement_groups", 1),
+            )
         if not self.min_shots <= self.shots <= self.max_shots:
             raise ValidationError("Profile shots must lie within min_shots/max_shots.")
-        if self.observed_at is not None and real(self.observed_at) < 0:
-            raise ValidationError("observed_at must be a nonnegative Unix timestamp.")
+        if self.observed_at is not None:
+            value = real(self.observed_at)
+            if value < 0:
+                raise ValidationError("observed_at must be a nonnegative Unix timestamp.")
+            object.__setattr__(self, "observed_at", value)
         if not isinstance(self.source, str) or not self.source.strip():
             raise ValidationError("A profile source is required.")
         if not isinstance(self.currency, str) or not self.currency.strip():
@@ -265,8 +292,7 @@ def estimate_cost(profile, request, policy, *, exact=False, adjustable_shots=Fal
     def phase(count, chunk=None):
         if not count:
             return 0, 0, 0, 0, 0
-        count *= groups
-        physical = math.ceil(count * shots * profile.mitigation_overhead)
+        physical = math.ceil(count * groups * shots * profile.mitigation_overhead)
         # All optimizer steps are sequential. Only jobs within a phase may
         # overlap, and a partial final wave cannot borrow future step work.
         batch_size = min(
@@ -280,21 +306,25 @@ def estimate_cost(profile, request, policy, *, exact=False, adjustable_shots=Fal
         if tail and full % profile.concurrency == 0:
             load += tail
         waves = math.ceil(jobs / profile.concurrency)
-        active = load * (
-            profile.circuit_seconds + shots * profile.shot_seconds * profile.mitigation_overhead
+        active = (
+            load
+            * groups
+            * (profile.circuit_seconds + shots * profile.shot_seconds * profile.mitigation_overhead)
         )
         wall = waves * ((profile.queue_seconds or 0) + profile.latency_seconds) + active
         # Billing may charge total device seconds even when jobs overlap.
-        device_seconds = count * (
-            profile.circuit_seconds + shots * profile.shot_seconds * profile.mitigation_overhead
+        device_seconds = (
+            count
+            * groups
+            * (profile.circuit_seconds + shots * profile.shot_seconds * profile.mitigation_overhead)
         )
         cost = (
             jobs * profile.cost_per_job
-            + count * profile.cost_per_circuit
+            + count * groups * profile.cost_per_circuit
             + physical * profile.cost_per_shot
             + device_seconds * (profile.cost_per_second or 0)
         )
-        return wall, cost, count, physical, jobs
+        return wall, cost, count * groups, physical, jobs
 
     gradient_count = (
         work.native_gradient_evaluations

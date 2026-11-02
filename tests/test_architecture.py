@@ -239,6 +239,30 @@ def test_network_scheduler_finds_mixed_devices_under_a_shared_budget(monkeypatch
     assert {stage.backend for stage in scheduled.stages} == {qpu.name, cpu.name}
     assert scheduled.forecast.upper_cost == 8 and scheduled.forecast.upper_seconds < 12
     assert not qpu.calls and not cpu.calls
+    torch = pytest.importorskip("torch")
+    model = plan.build("torch", backend=runtime, dtype=torch.float64)
+    with torch.no_grad():
+        for i in range(2):
+            model.values[f"block_{i}_gain_q"].fill_(0.2)
+    ids = {name: id(value) for name, value in model.values.items()}
+    trainer = model.trainer(lr=0.001, microbatch_size=3)
+    batch = (
+        torch.tensor([[0.2, 0.4], [-0.1, 0.5], [0.3, -0.2]], dtype=torch.float64),
+        torch.ones((3, 1), dtype=torch.float64),
+    )
+
+    def loss(network, b):
+        return (network(b[0]) - b[1]).square().mean()
+
+    trainer.step(batch, loss)
+    assert qpu.calls
+    submitted = list(qpu.calls)
+    qpu.available = False
+    trainer.step(batch, loss)
+    assert qpu.calls == submitted
+    assert ids == {name: id(value) for name, value in model.values.items()}
+    assert int(trainer.optimizer.state[model.values["stem_weight"]]["step"]) == 2
+    qpu.available = True
     impossible = q.CostAwareBackend(
         profiles=profiles, policy=q.SchedulingPolicy(max_cost=8, max_seconds=0.01)
     )

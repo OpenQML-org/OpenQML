@@ -2,6 +2,8 @@
 
 import hashlib
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field, replace
 from types import MappingProxyType
 
@@ -279,7 +281,7 @@ def _feedback_key(device, request, shots):
                 repr((path, op.name, op.qubits, op.clbits, len(op.params), op.condition)).encode()
             )
     digest.update(repr(request.observables).encode())
-    rows = len(request.circuits)
+    rows = max(len(request.circuits), request.workload.batch_size or 0)
     return device.name, request.task, width, digest.hexdigest(), rows.bit_length(), shots
 
 
@@ -525,11 +527,55 @@ class _ObservedBackend:
         if self.scheduler.ledger is not None:
             self.scheduler.ledger.reserve(cost.upper_cost)
         start = time.perf_counter()
-        result = (
-            callback()
-            if callback is not None
-            else getattr(self.backend, method)(*args, options=options)
-        )
+        if callback is not None:
+            result = callback()
+        elif (
+            method in {"expectations_batch", "sample_batch"}
+            and len(circuits) > profile.max_batch_size
+        ):
+            chunks = [
+                request.circuits[i : i + profile.max_batch_size]
+                for i in range(0, len(request.circuits), profile.max_batch_size)
+            ]
+            import numpy as np
+
+            seeds = (
+                [None] * len(chunks)
+                if options.seed is None
+                else [
+                    int(seed.generate_state(1)[0])
+                    for seed in np.random.SeedSequence(options.seed).spawn(len(chunks))
+                ]
+            )
+            gpu = None
+            from ._cuda_backend import CUDABackend
+
+            if isinstance(self.backend, CUDABackend):
+                import torch
+
+                gpu = torch.cuda.current_device()
+
+            def submit(index, chunk):
+                profile.check_fresh()
+                local = replace(options, seed=seeds[index])
+                with nullcontext() if gpu is None else torch.cuda.device(gpu):
+                    return getattr(self.backend, method)(chunk, *args[1:], options=local)
+
+            if profile.concurrency == 1:
+                results = [submit(i, chunk) for i, chunk in enumerate(chunks)]
+            else:
+                pool = ThreadPoolExecutor(max_workers=min(profile.concurrency, len(chunks)))
+                try:
+                    futures = [pool.submit(submit, i, chunk) for i, chunk in enumerate(chunks)]
+                    results = [future.result() for future in futures]
+                finally:
+                    pool.shutdown(wait=True, cancel_futures=True)
+            if method == "expectations_batch":
+                result = np.concatenate(results, axis=0)
+            else:
+                result = [row for chunk in results for row in chunk]
+        else:
+            result = getattr(self.backend, method)(*args, options=options)
         raw = estimate_cost(
             profile,
             request,
