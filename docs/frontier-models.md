@@ -19,8 +19,11 @@ import torch
 import openqml as oq
 
 architecture = oq.HybridArchitecture.language_model(
-    vocab_qubits=8, memory_qubits=2, environment_qubits=1,
-    hidden_features=16, depth=2,
+    vocab_qubits=8,
+    memory_qubits=2,
+    environment_qubits=1,
+    hidden_features=16,
+    depth=2,
 )
 model = architecture.build("torch")
 device = next(model.parameters()).device
