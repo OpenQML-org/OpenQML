@@ -2,11 +2,11 @@
 
 [PyPI](https://pypi.org/project/openqml/) · [CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml) · [Documentation](https://github.com/OpenQML-org/OpenQML/tree/main/docs)
 
-Trainable quantum circuits and tensor-network layers for PyTorch, JAX and Flax.
+Build and train deep quantum–classical neural networks in PyTorch, JAX and Flax.
 
 ## Installation
 
-Requires Python 3.10 or later. Install the PyTorch integration to run the example below:
+Requires Python 3.10 or later. Install the integration you use:
 
 ```bash
 python -m pip install --upgrade "openqml[torch]"
@@ -23,36 +23,43 @@ from torch import nn
 import openqml as oq
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-model = oq.torch.QuantumDeepNetwork(16, 2, num_qubits=3, depth=4, device=device)
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+architecture = oq.HybridArchitecture(
+    16,
+    2,
+    hidden_features=32,
+    depth=4,
+    quantum=oq.QuantumCellSpec(num_qubits=4, depth=1),
+)
+model = architecture.build("torch", device=device)
+trainer = model.trainer(lr=1e-3, quantum_lr=3e-4, microbatch_size=8)
 
 x = torch.randn(32, 16, device=device)
 target = torch.randint(0, 2, (32,), device=device)
-optimizer.zero_grad()
-logits = model(x)
-loss = nn.functional.cross_entropy(logits, target)
-loss.backward()
-optimizer.step()
-print(logits.shape)  # torch.Size([32, 2])
+metrics = trainer.step(
+    (x, target),
+    lambda network, batch: nn.functional.cross_entropy(network(batch[0]), batch[1]),
+)
+print(model(x).shape)  # torch.Size([32, 2])
 ```
 
-The encoder, deep quantum residual blocks and readout head share one optimizer.
+The architecture owns residual blocks, quantum cells, projections and one stable
+parameter layout. `DepthSchedule` grows active depth while preserving optimizer state.
 
 ## Choose an interface
 
 | Task | Interface |
 | --- | --- |
-| Add quantum features | `TreeQuantumLayer` |
+| Build a hybrid network | `HybridArchitecture` and `QuantumCellSpec` |
 | Adjust quantum capacity | `QuantumLayer.multiscale(bond_qubits=..., depth=...)` |
 | Train an existing circuit | `QuantumLayer`; set `execution_method="tensor-network"` for native contraction |
 | Factor a dense projection | `TensorTrainLinear.from_dense(weight, bias)` |
-| Accumulate training gradients | `oq.torch.HybridTrainer` / `oq.jax.make_train_step` |
+| Train with accumulation and checkpoints | `model.trainer(...)` |
 | Train a quantum policy | `QuantumActorCritic` and `PPOTrainer` |
-| Build a deep quantum model | `QuantumDeepNetwork` / `QuantumLayer.deep` |
+| Add a quantum residual cell | `QuantumLayer.deep` |
 | Schedule time, price and precision | `CostAwareBackend` and `TrainingWorkload` |
 | Distribute circuit contractions | `DistributedTensorPlan` with a Torch `DeviceMesh` |
 
-These layers are available under `oq.torch`, `oq.jax` and `oq.flax`.
+Framework layers are available under `oq.torch`, `oq.jax` and `oq.flax`.
 JAX uses `layer.init(key)` and `layer(parameters, inputs)`; Flax uses Linen `init`/`apply`.
 Dense import returns a module in PyTorch, `(layer, parameters)` in JAX, and `(module, variables)` in Flax.
 
@@ -65,11 +72,10 @@ Native tensor layers run on their selected framework device. There is no fixed
 circuit-width ceiling; memory, contraction width and work budgets determine capacity.
 `AdaptiveMPSBackend` offers explicit approximation with checked observable-error bounds.
 `compile_program` retains SDK-supported dynamic loops; `convert` uses portable circuit IR.
-Deep quantum residual channels keep the quantum data register between blocks and
-reuse one resettable ancilla. Distributed contractions shard intermediate tensors;
-GPU scaling results require real hardware runs.
+The model planner schedules the whole network against shared time and cost limits.
+Distributed contractions shard intermediate tensors; GPU scaling requires hardware measurements.
 
-[Training and execution](https://github.com/OpenQML-org/OpenQML/blob/main/docs/training-and-execution.md) · [Tensor networks](https://github.com/OpenQML-org/OpenQML/blob/main/docs/tensor-networks.md) · [Hybrid training](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md) · [Quantum RL](https://github.com/OpenQML-org/OpenQML/blob/main/docs/quantum-rl.md) · [Circuit conversion](https://github.com/OpenQML-org/OpenQML/blob/main/docs/semantic-kernels.md) · [QPU configuration](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md)
+[Architecture](https://github.com/OpenQML-org/OpenQML/blob/main/docs/deep-learning.md) · [Distributed execution](https://github.com/OpenQML-org/OpenQML/blob/main/docs/distributed-execution.md) · [Training and execution](https://github.com/OpenQML-org/OpenQML/blob/main/docs/training-and-execution.md) · [Tensor networks](https://github.com/OpenQML-org/OpenQML/blob/main/docs/tensor-networks.md) · [Hybrid training](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md) · [Quantum RL](https://github.com/OpenQML-org/OpenQML/blob/main/docs/quantum-rl.md) · [Circuit conversion](https://github.com/OpenQML-org/OpenQML/blob/main/docs/semantic-kernels.md) · [QPU configuration](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md)
 
 ## License
 

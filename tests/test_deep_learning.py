@@ -110,7 +110,8 @@ def test_torch_deep_channels_train_and_support_native_higher_derivatives():
     x = torch.tensor([[-1.0, -0.5], [-0.4, 0.2], [0.3, 0.6], [1.0, -0.2]], dtype=torch.float64)
     target = x[:, :1] - 0.4 * x[:, 1:]
     optimizer = torch.optim.Adam(model.parameters(), lr=0.04)
-    before = model.quantum.weights.detach().clone()
+    quantum_names = [p.name for p in model.architecture.parameters if p.role == "quantum"]
+    before = {name: model.values[name].detach().clone() for name in quantum_names}
     initial = float((model(x) - target).square().mean().detach())
     for _ in range(18):
         optimizer.zero_grad()
@@ -118,7 +119,7 @@ def test_torch_deep_channels_train_and_support_native_higher_derivatives():
         loss.backward()
         optimizer.step()
     assert float(loss.detach()) < 0.6 * initial
-    assert not torch.equal(before, model.quantum.weights)
+    assert any(not torch.equal(before[name], model.values[name]) for name in quantum_names)
     result = model(x.reshape(2, 2, 2))
     assert result.shape == (2, 2, 1)
     layer = q.torch.QuantumLayer.deep(1, 2, backend="torch", dtype=torch.float64)
@@ -143,17 +144,21 @@ def test_jax_deep_model_jit_learning_and_flax_parameter_trees():
     step = q.jax.make_train_step(optimizer, objective, microbatch_size=2, max_grad_norm=None)
     state = optimizer.init(parameters)
     initial = float(objective(parameters, (x, y)).mean())
-    before = np.asarray(parameters["quantum"]).copy()
+    quantum_names = [p.name for p in model.architecture.parameters if p.role == "quantum"]
+    before = {name: np.asarray(parameters[name]).copy() for name in quantum_names}
     for _ in range(18):
         parameters, state, _ = step(parameters, state, (x, y))
     assert float(objective(parameters, (x, y)).mean()) < 0.6 * initial
-    assert not np.array_equal(before, np.asarray(parameters["quantum"]))
+    assert any(
+        not np.array_equal(before[name], np.asarray(parameters[name])) for name in quantum_names
+    )
     assert jax.jit(model)(parameters, x.reshape(2, 2, 2)).shape == (2, 2, 1)
     pytest.importorskip("flax")
     module = q.flax.QuantumDeepNetwork(2, 1, num_qubits=2, depth=2, backend="jax")
     variables = module.init(jax.random.key(7), x)
+    variables["params"]["block_0_gain_q"] = jnp.asarray(0.2, dtype=x.dtype)
     gradient = jax.jit(jax.grad(lambda p: jnp.sum(module.apply({"params": p}, x) ** 2)))(
         variables["params"]
     )
-    assert np.linalg.norm(gradient["quantum"]["weights"]) > 0
+    assert np.linalg.norm(gradient["block_0_quantum"]) > 0
     assert module.apply(variables, x).shape == (4, 1)

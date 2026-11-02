@@ -13,6 +13,7 @@ except ImportError as exc:
         'Cannot load Flax. Run: python -m pip install "openqml[flax]".'
     ) from exc
 
+from ._flax_network import HybridNetwork as HybridNetwork
 from ._jax_ppo import PPOTrainer as PPOTrainer
 from ._jax_training import accumulate_gradients as accumulate_gradients
 from ._jax_training import make_train_step as make_train_step
@@ -20,43 +21,20 @@ from ._spec import LayerSpecMixin
 from .jax import QuantumLayer as FunctionalLayer
 
 
-class QuantumDeepNetwork(nn.Module):
-    """Linen encoder, deep CPTP quantum residual channel and readout head."""
+def QuantumDeepNetwork(
+    input_size,
+    output_size,
+    *,
+    backend=None,
+    active_depth=None,
+    dtype=jnp.float32,
+    **architecture_options,
+):
+    from ..architecture import HybridArchitecture
 
-    input_size: int
-    output_size: int
-    num_qubits: int = 4
-    depth: int = 4
-    reupload: bool = True
-    initial_mixing: float = 0.1
-    backend: object = None
-    max_memory_mb: float = 256
-    dtype: object = jnp.float32
-
-    @nn.compact
-    def __call__(self, inputs):
-        import math
-
-        from ..errors import ValidationError
-        from ..ir import integer
-
-        integer(self.input_size, "input_size", 1)
-        integer(self.output_size, "output_size", 1)
-        if inputs.ndim < 1 or inputs.shape[-1] != self.input_size:
-            raise ValidationError("Input width differs from the deep quantum encoder.")
-        controls = math.pi * jnp.tanh(
-            nn.Dense(self.num_qubits, dtype=self.dtype, name="encoder")(inputs)
-        )
-        features = QuantumLayer.deep(
-            self.num_qubits,
-            self.depth,
-            reupload=self.reupload,
-            initial_mixing=self.initial_mixing,
-            backend=self.backend,
-            max_memory_mb=self.max_memory_mb,
-            dtype=self.dtype,
-        ).clone(parent=self, name="quantum")(controls)
-        return nn.Dense(self.output_size, dtype=self.dtype, name="readout")(features)
+    return HybridArchitecture.deep(input_size, output_size, **architecture_options).build(
+        "flax", backend=backend, active_depth=active_depth, dtype=dtype
+    )
 
 
 class QuantumActorCritic(nn.Module):

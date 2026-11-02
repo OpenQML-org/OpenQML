@@ -13,6 +13,8 @@ from .adaptive import AdaptivePlan, ExecutionCandidate, plan_execution
 from .adaptive_mps import AdaptiveMPSBackend, AdaptiveMPSResult
 from .adjoint import AdjointPlan, adjoint_jvp, adjoint_vjp
 from .aer import AerBackend
+from .architecture import HybridArchitecture, NetworkParameter, QuantumCellSpec
+from .architecture_runtime import NetworkExecutionPlan
 from .backends import (
     BackendCapabilities,
     DensityMatrixBackend,
@@ -77,6 +79,7 @@ from .measurement import (
 )
 from .mps import MPSBackend
 from .multiscale import MultiscalePlan
+from .network_training import DepthSchedule, StagewiseOptimizer
 from .observables import (
     Hamiltonian,
     PauliString,
@@ -188,6 +191,12 @@ __all__ = [
     "DistributedTensorPlan",
     "Interconnect",
     "DeepQuantumPlan",
+    "HybridArchitecture",
+    "QuantumCellSpec",
+    "NetworkParameter",
+    "NetworkExecutionPlan",
+    "DepthSchedule",
+    "StagewiseOptimizer",
     "TensorTrainMatrix",
     "TensorTrainPlan",
     "DispatchCandidate",

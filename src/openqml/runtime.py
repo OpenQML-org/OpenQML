@@ -342,6 +342,10 @@ class CostAwareBackend(PriorityBackend):
         adjustable = request.task == "expectations" and callable(
             getattr(device, "with_shots", None)
         )
+        if device.capabilities.device_type not in request.workload.native_devices:
+            request = replace(
+                request, workload=replace(request.workload, native_gradient_evaluations=None)
+            )
         cost = estimate_cost(
             profile, request, self.policy, exact=exact, adjustable_shots=adjustable
         )
@@ -388,6 +392,8 @@ class CostAwareBackend(PriorityBackend):
         options=None,
         shots=None,
         workload=None,
+        only_backend=None,
+        _alternatives=False,
     ):
         from .ir import Circuit, integer
 
@@ -402,6 +408,10 @@ class CostAwareBackend(PriorityBackend):
         devices, admission = super().plan(
             circuits, task=task, observables=observables, options=options, _collect=True
         )
+        if only_backend is not None:
+            if not isinstance(only_backend, str):
+                raise ValidationError("only_backend must be a backend name.")
+            devices = tuple(d for d in devices if d.name == only_backend)
         request = SchedulingRequest(circuits, observables, task, options, work, shots)
         candidates = list(admission)
         by_name = {c.backend: i for i, c in enumerate(candidates)}
@@ -439,33 +449,41 @@ class CostAwareBackend(PriorityBackend):
             costs.append(cost)
         if costs:
             selected, frontier = select_cost(costs, self.policy)
-            device, profile, key = quoted[selected]
-            if (
-                task == "expectations"
-                and costs[selected].shots
-                and callable(getattr(device, "with_shots", None))
-            ):
-                configured = device.with_shots(costs[selected].shots)
-                device = (
-                    QPUBackend(configured, device.available, device.execution_profile)
-                    if isinstance(device, QPUBackend)
-                    else configured
+
+            def materialize(index):
+                device, profile, _ = quoted[index]
+                if (
+                    task == "expectations"
+                    and costs[index].shots
+                    and callable(getattr(device, "with_shots", None))
+                ):
+                    configured = device.with_shots(costs[index].shots)
+                    device = (
+                        QPUBackend(configured, device.available, device.execution_profile)
+                        if isinstance(device, QPUBackend)
+                        else configured
+                    )
+                observed = _ObservedBackend(
+                    device, self, profile, task, observables, costs[index].shots
                 )
-            observed = _ObservedBackend(
-                device, self, profile, task, observables, costs[selected].shots
-            )
-            return DispatchPlan(
-                device.name,
-                device.capabilities.device_type,
-                task,
-                tuple(candidates),
-                observed,
-                "pareto_cost_quality_forecast",
-                tuple(quoted[i][0].name for i in frontier),
-            )
+                return DispatchPlan(
+                    device.name,
+                    device.capabilities.device_type,
+                    task,
+                    tuple(candidates),
+                    observed,
+                    "pareto_cost_quality_forecast",
+                    tuple(quoted[i][0].name for i in frontier),
+                )
+
+            if _alternatives:
+                return tuple(
+                    materialize(i) for i in (selected, *(j for j in frontier if j != selected))
+                )
+            return materialize(selected)
         if unprofiled:
             device = unprofiled[0]
-            return DispatchPlan(
+            plan = DispatchPlan(
                 device.name,
                 device.capabilities.device_type,
                 task,
@@ -473,10 +491,15 @@ class CostAwareBackend(PriorityBackend):
                 device,
                 "unprofiled_local_fallback",
             )
+            return (plan,) if _alternatives else plan
         raise ResourceError(
             "No cost/quality-feasible device. "
             + "; ".join(f"{c.backend}: {c.reason}" for c in candidates)
         )
+
+    def alternatives(self, circuits, **options):
+        """Return nondominated execution views from one admission/quote snapshot."""
+        return self.plan(circuits, _alternatives=True, **options)
 
 
 class _ObservedBackend:

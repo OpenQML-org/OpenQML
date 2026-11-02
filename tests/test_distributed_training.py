@@ -60,6 +60,38 @@ def _ddp_worker(rank, directory):
         trainer.load(Path(directory) / "ddp.pt")
         assert trainer.updates == 1
         torch.testing.assert_close(torch.rand(5), expected_random, atol=0, rtol=0)
+        architecture = oq.HybridArchitecture(
+            1,
+            1,
+            hidden_features=2,
+            depth=2,
+            quantum=oq.QuantumCellSpec(num_qubits=1, num_outputs=1),
+        )
+        network = architecture.build("torch", backend="torch", dtype=torch.float64, active_depth=1)
+        wrapped = torch.nn.parallel.DistributedDataParallel(network, find_unused_parameters=True)
+        reference = architecture.build(
+            "torch", backend="torch", dtype=torch.float64, active_depth=1
+        )
+        reference.load_state_dict(network.state_dict())
+        trainer = oq.torch.NetworkTrainer(
+            wrapped,
+            torch.optim.SGD(wrapped.parameters(), lr=0.001),
+            microbatch_size=2,
+            max_grad_norm=None,
+            depth_schedule=oq.DepthSchedule(((0, 1), (1, 2))),
+        )
+        optimizer = torch.optim.SGD(reference.parameters(), lr=0.001)
+        all_x = torch.arange(1, 9, dtype=torch.float64)[:, None]
+        for update in range(2):
+            reference.activate_depth(update + 1)
+            optimizer.zero_grad(set_to_none=True)
+            (reference(all_x) - 2 * all_x).square().mean().backward()
+            optimizer.step()
+            trainer.step((x, target), lambda model, b: (model(b[0]) - b[1]).square().mean())
+            for name in network.values:
+                torch.testing.assert_close(
+                    network.values[name], reference.values[name], atol=2e-11, rtol=2e-11
+                )
     finally:
         dist.destroy_process_group()
 

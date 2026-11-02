@@ -165,6 +165,29 @@ def test_shift_workload_counts_occurrences_and_controlled_gate_recipes():
     assert work.gradient_evaluations == 8 and work.steps == 12
 
 
+def test_microbatch_phases_keep_primal_and_gradient_chunk_limits_separate():
+    request = q.SchedulingRequest(
+        (q.Circuit(1),),
+        (q.PauliString("Z"),),
+        "expectations",
+        q.ExecutionOptions(),
+        q.TrainingWorkload(
+            batch_size=5,
+            steps=2,
+            gradient_evaluations=10,
+            microbatch_size=2,
+            gradient_chunk_size=64,
+        ),
+    )
+    cost = estimate_cost(
+        profile(0.01, cost_per_job=1, queue_seconds=3), request, q.SchedulingPolicy()
+    )
+    # Three microbatches each submit one primal and one gradient job per step.
+    assert cost.provider_jobs == 12 and cost.cost == 12
+    assert cost.circuit_evaluations == 110
+    assert cost.seconds == pytest.approx(36 + 1.1)
+
+
 def test_feedback_is_bounded_and_can_deprioritize_a_slow_device(devices):
     profiles = {"cost-qpu": profile(0.1), "gpu": profile(0.2)}
     feedback = q.ExecutionFeedback(capacity=2, window=3)

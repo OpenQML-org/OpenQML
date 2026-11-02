@@ -18,6 +18,8 @@ from ..simulator import _checkpoint_interval, expectations
 from ._jax_deep import QuantumDeepNetwork as QuantumDeepNetwork
 from ._jax_hybrid import HyperQuantumAdapter as HyperQuantumAdapter
 from ._jax_hybrid import IQPQuantumLayer as IQPQuantumLayer
+from ._jax_network import HybridNetwork as HybridNetwork
+from ._jax_network import NetworkTrainer as NetworkTrainer
 from ._jax_ppo import PPOTrainer as PPOTrainer
 from ._jax_rl import QuantumActorCritic as QuantumActorCritic
 from ._jax_rl import QuantumSurrogate as QuantumSurrogate

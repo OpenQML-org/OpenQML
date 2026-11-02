@@ -29,7 +29,10 @@ class TrainingWorkload:
     steps: int = 1
     gradient_evaluations: int = 0
     native_gradient_evaluations: int | None = None
+    native_devices: tuple = ("CPU", "GPU")
     submission_batch_size: int | None = None
+    microbatch_size: int | None = None
+    gradient_chunk_size: int | None = None
     classical_seconds_per_step: float = 0
     classical_cost_per_step: float = 0
 
@@ -40,8 +43,15 @@ class TrainingWorkload:
         integer(self.gradient_evaluations, "gradient_evaluations", 0)
         if self.native_gradient_evaluations is not None:
             integer(self.native_gradient_evaluations, "native_gradient_evaluations", 0)
+        devices = tuple(self.native_devices)
+        if any(device not in {"CPU", "GPU"} for device in devices):
+            raise ValidationError("Native gradient devices must be CPU/GPU.")
+        object.__setattr__(self, "native_devices", devices)
         if self.submission_batch_size is not None:
             integer(self.submission_batch_size, "submission_batch_size", 1)
+        for name in ("microbatch_size", "gradient_chunk_size"):
+            if getattr(self, name) is not None:
+                integer(getattr(self, name), name, 1)
         if real(self.classical_seconds_per_step) < 0:
             raise ValidationError("classical_seconds_per_step must be nonnegative.")
         if real(self.classical_cost_per_step) < 0:
@@ -115,7 +125,7 @@ class ExecutionProfile:
     max_shots: int = 1_000_000
     max_batch_size: int = 64
     concurrency: int = 1
-    measurement_groups: int = 1
+    measurement_groups: int | None = None
     mitigation_overhead: float = 1
     relative_uncertainty: float = 0.25
     observed_at: float | None = None
@@ -151,9 +161,10 @@ class ExecutionProfile:
             "max_shots",
             "max_batch_size",
             "concurrency",
-            "measurement_groups",
         ):
             integer(getattr(self, name), name, 1)
+        if self.measurement_groups is not None:
+            integer(self.measurement_groups, "measurement_groups", 1)
         if not self.min_shots <= self.shots <= self.max_shots:
             raise ValidationError("Profile shots must lie within min_shots/max_shots.")
         if self.observed_at is not None and real(self.observed_at) < 0:
@@ -241,9 +252,17 @@ def estimate_cost(profile, request, policy, *, exact=False, adjustable_shots=Fal
     rmse = math.sqrt(bias**2 + (variance / shots if shots else 0))
     work = request.workload
     rows = max(len(request.circuits), work.batch_size or 0)
-    groups = 1 if exact else profile.measurement_groups
+    from .observables import Hamiltonian
 
-    def phase(count):
+    words = {
+        term.paulis
+        for observable in request.observables
+        for term in (observable.terms if isinstance(observable, Hamiltonian) else (observable,))
+        if term.coefficient and set(term.paulis) != {"I"}
+    }
+    groups = 1 if exact else (profile.measurement_groups or max(1, len(words)))
+
+    def phase(count, chunk=None):
         if not count:
             return 0, 0, 0, 0, 0
         count *= groups
@@ -251,7 +270,9 @@ def estimate_cost(profile, request, policy, *, exact=False, adjustable_shots=Fal
         # All optimizer steps are sequential. Only jobs within a phase may
         # overlap, and a partial final wave cannot borrow future step work.
         batch_size = min(
-            profile.max_batch_size, work.submission_batch_size or profile.max_batch_size
+            profile.max_batch_size,
+            work.submission_batch_size or profile.max_batch_size,
+            chunk or profile.max_batch_size,
         )
         jobs = math.ceil(count / batch_size)
         full, tail = divmod(count, batch_size)
@@ -275,16 +296,25 @@ def estimate_cost(profile, request, policy, *, exact=False, adjustable_shots=Fal
         )
         return wall, cost, count, physical, jobs
 
-    forward = phase(rows)
     gradient_count = (
         work.native_gradient_evaluations
         if exact and work.native_gradient_evaluations is not None
         else work.gradient_evaluations
     )
-    gradient = phase(rows * gradient_count)
-    wall, cost, count, physical, jobs = (
-        (a + b) * work.steps for a, b in zip(forward, gradient, strict=True)
-    )
+    if work.microbatch_size is None:
+        segments = ((rows, 1),)
+    else:
+        full, tail = divmod(rows, work.microbatch_size)
+        segments = ((work.microbatch_size, full), (tail, int(tail != 0)))
+    totals = [0] * 5
+    for size, repeats in segments:
+        if not repeats:
+            continue
+        forward = phase(size)
+        gradient = phase(size * gradient_count, work.gradient_chunk_size)
+        for i, (a, b) in enumerate(zip(forward, gradient, strict=True)):
+            totals[i] += (a + b) * repeats * work.steps
+    wall, cost, count, physical, jobs = totals
     wall += work.steps * work.classical_seconds_per_step
     cost += work.steps * work.classical_cost_per_step
     margin = 1 + policy.risk_sigma * profile.relative_uncertainty

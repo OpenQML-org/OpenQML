@@ -87,6 +87,43 @@ def _worker(rank, directory, size, cuda):
         reference = torch.autograd.grad(expected.square().sum(), tuple(bindings.values()))
         for got, wanted in zip(gradient, reference, strict=True):
             torch.testing.assert_close(got, wanted, atol=2e-11, rtol=2e-11)
+        if size == 2:
+            architecture = q.HybridArchitecture(
+                2,
+                1,
+                hidden_features=4,
+                depth=2,
+                quantum=q.QuantumCellSpec(num_qubits=2, num_outputs=2),
+            )
+            network = architecture.build(
+                "torch",
+                backend="torch",
+                dtype=torch.float64,
+                device=device,
+                tensor_mesh=mesh,
+                interconnect=hardware(),
+            )
+            with torch.no_grad():
+                for i in range(2):
+                    network.values[f"block_{i}_gain_q"].fill_(0.2)
+                    network.values[f"block_{i}_gain_ff"].fill_(0.1)
+            local_network = architecture.build(
+                "torch", backend="torch", dtype=torch.float64, device=device
+            )
+            local_network.load_state_dict(network.state_dict())
+            features = torch.tensor([[0.1, 0.3], [-0.2, 0.4]], dtype=torch.float64, device=device)
+            distributed_output = network(features)
+            local_output = local_network(features)
+            torch.testing.assert_close(distributed_output, local_output, atol=2e-11, rtol=2e-11)
+            distributed_output.square().sum().backward()
+            local_output.square().sum().backward()
+            for name in network.values:
+                torch.testing.assert_close(
+                    network.values[name].grad,
+                    local_network.values[name].grad,
+                    atol=3e-10,
+                    rtol=3e-10,
+                )
         fresh = plan.evaluate(bindings, mesh=mesh, like=like)
         with pytest.raises(q.ValidationError, match="first-order"):
             torch.autograd.grad(fresh.sum(), tuple(bindings.values()), create_graph=True)

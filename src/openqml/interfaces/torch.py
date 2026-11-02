@@ -30,6 +30,8 @@ from ._torch_deep import QuantumDeepNetwork as QuantumDeepNetwork
 from ._torch_hybrid import HyperQuantumAdapter as HyperQuantumAdapter
 from ._torch_hybrid import IQPQuantumLayer as IQPQuantumLayer
 from ._torch_hybrid import _quantum_precision
+from ._torch_network import HybridNetwork as HybridNetwork
+from ._torch_network import NetworkTrainer as NetworkTrainer
 from ._torch_ppo import PPOTrainer as PPOTrainer
 from ._torch_rl import QuantumActorCritic as QuantumActorCritic
 from ._torch_rl import QuantumSurrogate as QuantumSurrogate

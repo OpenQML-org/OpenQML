@@ -110,6 +110,7 @@ def make_train_step(
     axis_name=None,
     jit=True,
     has_aux=False,
+    gradient_metrics=None,
 ):
     """Return step(params, optimizer_state, batch) with finite-gradient rejection.
 
@@ -148,6 +149,11 @@ def make_train_step(
                 "Train-step auxiliary metrics must be a dictionary without reserved keys."
             )
         norm = jnp.sqrt(sum(jnp.vdot(g, g).real for g in jax.tree_util.tree_leaves(gradient)))
+        diagnostics = {} if gradient_metrics is None else gradient_metrics(gradient)
+        if not isinstance(diagnostics, dict) or set(diagnostics) & (
+            set(auxiliary) | {"loss", "grad_norm", "samples", "skipped"}
+        ):
+            raise ValidationError("Gradient metrics must use distinct nonreserved dictionary keys.")
         finite = jnp.isfinite(loss) & jnp.isfinite(norm)
         if max_grad_norm is not None:
             factor = jnp.minimum(1.0, max_grad_norm / jnp.maximum(norm, 1e-30))
@@ -164,7 +170,14 @@ def make_train_step(
         return (
             params,
             opt_state,
-            {"loss": loss, "grad_norm": norm, "samples": samples, "skipped": ~finite, **auxiliary},
+            {
+                "loss": loss,
+                "grad_norm": norm,
+                "samples": samples,
+                "skipped": ~finite,
+                **auxiliary,
+                **diagnostics,
+            },
         )
 
     return jax.jit(step) if jit else step

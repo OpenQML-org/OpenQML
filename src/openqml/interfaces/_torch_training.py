@@ -158,6 +158,7 @@ class HybridTrainer:
                 raise ValidationError(
                     "HybridTrainer requires at least one dense parameter gradient."
                 )
+            diagnostics = self.gradient_diagnostics()
             norm = torch.nn.utils.clip_grad_norm_(
                 self.parameters, float("inf") if self.max_grad_norm is None else self.max_grad_norm
             )
@@ -186,9 +187,13 @@ class HybridTrainer:
                 "samples": int(global_count.item()),
                 "skipped": skipped,
                 "updates": self.updates,
+                **diagnostics,
             }
         finally:
             self.optimizer.zero_grad(set_to_none=True)
+
+    def gradient_diagnostics(self):
+        return {}
 
     def state_dict(self):
         model = self.model.module if self.distributed else self.model
