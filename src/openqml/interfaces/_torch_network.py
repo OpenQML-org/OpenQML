@@ -1,6 +1,5 @@
 """PyTorch ownership and training for the shared hybrid architecture program."""
 
-import math
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -9,10 +8,11 @@ import torch
 from torch import nn
 
 from ..architecture import HybridArchitecture
+from ..architecture_runtime import reserve_native_cost
 from ..backends import get_backend
 from ..distributed_tensor import DistributedTensorPlan
 from ..errors import ValidationError
-from ..network_training import DepthSchedule
+from ..network_training import DepthSchedule, _batch_rows
 from ..runtime import CostAwareBackend
 from ._torch_training import HybridTrainer, _atomic_save, _leaves
 
@@ -36,7 +36,6 @@ class _QuantumExecution:
         self.target = target
         self.distributed = mesh is not None and not self.spec.circuit.has_effects
         self.external = not (isinstance(backend, str) and backend == "torch")
-        self.observer = backend if callable(getattr(backend, "run_native", None)) else None
         if self.distributed:
             self.plan = DistributedTensorPlan(
                 self.spec.circuit,
@@ -123,6 +122,18 @@ class HybridNetwork(nn.Module):
         self.runtime = get_backend("auto") if backend is None or backend == "auto" else backend
         self.tensor_mesh, self.interconnect = tensor_mesh, interconnect
         if tensor_mesh is not None:
+            if isinstance(self.runtime, CostAwareBackend) and (
+                self.runtime.ledger is not None
+                or self.runtime.policy.require_profiles
+                or any(
+                    getattr(self.runtime.policy, name) is not None
+                    for name in ("max_cost", "max_seconds", "max_rmse")
+                )
+            ):
+                raise ValidationError(
+                    "Pinned tensor meshes require caller-owned distributed cost accounting; "
+                    "single-device automatic budget profiles cannot describe this execution."
+                )
             if interconnect is None:
                 raise ValidationError(
                     "Tensor-parallel construction requires calibrated interconnect rates."
@@ -309,18 +320,18 @@ class NetworkTrainer(HybridTrainer):
     def step(self, batch, loss_function):
         start = time.perf_counter()
         self.network.activate_depth(self.depth_schedule.depth_at(self.updates))
-        first = _leaves(batch)[0]
-        rows = max(1, math.prod(first.shape[:-1]))
+        rows, samples = _batch_rows(_leaves(batch), self.network.architecture.input_features)
         runtime = self.network.runtime
         if isinstance(runtime, CostAwareBackend):
             work = replace(
                 runtime.workload,
                 batch_size=rows,
                 steps=1,
-                microbatch_size=self.microbatch_size * max(1, rows // first.shape[0]),
+                microbatch_size=self.microbatch_size * max(1, rows // samples),
                 gradient_chunk_size=runtime.workload.gradient_chunk_size or 64,
             )
-            self.network.reschedule(workload=work)
+            plan = self.network.reschedule(workload=work)
+            reserve_native_cost(plan, runtime)
         result = super().step(batch, loss_function)
         result["active_depth"] = self.network.active_depth
         result["step_seconds"] = time.perf_counter() - start

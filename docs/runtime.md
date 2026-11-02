@@ -62,7 +62,9 @@ submit extra calibration jobs or provide a statistical guarantee under drift.
 `BudgetLedger` atomically reserves quoted spending before numeric submissions.
 Failures retain reservations and never cause automatic resubmission. This is
 forecast accounting; provider invoices and already-running cloud GPU charges
-remain external. Native framework graphs keep their own optimizer/device scope.
+remain external. Integrated hybrid-network trainers also reserve their native
+and declared classical forecast before each update; custom native loops own
+their accounting and optimizer/device scope.
 
 ## Capabilities and configuration
 

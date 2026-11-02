@@ -1,9 +1,23 @@
 """Depth curricula and optimizers whose inactive stage state remains untouched."""
 
+import math
 from dataclasses import dataclass
 
 from .errors import ValidationError
 from .ir import integer
+
+
+def _batch_rows(leaves, input_features):
+    """Infer circuit rows from feature tensors, independent of batch key order."""
+    if not leaves or any(getattr(x, "ndim", 0) < 1 for x in leaves):
+        raise ValidationError("Batch tensors need a shared nonempty sample dimension.")
+    samples = leaves[0].shape[0]
+    if samples < 1 or any(x.shape[0] != samples for x in leaves):
+        raise ValidationError("Batch tensors need the same nonempty sample dimension.")
+    rows = max(
+        [samples] + [math.prod(x.shape[:-1]) for x in leaves if x.shape[-1] == input_features]
+    )
+    return rows, samples
 
 
 @dataclass(frozen=True)

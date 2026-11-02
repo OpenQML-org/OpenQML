@@ -28,6 +28,23 @@ class NetworkExecutionPlan:
         }
 
 
+def reserve_native_cost(plan, scheduler, *, native_devices=("CPU", "GPU")):
+    """Reserve one integrated update's native/classical forecast before execution.
+
+    External calls reserve their own refreshed quotes at numeric submission time.
+    Keeping them out of this reservation avoids charging the same work twice.
+    Failed updates retain reservations, as failures do not establish free work.
+    """
+    if scheduler.ledger is None or plan is None or plan.forecast is None:
+        return
+    external = sum(
+        _selected_cost(stage).upper_cost
+        for stage in plan.stages
+        if stage.device not in native_devices
+    )
+    scheduler.ledger.reserve(max(0, plan.forecast.upper_cost - external))
+
+
 def _selected_cost(plan):
     value = next(c.estimate for c in plan.candidates if c.backend == plan.backend)
     return None if value is None else ExecutionCost(**value)

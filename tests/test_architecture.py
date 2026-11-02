@@ -233,7 +233,10 @@ def test_network_scheduler_finds_mixed_devices_under_a_shared_budget(monkeypatch
         )
         for name, seconds, cost in ((qpu.name, 0.001, 4), (cpu.name, 1, 0))
     }
-    runtime = q.CostAwareBackend(profiles=profiles, policy=q.SchedulingPolicy(max_cost=8))
+    ledger = q.BudgetLedger(16)
+    runtime = q.CostAwareBackend(
+        profiles=profiles, policy=q.SchedulingPolicy(max_cost=8), ledger=ledger
+    )
     plan = architecture(depth=2, quantum=q.QuantumCellSpec(num_qubits=1))
     scheduled = plan.schedule(scheduler=runtime, workload=q.TrainingWorkload(batch_size=3))
     assert {stage.backend for stage in scheduled.stages} == {qpu.name, cpu.name}
@@ -256,10 +259,12 @@ def test_network_scheduler_finds_mixed_devices_under_a_shared_budget(monkeypatch
 
     trainer.step(batch, loss)
     assert qpu.calls
+    assert ledger.reserved == 8
     submitted = list(qpu.calls)
     qpu.available = False
     trainer.step(batch, loss)
     assert qpu.calls == submitted
+    assert ledger.reserved == 8
     assert ids == {name: id(value) for name, value in model.values.items()}
     assert int(trainer.optimizer.state[model.values["stem_weight"]]["step"]) == 2
     qpu.available = True
@@ -268,3 +273,56 @@ def test_network_scheduler_finds_mixed_devices_under_a_shared_budget(monkeypatch
     )
     with pytest.raises(q.ResourceError):
         plan.schedule(scheduler=impossible, workload=q.TrainingWorkload(batch_size=3))
+
+
+@pytest.mark.parametrize("framework", ["torch", "jax"])
+def test_integrated_native_training_reserves_shared_budget_before_updates(framework):
+    package = pytest.importorskip(framework)
+    ledger = q.BudgetLedger(2)
+    runtime = q.CostAwareBackend(
+        profiles={
+            "cpu": q.ExecutionProfile(
+                0.01,
+                queue_seconds=0,
+                cost_per_second=0,
+                cost_per_circuit=0.1,
+                relative_uncertainty=0,
+            )
+        },
+        workload=q.TrainingWorkload(classical_cost_per_step=0.1),
+        ledger=ledger,
+    )
+    plan = architecture(depth=2, quantum=q.QuantumCellSpec(num_qubits=1))
+    model = plan.build(framework, backend=runtime)
+    if framework == "torch":
+        with pytest.raises(q.ValidationError, match="tensor meshes"):
+            plan.build("torch", backend=runtime, tensor_mesh=object(), interconnect=object())
+        x = package.tensor([[0.1, 0.3], [0.3, -0.1], [0.4, 0.2]])
+        trainer = model.trainer(microbatch_size=3)
+
+        def update():
+            return trainer.step(
+                {"target": x[:, 0], "x": x},
+                lambda m, b: (m(b["x"])[:, 0] - b["target"]).square().mean(),
+            )
+    else:
+        optax = pytest.importorskip("optax")
+        jnp = pytest.importorskip("jax.numpy")
+        x = jnp.asarray([[0.1, 0.3], [0.3, -0.1], [0.4, 0.2]])
+        trainer = model.trainer(
+            optax.adam(0.01),
+            lambda m, p, b: (m(p, b["x"])[:, 0] - b["target"]) ** 2,
+            key=package.random.key(7),
+            microbatch_size=3,
+        )
+
+        def update():
+            return trainer.step({"target": x[:, 0], "x": x})
+
+    assert ledger.reserved == 0
+    update()
+    assert ledger.reserved == pytest.approx(1.3)
+    assert trainer.updates == 1
+    with pytest.raises(q.ResourceError, match="budget|schedule"):
+        update()
+    assert trainer.updates == 1 and ledger.reserved == pytest.approx(1.3)

@@ -101,6 +101,11 @@ Torch transfers remain differentiable. JAX retains its native platform inside
 a JIT graph and uses an explicit first-order numeric bridge for other devices.
 Quote sources should identify calibration revisions without changing for every
 telemetry poll; unchanged routes reuse compiled execution views.
+With a `BudgetLedger`, integrated trainers reserve the native and declared
+classical cost before an update; QPU calls reserve their refreshed quotes at
+submission. Failed updates retain reservations. Direct model calls and custom
+training loops own their native accounting. These are forecast reservations,
+not reconciled cloud invoices.
 
 Block rematerialization reduces native activation storage. It is disabled for
 external QPU calls so backward does not resubmit stochastic jobs. A Torch
@@ -108,6 +113,8 @@ external QPU calls so backward does not resubmit stochastic jobs. A Torch
 `DistributedTensorPlan`; mixed-state cells remain local. Tensor ranks share
 canonical parameters and use separate data-parallel groups. Tensor-parallel
 checkpoints use one file per global rank and require the matching topology.
+A pinned tensor mesh uses caller-owned distributed accounting. Automatic
+single-device budget/deadline profiles are rejected for this mode.
 
 Exact circuit/mixed-state cost can still grow exponentially with entangled
 width. A shallow retained space or low MPO bond rank constrains expressivity.

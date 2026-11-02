@@ -1,16 +1,16 @@
 """JAX execution and stagewise optimization of the shared hybrid model program."""
 
 import copy
-import math
 from dataclasses import replace
 
 import jax
 import jax.numpy as jnp
 
 from ..architecture import HybridArchitecture
+from ..architecture_runtime import reserve_native_cost
 from ..backends import get_backend
 from ..errors import ValidationError
-from ..network_training import DepthSchedule, StagewiseOptimizer
+from ..network_training import DepthSchedule, StagewiseOptimizer, _batch_rows
 from ..runtime import CostAwareBackend
 from ._jax_training import make_train_step
 
@@ -187,17 +187,23 @@ class NetworkTrainer:
 
     def step(self, batch):
         model = self.model.with_depth(self.depth_schedule.depth_at(self.updates))
-        first = jax.tree_util.tree_leaves(batch)[0]
+        rows, samples = _batch_rows(
+            jax.tree_util.tree_leaves(batch), model.architecture.input_features
+        )
         if isinstance(model.runtime, CostAwareBackend):
             work = replace(
                 model.runtime.workload,
-                batch_size=max(1, math.prod(first.shape[:-1])),
+                batch_size=rows,
                 steps=1,
-                microbatch_size=self.options.get("microbatch_size", 32)
-                * max(1, math.prod(first.shape[:-1]) // first.shape[0]),
+                microbatch_size=self.options.get("microbatch_size", 32) * max(1, rows // samples),
                 gradient_chunk_size=model.runtime.workload.gradient_chunk_size or 64,
             )
             model = model.reschedule(workload=work)
+            reserve_native_cost(
+                model.execution_plan,
+                model.runtime,
+                native_devices=("GPU" if jax.default_backend() == "gpu" else "CPU",),
+            )
         self.model = model
         if model is not self._compiled_model:
             self._compiled = model.make_train_step(
