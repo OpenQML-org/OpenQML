@@ -59,7 +59,11 @@ class QuantumCellSpec:
 
             if not isinstance(self.program_json, str):
                 raise ValidationError("Custom cells require a portable LayerSpec JSON document.")
-            spec = LayerSpec.from_json(self.program_json, max_operations=self.max_operations)
+            try:
+                payload = json.loads(self.program_json)
+            except json.JSONDecodeError as exc:
+                raise ValidationError("Malformed custom quantum cell JSON.") from exc
+            spec = LayerSpec.from_dict(payload, max_operations=self.max_operations)
             if not spec.input_parameters:
                 raise ValidationError("A custom hybrid cell needs input parameters.")
             object.__setattr__(self, "_custom_spec", spec)
@@ -605,6 +609,9 @@ class HybridArchitecture:
             },
             "quantum_cells": [self.cells[i].to_dict() for i in range(depth)],
             "operators": [o.to_dict() for o in self.operator_specs[:depth]],
+            "quantum_roles": [
+                list(o.implementation.roles(o.config)) for o in self.operator_specs[:depth]
+            ],
             "batch_size": batch_size,
         }
 

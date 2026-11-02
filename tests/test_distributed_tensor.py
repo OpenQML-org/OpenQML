@@ -94,6 +94,10 @@ def _worker(rank, directory, size, cuda):
                 hidden_features=4,
                 depth=2,
                 quantum=q.QuantumCellSpec(num_qubits=2, num_outputs=2),
+                operators=(
+                    q.OperatorSpec(),
+                    q.OperatorSpec.attention(key_features=2, positional=False),
+                ),
             )
             network = architecture.build(
                 "torch",
@@ -112,6 +116,7 @@ def _worker(rank, directory, size, cuda):
             )
             local_network.load_state_dict(network.state_dict())
             features = torch.tensor([[0.1, 0.3], [-0.2, 0.4]], dtype=torch.float64, device=device)
+            features = torch.stack((features, features * 0.7 + 0.1), dim=1)
             distributed_output = network(features)
             local_output = local_network(features)
             torch.testing.assert_close(distributed_output, local_output, atol=2e-11, rtol=2e-11)

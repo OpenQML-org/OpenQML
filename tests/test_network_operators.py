@@ -179,7 +179,7 @@ def test_operator_registry_roundtrip_and_mixed_composition():
     restored = q.HybridArchitecture.from_dict(p.to_dict())
     assert restored.fingerprint == p.fingerprint
     np.testing.assert_allclose(restored.evaluate(values, x), p.evaluate(values, x), atol=0, rtol=0)
-    assert "tests.scaled" in q.network_operators()
+    assert "tests.scaled" in q.list_network_operators()
     with pytest.raises(q.ValidationError, match="already"):
         q.register_network_operator("tests.scaled", Scaled())
 

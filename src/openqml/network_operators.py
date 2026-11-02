@@ -79,7 +79,7 @@ def register_network_operator(name, operator):
         _OPERATORS[name] = operator
 
 
-def network_operators():
+def list_network_operators():
     with _LOCK:
         return tuple(sorted(_OPERATORS))
 

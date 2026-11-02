@@ -82,7 +82,7 @@ from .multiscale import MultiscalePlan
 from .network_operators import (
     NetworkOperator,
     OperatorSpec,
-    network_operators,
+    list_network_operators,
     register_network_operator,
 )
 from .network_training import DepthSchedule, StagewiseOptimizer
@@ -202,7 +202,7 @@ __all__ = [
     "OperatorSpec",
     "NetworkOperator",
     "register_network_operator",
-    "network_operators",
+    "list_network_operators",
     "FeatureCircuitPlan",
     "QuantumCellSpec",
     "NetworkParameter",

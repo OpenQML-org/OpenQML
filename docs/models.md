@@ -93,7 +93,7 @@ Implement `validate`, `input_width`, `roles`, `declare`, `apply`,
 `validate_metadata` and `row_chunks` as needed. The context exposes `kernel`,
 `project`, array helpers and block parameters. Quantum roles get independently
 owned encoders/weights. Extra parameters use the declaration callback and join
-the same optimizer groups and progressive state. `network_operators()` lists
+the same optimizer groups and progressive state. `list_network_operators()` lists
 registered names. Names cannot replace existing registrations.
 
 `QuantumCellSpec.from_spec(layer_spec)` accepts a portable `LayerSpec`, including

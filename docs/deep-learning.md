@@ -13,9 +13,9 @@ Each hybrid block has two pre-normalized, gated residual branches:
 ```mermaid
 flowchart TD
     X[Features] --> N[RMS normalization]
-    N --> P[Dense or MPO projection]
-    P --> Q[Quantum cell]
-    Q --> D[Readout projection]
+    N --> P[Window / token / edge projection]
+    P --> Q[Quantum branches]
+    Q --> D[Convolution / attention / aggregation]
     D --> A[Gated residual]
     X --> A
     A --> F[Normalized SwiGLU branch]
@@ -29,8 +29,10 @@ width to logits or task features. Leading batch/token dimensions are preserved.
 dense map. `bond_dimension` controls MPO capacity; `"dense"` and `"tensor-train"`
 pin a representation. Fewer parameters do not guarantee lower GPU latency.
 
-`QuantumCellSpec` selects a multiscale unitary cell or a quantum residual-channel
-cell. Pass one specification for every block, or a tuple with one per block.
+`QuantumCellSpec` selects multiscale, residual-channel, shared QCNN, full-width
+feature or portable custom circuits. `OperatorSpec` defines pointwise,
+convolution, attention or graph composition; see the [model interfaces](models.md).
+Pass one specification for every block, or a tuple with one per block.
 Hybrid blocks exchange classical feature tensors. A residual-channel cell keeps
 its quantum data register across its internal sublayers and implements
 `rho_next = (1-p) rho + p U rho U†`, with `p = sin(alpha/2)²`. Controlled
