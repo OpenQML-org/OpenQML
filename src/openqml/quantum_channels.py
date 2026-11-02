@@ -52,6 +52,17 @@ def _adjoint(value, ops):
     return ops.conj(value).swapaxes(-1, -2)
 
 
+def _roundoff_density(rho, ops):
+    """Restore analytically exact invariants after native floating-point maps.
+
+    This only applies to computed CPTP outputs, never to unchecked caller
+    states. There is no eigenvalue clipping, projection or rank truncation.
+    """
+    rho = 0.5 * (rho + _adjoint(rho, ops))
+    trace = ops.real(ops.xp.einsum("...ii->...", rho))
+    return rho / trace[..., None, None]
+
+
 def _validate_density(rho, dimension, ops):
     rho = ops.array(rho)
     if rho.shape[-2:] != (dimension, dimension):
@@ -211,7 +222,7 @@ class QuantumChannelPlan:
             if validate_state
             else ops.array(rho)
         )
-        return self._step(weights, controls, rho, ops)
+        return _roundoff_density(self._step(weights, controls, rho, ops), ops)
 
     def _read(self, rho, ops, visible, depolarization, povm, matrices=None):
         if povm is not None:
@@ -354,6 +365,7 @@ class QuantumChannelPlan:
             before = xp.where((active & restart)[..., None, None], initial, carry)
             after = self._step(weights, control, before, ops)
             after = fraction[..., None, None] * after + (1 - fraction[..., None, None]) * before
+            after = _roundoff_density(after, ops)
             after = xp.where(active[..., None, None], after, carry)
             output = self._read(after, ops, visible, depolarization, povm, matrices)
             return after, xp.where(active[..., None], output, 0)
@@ -431,7 +443,9 @@ class QuantumChannelPlan:
                     else xp.concatenate((prefix[:, :offset], updated), axis=1)
                 )
                 offset *= 2
-        states = (prefix @ rho.reshape((batch, 1, v, 1))).reshape((batch, tokens, d, d))
+        states = _roundoff_density(
+            (prefix @ rho.reshape((batch, 1, v, 1))).reshape((batch, tokens, d, d)), ops
+        )
         outputs = self._read(states, ops, visible, noise, povm)
         return xp.where(valid[..., None], outputs, 0), states[:, -1]
 

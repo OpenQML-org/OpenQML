@@ -65,6 +65,9 @@ Here features have shape `[B,T,8]` on the model device. State maps block names
 to complex `[B,2**m,2**m]` densities. Passing it between chunks preserves
 gradients. Independent batches use `state=None`; models store no hidden carry.
 Padding holds state and emits zeros; resets cut dependence on previous carry.
+Computed states are symmetrized and trace-normalized to remove floating-point
+drift, without eigenvalue projection or rank truncation. Invalid incoming
+densities are rejected rather than repaired.
 
 Each step appends a fresh pure environment, applies a shared SU(4)-based
 input-conditioned circuit, then traces out the environment. Optional gating

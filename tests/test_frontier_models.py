@@ -97,6 +97,24 @@ def test_channel_scan_matches_physical_reset_unroll():
     np.testing.assert_allclose(np.einsum("aibi->ab", final), state[0], atol=2e-14)
 
 
+@pytest.mark.parametrize("method", ["sequential", "parallel"])
+def test_long_float32_memory_retains_valid_carry(method):
+    torch = pytest.importorskip("torch")
+    plan = q.QuantumChannelPlan()
+    generator = torch.Generator().manual_seed(9)
+    weights = torch.randn(len(plan.spec.weight_parameters), generator=generator) * 0.2
+    controls = torch.randn((1, 1024, 1), generator=generator)
+    with torch.no_grad():
+        output, carry = plan.scan(weights, controls, backend="torch", method=method)
+        assert torch.isfinite(output).all()
+        assert abs(torch.trace(carry[0]) - 1) < 3e-7
+        assert torch.linalg.eigvalsh(carry[0]).min() >= -3e-7
+        _, continued = plan.scan(
+            weights, controls[:, :1], state=carry, backend="torch", method=method
+        )
+        assert torch.isfinite(continued).all()
+
+
 @pytest.mark.parametrize("kind", ["kan", "memory", "born", "language"])
 def test_all_framework_outputs_carries_and_every_parameter_gradient(kind, native):
     torch, jax, jnp = native
