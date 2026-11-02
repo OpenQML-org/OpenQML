@@ -5,7 +5,7 @@ from ..layers import LayerCheckpoint, LayerSpec, validate_layer
 
 
 def default_layer_backend(circuit, observables, backend, native, *, native_contract, limits):
-    """Prefer a configured compatible QPU; retain native AD when none is eligible.
+    """Compare configured QPU quotes against native training work before pinning.
 
     Explicit tensor backends and native-only execution options pin their graph.
     Merely importing or constructing an unconfigured layer never loads a cloud
@@ -15,16 +15,30 @@ def default_layer_backend(circuit, observables, backend, native, *, native_contr
         return backend
     if native_contract:
         return native
-    from ..backends import _LOCK, _REGISTRY, ExecutionOptions
+    from ..backends import _LOCK, _REGISTRY, ExecutionOptions, get_backend
 
     with _LOCK:
         configured = any(d.capabilities.device_type == "QPU" for d in _REGISTRY.values())
     if not configured:
         return native
-    from ..runtime import PriorityBackend
+    from dataclasses import replace
 
-    route = PriorityBackend().plan(
-        [circuit], observables=observables, options=ExecutionOptions(**limits)
+    from ..costs import TrainingWorkload
+    from ..runtime import CostAwareBackend
+
+    runtime = get_backend("auto")
+    work = None
+    if isinstance(runtime, CostAwareBackend):
+        shifts = TrainingWorkload.parameter_shift(circuit, observables)
+        work = replace(
+            runtime.workload,
+            gradient_evaluations=max(
+                runtime.workload.gradient_evaluations, shifts.gradient_evaluations
+            ),
+            native_gradient_evaluations=1,
+        )
+    route = runtime.plan(
+        [circuit], observables=observables, options=ExecutionOptions(**limits), workload=work
     )
     return route._backend if route.device == "QPU" else native
 

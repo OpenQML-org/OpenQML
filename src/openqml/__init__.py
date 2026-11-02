@@ -29,7 +29,17 @@ from .batch import execute_batch, expectations_batch
 from .compiler import CircuitStats, circuit_stats, decompose, inverse, simplify
 from .components import ComponentPlan, plan_components
 from .conversion import ConversionPlan, ConversionResult, convert, diagnose, plan_conversion
+from .costs import (
+    BudgetLedger,
+    ExecutionCost,
+    ExecutionFeedback,
+    ExecutionProfile,
+    SchedulingPolicy,
+    SchedulingRequest,
+    TrainingWorkload,
+)
 from .density import density_matrix
+from .distributed_tensor import DistributedTensorPlan, Interconnect
 from .environment import environment_report
 from .errors import (
     BackendError,
@@ -100,10 +110,12 @@ from .rl import (
 )
 from .rl_training import PPOConfig
 from .runtime import (
+    CostAwareBackend,
     DispatchCandidate,
     DispatchPlan,
     PriorityBackend,
     QPUBackend,
+    configure_runtime,
     register_qpu_backend,
 )
 from .semantics import (
@@ -171,11 +183,22 @@ __all__ = [
     "squashed_gaussian_log_probability",
     "QuantumTreePlan",
     "TensorNetworkPlan",
+    "DistributedTensorPlan",
+    "Interconnect",
     "TensorTrainMatrix",
     "TensorTrainPlan",
     "DispatchCandidate",
     "DispatchPlan",
     "PriorityBackend",
+    "CostAwareBackend",
+    "ExecutionProfile",
+    "ExecutionCost",
+    "ExecutionFeedback",
+    "SchedulingPolicy",
+    "SchedulingRequest",
+    "TrainingWorkload",
+    "BudgetLedger",
+    "configure_runtime",
     "QPUBackend",
     "register_qpu_backend",
     "ActorCriticOutput",

@@ -342,7 +342,7 @@ def execute_batch(
         if any(c.has_effects for c in values)
         else "statevector"
     )
-    device = resolve_backend(device, task, values, options=options)
+    device = resolve_backend(device, task, values, options=options, shots=shots)
     from .adaptive import AdaptiveBackend
 
     if isinstance(device, AdaptiveBackend):

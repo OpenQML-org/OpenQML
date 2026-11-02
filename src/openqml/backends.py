@@ -304,9 +304,9 @@ def get_backend(backend: str | StatevectorBackend) -> StatevectorBackend:
 
             _REGISTRY[backend] = MPSBackend()
         elif backend not in _REGISTRY and backend == "auto":
-            from .runtime import PriorityBackend
+            from .runtime import CostAwareBackend
 
-            _REGISTRY[backend] = PriorityBackend()
+            _REGISTRY[backend] = CostAwareBackend()
         elif backend not in _REGISTRY and backend == "cpu":
             from .adaptive import AdaptiveBackend
 

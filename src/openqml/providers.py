@@ -43,6 +43,17 @@ class QiskitEstimatorBackend:
         """Invalidate ISA circuits after changing a caller-owned pass manager/target."""
         self._cache.clear()
 
+    def with_shots(self, shots):
+        """Request equivalent statistical precision, not a provider billing cap.
+
+        V2 estimators accept precision; providers may allocate additional shots
+        for randomization/mitigation. Quote callbacks must include that overhead.
+        """
+        from .ir import integer
+
+        shots = integer(shots, "shots", 1)
+        return replace(self, precision=shots**-0.5)
+
     def expectations_batch(self, circuits, observables, *, options):
         from .adapters._common import dependency
 

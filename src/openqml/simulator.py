@@ -786,6 +786,7 @@ def execute(
         task,
         [bound],
         options=ExecutionOptions(max_qubits, max_memory_mb, seed, max_branches),
+        shots=shots,
     )
     from .adaptive import AdaptiveBackend
 

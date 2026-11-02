@@ -98,6 +98,18 @@ class ShiftPlan:
             from .runtime import PriorityBackend, resolve_backend
 
             if isinstance(backend, PriorityBackend):
+                from .costs import TrainingWorkload
+                from .runtime import CostAwareBackend
+
+                work = None
+                if isinstance(backend, CostAwareBackend):
+                    shifts = TrainingWorkload.parameter_shift(self.circuit, obs, parameters=names)
+                    work = replace(
+                        backend.workload,
+                        gradient_evaluations=max(
+                            backend.workload.gradient_evaluations, shifts.gradient_evaluations
+                        ),
+                    )
                 backend = resolve_backend(
                     backend,
                     "expectations",
@@ -106,6 +118,7 @@ class ShiftPlan:
                     options=ExecutionOptions(
                         self.max_qubits, self.max_memory_mb, self.seed, self.max_branches
                     ),
+                    workload=work,
                 )
                 # A derivative evaluation must keep the provider's lowering,
                 # noise placement and determinism contract for all its shifts.
@@ -160,6 +173,14 @@ class ShiftPlan:
     @property
     def occurrence_count(self):
         return len(self._occurrences)
+
+    @property
+    def shift_evaluations(self):
+        """Uncoalesced VJP/Jacobian circuit count per input row, excluding primal."""
+        return sum(
+            4 if o.gate in {"crx", "cry", "crz"} else 3 if o.gate == "amplitude_damping" else 2
+            for o in self._occurrences
+        )
 
     def _key(self, columns, index):
         # Full float bytes, rather than a digest, distinguish every bound point,

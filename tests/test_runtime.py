@@ -43,7 +43,17 @@ class Device:
 @pytest.fixture
 def hardware():
     device = Device()
-    oq.register_qpu_backend(device)
+    oq.register_qpu_backend(
+        device,
+        profile=oq.ExecutionProfile(
+            circuit_seconds=0.001,
+            relative_uncertainty=0,
+            source="synthetic_unit_test",
+            queue_seconds=0,
+            cost_per_second=0,
+            noise_bias=0,
+        ),
+    )
     try:
         yield device
     finally:

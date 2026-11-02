@@ -324,7 +324,9 @@ class TensorNetworkPlan:
             return jax.checkpoint(forward)(*values)
         return self._evaluate(bindings, backend=backend, like=like, batch_shape=batch_shape)
 
-    def _evaluate(self, bindings=None, *, backend="numpy", like=None, batch_shape=None):
+    def _evaluate(
+        self, bindings=None, *, backend="numpy", like=None, batch_shape=None, _executor=None
+    ):
         from .simulator import _I, _X, _Y, _Z, _gate_matrix
 
         ops, local, shape = _prepare_bindings(
@@ -348,7 +350,9 @@ class TensorNetworkPlan:
         constants = {p: ops.array(m) for p, m in zip("IXYZ", (_I, _X, _Y, _Z), strict=True)}
         constants["zero"] = ops.array((1, 0))
         readouts = []
-        for desc, original, _labels, steps, sliced, _, _, _ in self._graphs:
+        for graph_index, (desc, original, labels, steps, sliced, _, _, _) in enumerate(
+            self._graphs
+        ):
             # Gate tensors are pure functions of this call's bindings. Reuse
             # ket tensors for their conjugates and across all exact slices.
             gates, raw = {}, []
@@ -373,12 +377,21 @@ class TensorNetworkPlan:
                     select = (slice(None),) * prefix + tuple(
                         fixed.get(index, slice(None)) for index in original[j]
                     )
-                    values[j] = value[select]
-                for k, (a, b, la, lb, shared, _) in enumerate(steps):
-                    values[len(desc) + k] = _contract(
-                        values.pop(a), values.pop(b), la, lb, shared, ops
+                    selected = value[select]
+                    values[j] = (
+                        selected if _executor is None else _executor.input(selected, labels[j])
                     )
-                total = total + ops.real(next(iter(values.values())))
+                for k, (a, b, la, lb, shared, _) in enumerate(steps):
+                    left, right = values.pop(a), values.pop(b)
+                    values[len(desc) + k] = (
+                        _contract(left, right, la, lb, shared, ops)
+                        if _executor is None
+                        else _executor.contract(left, right, la, lb, shared, graph_index, k)
+                    )
+                result = next(iter(values.values()))
+                if _executor is not None:
+                    result = _executor.finish(result)
+                total = total + ops.real(result)
             readouts.append(total)
         outputs = []
         for route in self._routes:
