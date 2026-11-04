@@ -9,23 +9,8 @@ from ..errors import ResourceError, ValidationError
 from ..ir import Circuit, CircuitBuilder, integer
 from ..parameters import real
 from ._array import Ops, admission
+from ._results import PayoffEstimate
 from .quantum import _fixed
-
-
-@dataclass(frozen=True)
-class PayoffEstimate:
-    value: float
-    intervals: tuple
-    confidence: float
-    amplitude: object
-
-    @property
-    def interval(self):
-        return self.intervals[0][0], self.intervals[-1][1]
-
-    @property
-    def oracle_queries(self):
-        return 0 if self.amplitude is None else self.amplitude.oracle_queries
 
 
 @dataclass(frozen=True)
@@ -153,10 +138,12 @@ class PayoffOraclePlan:
         return self.discount * ops.sum(p * ops.array(self.payoffs))
 
     def estimate(self, plan=None, *, backend="auto", **options):
+        from ..adaptive_amplitude import AdaptiveAmplitudeEstimationPlan
+
         if plan is None:
             plan = AmplitudeEstimationPlan.geometric()
-        if not isinstance(plan, AmplitudeEstimationPlan):
-            raise ValidationError("Supply an AmplitudeEstimationPlan.")
+        if not isinstance(plan, (AmplitudeEstimationPlan, AdaptiveAmplitudeEstimationPlan)):
+            raise ValidationError("Supply a fixed or adaptive amplitude estimation plan.")
         if self.oracle is None:
             value = self.discount * self.offset
             return PayoffEstimate(value, ((value, value),), plan.confidence, None)

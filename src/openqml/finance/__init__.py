@@ -1,59 +1,16 @@
-"""Differentiable quantitative finance on OpenQML's existing model/runtime core.
+"""Native financial models, risk, allocation, accounting and coherent estimation."""
 
-Forecast and scenario plans create ordinary HybridArchitecture programs.
-Financial objectives, factor solvers and accounting retain native arrays and
-gradients. Cardinality problems compile to portable, resource-admitted circuits.
-"""
+from .._lazy import resolve as _resolve
+from ._exports import EXPORTS as _EXPORTS
+from ._exports import MODULES as _MODULES
+from ._exports import PUBLIC as _PUBLIC
 
-from .allocation import AllocationPlan, AllocationResult
-from .models import MarketForecast, MarketForecastPlan, ScenarioPlan
-from .pricing import PayoffEstimate, PayoffOraclePlan
-from .projection import cost_aware_projection
-from .quantum import (
-    CardinalityProblem,
-    CardinalityQAOAPlan,
-    PortfolioSamples,
-    PortfolioSelection,
-    SelectionResult,
-)
-from .risk import (
-    FactorRisk,
-    covariance_matvec,
-    dense_covariance,
-    expected_shortfall,
-    factor_risk,
-    portfolio_variance,
-    quantile_loss,
-    wasserstein_cvar,
-)
-from .trading import SelfFinancingPlan, TradingResult, TradingState
-from .validation import FinancialFold, PurgedWalkForward
+__all__ = _PUBLIC
 
-__all__ = [
-    "AllocationPlan",
-    "AllocationResult",
-    "MarketForecast",
-    "MarketForecastPlan",
-    "ScenarioPlan",
-    "PayoffEstimate",
-    "PayoffOraclePlan",
-    "cost_aware_projection",
-    "CardinalityProblem",
-    "CardinalityQAOAPlan",
-    "PortfolioSamples",
-    "PortfolioSelection",
-    "SelectionResult",
-    "FactorRisk",
-    "covariance_matvec",
-    "dense_covariance",
-    "expected_shortfall",
-    "factor_risk",
-    "portfolio_variance",
-    "quantile_loss",
-    "wasserstein_cvar",
-    "SelfFinancingPlan",
-    "TradingResult",
-    "TradingState",
-    "FinancialFold",
-    "PurgedWalkForward",
-]
+
+def __getattr__(name):
+    return _resolve(name, __name__, _EXPORTS, _MODULES, globals())
+
+
+def __dir__():
+    return sorted(set(globals()) | _EXPORTS.keys() | _MODULES.keys())

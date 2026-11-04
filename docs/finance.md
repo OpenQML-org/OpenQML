@@ -110,6 +110,14 @@ and autodiff tapes. Computation stays on the selected native tensor device.
 This is a single-stage allocation layer with explicit previous holdings, not a
 full multi-horizon dynamic portfolio optimizer.
 
+`oq.finance.allocate(returns,...)` is the array-based entry point. Supply the last
+solution as `warm_start` to propose an active face for a nearby problem. The
+current equations are solved and feasibility/KKT residuals certified before the
+iterative primal search can be skipped. A failed certificate falls back to that
+search. The seed is detached from differentiation; `previous` still represents
+actual economic holdings. JAX uses a compiled conditional, while eager NumPy and
+PyTorch branch directly. Compiled PyTorch keeps the ordinary solver path.
+
 `expected_shortfall(losses, confidence=0.95, probabilities=p)` uses the worst
 5% mass and includes fractional boundary atoms. `wasserstein_cvar(w, returns,
 confidence=0.95, radius=r)` adds `r * ||w||2 / 0.05`, a conservative W1/L2 robust
@@ -180,6 +188,14 @@ throughput is established by the functional tests.
 
 ## Quantum Monte Carlo for pricing and tail risk
 
+`oq.finance.price(payoffs,probabilities=p)` computes the native exact weighted
+sum with no quantum engine. With coherent inputs, `method="auto"` first attempts
+an admitted exact calculation, using the original scenario preparation for a
+table. Use `method="quantum"` to select sampled estimation explicitly. `error`
+is an absolute discounted payoff error, not a probability tolerance. The default
+`strict=True` raises if the budget cannot deliver the requested statistical
+bound; `strict=False` exposes the partial result and diagnostics.
+
 Use `import openqml as oq` and `from openqml import finance as f`.
 `PayoffOraclePlan(bound_preparation,payoffs,discount=...)` combines a coherent
 scenario circuit with a bounded signed payoff. Scenario order is q0-MSB.
@@ -233,6 +249,33 @@ requires independent binomial measurements under this specified model and a
 fixed shot/depth schedule. It does not cover calibration, discretization,
 market-model, payoff-truncation or floating-point errors.
 
+### Adaptive precision and depth selection
+
+The high-level quantum path defaults to `AdaptiveAmplitudeEstimationPlan`.
+At each registered depth, a Jeffreys beta-binomial mixture e-process gives a
+confidence sequence: its log mixture likelihood minus the candidate binomial
+log likelihood is bounded by `log(L/alpha)`, where `L` is the number of registered
+depths. Ville's inequality and a union bound cover all rounds, adaptive depth
+selection and optional stopping under the fixed calibrated binomial model.
+All inverse-Grover branches are retained and successive confidence sets
+intersected. The reported point is the interval-hull midpoint; `error_bound` is
+its worst-case distance to that hull, rather than a posterior credible width.
+
+Depth selection scores local Fisher information per supplied circuit cost,
+subject to a phase-window safeguard, measured visibility and query/work/memory
+budgets. `costs` describes a per-shot execution cost and `batch_cost` a fixed
+submission overhead; this heuristic is not a globally optimal depth policy.
+Confidence coverage does not depend on the heuristic being optimal. A query
+counts every forward/inverse oracle call, including the calls inside Grover
+amplification. Noisy depths with zero contrast carry no information.
+
+This adapts contrast-aware financial estimation and time-uniform inference from
+the sources below. It does not implement their complete Bayesian CVA workflow or
+tomography procedure. Visibility must be calibrated independently and remain
+valid throughout execution; confidence does not cover an unknown or drifting
+noise model. The plan stops at the requested precision or returns an explicit
+unconverged result when the query/round budget is exhausted.
+
 Digital loss payoffs `1[loss > threshold]` estimate tail probabilities; positive
 excess-loss payoffs `max(loss-threshold,0)` estimate shortfall integrals. Both
 reuse the same oracle and estimator, without separate risk-specific circuit
@@ -257,3 +300,7 @@ erase the oracle-query advantage. No end-to-end speedup is certified here.
 - [Shift-Aware Gaussian-Supremum Validation for Wasserstein-DRO CVaR Portfolios](https://arxiv.org/abs/2512.16748): robust tail-risk formulation. Radius calibration and statistical validation are separate from the implemented margin.
 - [Quantum generative modeling for financial time series with temporal correlations](https://doi.org/10.1088/2632-2153/ae39a2), Machine Learning: Science and Technology 7, 015027 (2026): financial quantum generative modeling; the finite-atom Born model here differs from its QGAN and MPS experiments.
 - [Quantum amplitude estimation beyond power-of-two schedules](https://arxiv.org/abs/2609.02715) (September 2026): geometric depth schedules and full multimodal likelihood inference. OpenQML uses its own conservative finite-shot confidence construction and configurable shot allocation.
+- [A Noise-Aware Quantum Algorithm for Credit Valuation Adjustments on Real Quantum Hardware](https://arxiv.org/abs/2607.12990) (September 2026 revision): motivates contrast-aware depth and cost selection. OpenQML uses a frequentist confidence sequence rather than the paper's complete inference workflow.
+- [Anytime-Valid Quantum State Tomography via Confidence Sequences](https://arxiv.org/abs/2601.20761), IEEE Signal Processing Letters 33 (2026): time-uniform quantum inference; the implementation here concerns binomial amplitude estimation, not tomography.
+- [Time-uniform, nonparametric, nonasymptotic confidence sequences](https://arxiv.org/abs/1810.08240), Annals of Statistics 49(2), 1055–1080 (2021): mixture-martingale confidence sequences and optional-stopping coverage.
+- [Goldfarb–Idnani Revisited: Invariants, Certificates, and the Limits of Guessing](https://arxiv.org/abs/2608.30933) (2026): motivates certification of a proposed active set. OpenQML retains its specialized factor-risk solver and implicit derivatives.

@@ -2,102 +2,75 @@
 
 [PyPI](https://pypi.org/project/openqml/) · [CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml) · [Documentation](https://github.com/OpenQML-org/OpenQML/tree/main/docs)
 
-Build and train quantum–classical neural networks in PyTorch, JAX and Flax.
+Quantum–classical models, quantitative finance and circuit interoperability in one Python package.
 
-## Installation
+## Install
 
-Requires Python 3.10 or later. Install the integration you use:
+Python 3.10 or later:
 
 ```bash
-python -m pip install --upgrade "openqml[torch]"
+python -m pip install --upgrade openqml
 ```
 
-Other options: `openqml[jax]`, `openqml[flax]`, or `openqml` for the NumPy core.
-The core depends on NumPy, packaging and psutil; training frameworks and quantum SDKs are optional.
+The core depends on NumPy, packaging and psutil. Frameworks and quantum SDKs are
+optional; importing OpenQML loads neither NumPy nor execution engines.
 
-## Train a PyTorch model
+## Allocate a portfolio
 
 ```python
-import torch
-from torch import nn
 import openqml as oq
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-architecture = oq.HybridArchitecture(
-    16,
-    2,
-    hidden_features=32,
-    depth=4,
-    quantum=oq.QuantumCellSpec(num_qubits=4, depth=1),
-)
-model = architecture.build("torch", device=device)
-trainer = model.trainer(lr=1e-3, quantum_lr=3e-4, microbatch_size=8)
-
-x = torch.randn(32, 16, device=device)
-target = torch.randint(0, 2, (32,), device=device)
-metrics = trainer.step(
-    (x, target),
-    lambda network, batch: nn.functional.cross_entropy(network(batch[0]), batch[1]),
-)
-print(model(x).shape)  # torch.Size([32, 2])
+returns = [[0.01, -0.02], [-0.01, 0.03], [0.02, 0.01]]
+portfolio = oq.finance.allocate(returns, caps=0.7, fees=0.001)
+print(portfolio.weights)
 ```
 
-The architecture owns residual blocks, quantum cells, projections and one stable
-parameter layout. `DepthSchedule` grows active depth while preserving optimizer state.
+The allocator includes factor risk, position limits, funding and transaction
+costs. Supply your own return observations and previous holdings.
 
-## Choose an interface
+## Train a model
 
-| Task | Interface |
+Install `openqml[torch]`, `openqml[jax]` or `openqml[flax]`, then use the same
+`fit`/`predict` interface:
+
+```python
+import openqml as oq
+
+x = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]] * 8
+y = [0, 1, 1, 0] * 8
+model = oq.Model(task="classification", hidden_features=8, depth=2)
+model.fit(x, y)
+print(model.predict(x[:2]))
+```
+
+Set `framework="jax"` or `framework="flax"` to change the training integration.
+Tasks include `regression`, `classification` and `forecast`. The native network
+and trainer remain available as `model.module` and `model.trainer`.
+
+## Interfaces
+
+| Task | Entry point |
 | --- | --- |
-| Build a hybrid network | `HybridArchitecture` and `QuantumCellSpec` |
-| Image and temporal convolutions | `HybridArchitecture.convolutional(...)` |
-| Reduced-state quantum attention | `HybridArchitecture.transformer(..., attention="state")` |
-| Higher-order graph networks | `HybridArchitecture.graph_network(..., order=2)` |
-| Quantum KAN activations | `HybridArchitecture.kan(...)` |
-| Recurrent quantum memory | `HybridArchitecture.recurrent(...)` |
-| Born probability generators | `HybridArchitecture.generative(...)` |
-| Autoregressive quantum sequence models | `HybridArchitecture.language_model(...)` |
-| Mixed-state quantum diffusion | `QuantumDiffusionPlan` and `ChannelLayer` |
-| Compose or extend network blocks | `OperatorSpec` and `register_network_operator(...)` |
-| Use a custom quantum circuit | `QuantumCellSpec.from_spec(...)` |
-| Adjust quantum capacity | `QuantumLayer.multiscale(bond_qubits=..., depth=...)` |
-| Train an existing circuit | `QuantumLayer`; set `execution_method="tensor-network"` for native contraction |
-| Factor a dense projection | `TensorTrainLinear.from_dense(weight, bias)` |
-| Train with accumulation and checkpoints | `model.trainer(...)` |
-| Train a quantum policy | `QuantumActorCritic` and `PPOTrainer` |
-| Forecast joint market scenarios | `finance.MarketForecastPlan` and `finance.ScenarioPlan` |
-| Train cost-aware portfolio decisions | `finance.AllocationPlan` and `finance.factor_risk` |
-| Account for lagged trades and funding | `finance.SelfFinancingPlan` |
-| Optimize a fixed-size asset selection | `finance.PortfolioSelection` and `finance.CardinalityQAOAPlan` |
-| Estimate bounded prices and tail expectations | `AmplitudeEstimationPlan` and `finance.PayoffOraclePlan` |
-| Add a quantum residual cell | `QuantumLayer.deep` |
-| Schedule time, price and precision | `CostAwareBackend` and `TrainingWorkload` |
-| Distribute circuit contractions | `DistributedTensorPlan` with a Torch `DeviceMesh` |
+| Supervised hybrid models | `oq.Model` |
+| Custom convolution, attention, graph and generative networks | `oq.HybridArchitecture` |
+| Risk, allocation, accounting and pricing | `oq.finance` |
+| Native framework layers | `oq.torch`, `oq.jax`, `oq.flax` |
+| Circuits and conversion | `oq.Circuit`, `oq.convert`, `oq.compile_program` |
+| Tensor contraction and distribution | `oq.TensorNetworkPlan`, `oq.DistributedTensorPlan` |
+| Quantum reinforcement learning | Framework `QuantumActorCritic` and `PPOTrainer` |
+| Hardware and cost policies | `oq.configure_runtime`, `oq.CostAwareBackend` |
 
-Use `native_execution="pauli-transfer"` on an architecture to compile restricted
-circuits into batched exact Pauli transfers. State attention shares one quantum
-feature bank across heads; pair graphs retain quadratic node-pair states.
-See [Models](https://github.com/OpenQML-org/OpenQML/blob/main/docs/models.md) for costs and input formats.
-See [Stateful and generative models](https://github.com/OpenQML-org/OpenQML/blob/main/docs/frontier-models.md) for sequence training, density carries and method sources.
-See [Quantitative finance](https://github.com/OpenQML-org/OpenQML/blob/main/docs/finance.md) for financial training, risk, execution timing and constrained optimization.
+`framework` selects the training integration, `backend` selects circuit execution,
+and `device` selects native tensor placement. Modules, integrations and backends
+load when used. Existing low-level APIs remain available through `oq`.
 
-Framework layers are available under `oq.torch`, `oq.jax` and `oq.flax`.
-JAX uses `layer.init(key)` and `layer(parameters, inputs)`; Flax uses Linen `init`/`apply`.
-Dense import returns a module in PyTorch, `(layer, parameters)` in JAX, and `(module, variables)` in Flax.
+Automatic pricing uses available exact calculations before amplified sampling.
+Quantum estimation accepts an error target, calibrated contrast and query limits.
+Quantum query advantages depend on coherent oracles, noise and total execution
+cost. Circuit capacity follows memory, work and backend limits; there is no fixed
+library-wide qubit ceiling.
 
-## Execution and documentation
-
-Automatic circuit execution compares configured time, price and error forecasts.
-QPU profiles include queue, pricing and noise estimates; without profiles,
-local execution uses GPU, then CPU. `PriorityBackend` retains explicit hardware priority.
-Native tensor layers run on their selected framework device. There is no fixed
-circuit-width ceiling; memory, contraction width and work budgets determine capacity.
-`AdaptiveMPSBackend` offers explicit approximation with checked observable-error bounds.
-`compile_program` retains SDK-supported dynamic loops; `convert` uses portable circuit IR.
-The model planner schedules the whole network against shared time and cost limits.
-Distributed contractions shard intermediate tensors; GPU scaling requires hardware measurements.
-
-[Models](https://github.com/OpenQML-org/OpenQML/blob/main/docs/models.md) · [Architecture](https://github.com/OpenQML-org/OpenQML/blob/main/docs/deep-learning.md) · [Distributed execution](https://github.com/OpenQML-org/OpenQML/blob/main/docs/distributed-execution.md) · [Training and execution](https://github.com/OpenQML-org/OpenQML/blob/main/docs/training-and-execution.md) · [Tensor networks](https://github.com/OpenQML-org/OpenQML/blob/main/docs/tensor-networks.md) · [Hybrid training](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md) · [Quantum RL](https://github.com/OpenQML-org/OpenQML/blob/main/docs/quantum-rl.md) · [Circuit conversion](https://github.com/OpenQML-org/OpenQML/blob/main/docs/semantic-kernels.md) · [QPU configuration](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md)
+[API guide](https://github.com/OpenQML-org/OpenQML/blob/main/docs/api.md) · [Finance](https://github.com/OpenQML-org/OpenQML/blob/main/docs/finance.md) · [Models](https://github.com/OpenQML-org/OpenQML/blob/main/docs/models.md) · [Stateful models](https://github.com/OpenQML-org/OpenQML/blob/main/docs/frontier-models.md) · [Training](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md) · [Tensor networks](https://github.com/OpenQML-org/OpenQML/blob/main/docs/tensor-networks.md) · [Runtime](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md)
 
 ## License
 

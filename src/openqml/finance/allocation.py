@@ -84,7 +84,7 @@ class AllocationPlan:
             excludes="autodiff_tapes_allocator_and_framework_reserves",
         )
 
-    def solve(self, mean, risk, *, previous=None, caps=1, fees=0, budget=1):
+    def solve(self, mean, risk, *, previous=None, caps=1, fees=0, budget=1, warm_start=None):
         ops = Ops(mean)
         xp = ops.xp
         mean = ops.real(mean)
@@ -127,7 +127,91 @@ class AllocationPlan:
         stopped = tuple(
             ops.stop(v) for v in (diagonal, factors, mass, linear, previous, caps, fees, budget)
         )
-        approximate = self._identify(*stopped, ops)
+
+        def cold():
+            approximate = self._identify(*stopped, ops)
+            return self._face(
+                approximate,
+                diagonal,
+                factors,
+                mass,
+                linear,
+                previous,
+                caps,
+                fees,
+                budget,
+                ops,
+                tolerance,
+                eps,
+            )
+
+        compiling = ops.name == "torch" and getattr(xp.compiler, "is_compiling", lambda: False)()
+        if warm_start is None or compiling:
+            candidate, residual, converged = cold()
+        else:
+            seed = ops.stop(ops.broadcast(ops.real(warm_start), shape))
+            seed = _prox(
+                seed,
+                ops.clip(stopped[4], 0, stopped[5]),
+                stopped[5],
+                xp.zeros_like(stopped[6]),
+                stopped[7],
+                ops,
+            )
+            fast = self._face(
+                seed,
+                diagonal,
+                factors,
+                mass,
+                linear,
+                previous,
+                caps,
+                fees,
+                budget,
+                ops,
+                tolerance,
+                eps,
+            )
+            if ops.name == "jax":
+                import jax
+
+                if isinstance(fast[2], jax.core.Tracer):
+                    candidate, residual, converged = jax.lax.cond(
+                        xp.all(fast[2]), lambda: fast, cold
+                    )
+                else:
+                    candidate, residual, converged = fast if bool(xp.all(fast[2])) else cold()
+            else:
+                candidate, residual, converged = fast if bool(xp.all(fast[2])) else cold()
+        candidate = ops.check(
+            candidate,
+            converged[..., None],
+            "Allocation failed its feasibility/KKT tolerance; "
+            "increase iterations, ridge or numeric precision.",
+            resource=True,
+        )
+        smooth = matmat(diagonal, factors, mass, candidate[..., None], ops)[..., 0]
+        objective = 0.5 * ops.sum(candidate * smooth) - ops.sum(linear * candidate)
+        objective += 0.5 * self.turnover * ops.sum(previous * previous)
+        objective += ops.sum(fees * xp.abs(candidate - previous))
+        return AllocationResult(candidate, objective, residual, converged)
+
+    def _face(
+        self,
+        approximate,
+        diagonal,
+        factors,
+        mass,
+        linear,
+        previous,
+        caps,
+        fees,
+        budget,
+        ops,
+        tolerance,
+        eps,
+    ):
+        xp = ops.xp
         center = ops.clip(previous, 0, caps)
         threshold = xp.minimum(ops.array(max(1e-8, 16 * eps)), caps * 0.25)
         lower = approximate <= threshold
@@ -136,7 +220,7 @@ class AllocationPlan:
             (~lower & ~upper) & (fees > 0) & (xp.abs(approximate - previous) <= max(1e-8, 16 * eps))
         )
         free = ~(lower | upper | no_trade)
-        free = ops.stop(free.to(mean.dtype) if ops.name == "torch" else free.astype(mean.dtype))
+        free = ops.stop(free.to(linear.dtype) if ops.name == "torch" else free.astype(linear.dtype))
         fixed = xp.where(upper, caps, xp.where(no_trade, previous, 0))
         sign = ops.stop(xp.sign(approximate - center))
         masked_factors = factors * free[..., None, :]
@@ -177,18 +261,7 @@ class AllocationPlan:
             & (solved_residual <= tolerance * reference)
             & xp.isfinite(residual)
         )
-        candidate = ops.check(
-            candidate,
-            converged[..., None],
-            "Allocation failed its feasibility/KKT tolerance; "
-            "increase iterations, ridge or numeric precision.",
-            resource=True,
-        )
-        smooth = matmat(diagonal, factors, mass, candidate[..., None], ops)[..., 0]
-        objective = 0.5 * ops.sum(candidate * smooth) - ops.sum(linear * candidate)
-        objective += 0.5 * self.turnover * ops.sum(previous * previous)
-        objective += ops.sum(fees * xp.abs(candidate - previous))
-        return AllocationResult(candidate, objective, residual, converged)
+        return candidate, residual, converged
 
     def _identify(self, diagonal, factors, mass, linear, previous, caps, fees, budget, ops):
         xp = ops.xp

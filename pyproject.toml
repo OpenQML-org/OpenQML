@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openqml"
-version = "0.13.0"
+version = "0.14.0"
 description = "Deep quantum-classical neural networks with tensor-network execution and hardware-aware training"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,7 +36,7 @@ Repository = "https://github.com/OpenQML-org/OpenQML"
 
 [project.optional-dependencies]
 torch = ["torch>=2.2"]
-jax = ["jax>=0.4.30"]
+jax = ["jax>=0.4.30", "optax>=0.2"]
 qiskit = ["qiskit[qasm3-import]>=1.2", "sympy>=1.12"]
 aer = ["qiskit[qasm3-import]>=1.2", "qiskit-aer>=0.15", "sympy>=1.12"]
 qasm = ["qiskit[qasm3-import]>=1.2", "openqasm3[parser]>=1.0", "sympy>=1.12"]
@@ -69,7 +69,8 @@ openqml = "openqml.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-openqml = ["py.typed"]
+openqml = ["py.typed", "*.pyi"]
+"openqml.finance" = ["*.pyi"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

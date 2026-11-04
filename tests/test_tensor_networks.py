@@ -507,9 +507,9 @@ def test_readme_quickstart_is_executable_and_completes_an_optimizer_step():
     namespace = {}
     for block in blocks:
         exec(compile(block, "README.md", "exec"), namespace)
-    model, trainer, metrics = (namespace[name] for name in ("model", "trainer", "metrics"))
-    assert tuple(model(namespace["x"]).shape) == (32, 2)
-    assert metrics["updates"] == trainer.updates == 1 and not metrics["skipped"]
-    assert np.isfinite(metrics["loss"])
-    assert trainer.optimizer.state
-    assert any(state["exp_avg"].count_nonzero() for state in trainer.optimizer.state.values())
+    model = namespace["model"]
+    assert tuple(model.predict_proba(namespace["x"]).shape) == (32, 2)
+    assert model.history[-1]["updates"] == model.trainer.updates == 1
+    assert np.isfinite(model.history[-1]["loss"])
+    assert model.trainer.optimizer.state
+    assert any(state["exp_avg"].count_nonzero() for state in model.trainer.optimizer.state.values())
