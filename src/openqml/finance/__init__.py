@@ -7,6 +7,7 @@ gradients. Cardinality problems compile to portable, resource-admitted circuits.
 
 from .allocation import AllocationPlan, AllocationResult
 from .models import MarketForecast, MarketForecastPlan, ScenarioPlan
+from .pricing import PayoffEstimate, PayoffOraclePlan
 from .projection import cost_aware_projection
 from .quantum import (
     CardinalityProblem,
@@ -34,6 +35,8 @@ __all__ = [
     "MarketForecast",
     "MarketForecastPlan",
     "ScenarioPlan",
+    "PayoffEstimate",
+    "PayoffOraclePlan",
     "cost_aware_projection",
     "CardinalityProblem",
     "CardinalityQAOAPlan",
