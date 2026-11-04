@@ -165,6 +165,7 @@ from .truncated_mps import MPSApproximation, TruncatedMPSBackend
 from .verification import ConversionCheck
 
 _LAZY_MODULES = {
+    "finance": ".finance",
     "torch": ".interfaces.torch",
     "jax": ".interfaces.jax",
     "flax": ".interfaces.flax",
@@ -196,7 +197,7 @@ def __dir__():
     return sorted(set(globals()) | _LAZY_MODULES.keys())
 
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 
 __all__ = [
     "QuantumActivationPlan",

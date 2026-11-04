@@ -1,0 +1,173 @@
+"""Weighted factor risk, exact fractional-tail CVaR and proper scenario scores."""
+
+from typing import NamedTuple
+
+import numpy as np
+
+from ..errors import ValidationError
+from ..parameters import real
+from ._array import Ops, admission, rows
+
+
+class FactorRisk(NamedTuple):
+    mean: object
+    factors: object
+    factor_weights: object
+    diagonal: object
+
+
+def factor_risk(
+    returns, probabilities=None, *, shrinkage=0.1, variance_floor=1e-8, max_memory_mb=256
+):
+    """PSD shrinkage covariance as diag(d) + F.T @ diag(p) @ F.
+
+    Return samples have shape [...,S,N]. No dense N-by-N covariance is built.
+    Keeping probabilities separate avoids sqrt(p) derivatives at zero mass.
+    """
+    ops = Ops(probabilities if probabilities is not None else returns)
+    x = ops.real(returns)
+    if x.ndim < 2 or min(x.shape[-2:]) < 1:
+        raise ValidationError("Risk estimation needs returns[...,scenarios,assets].")
+    shrinkage, floor = real(shrinkage), real(variance_floor)
+    if not 0 <= shrinkage <= 1 or floor < 0:
+        raise ValidationError("Shrinkage must lie in [0,1] and variance_floor be nonnegative.")
+    p = ops.probabilities(probabilities, x.shape[-2])
+    shape = np.broadcast_shapes(x.shape[:-2], p.shape[:-1])
+    admission(8 * rows(shape) * x.shape[-2] * x.shape[-1], max_memory_mb)
+    x = ops.broadcast(x, shape + x.shape[-2:])
+    p = ops.broadcast(p, shape + (x.shape[-2],))
+    mean = ops.sum(p[..., :, None] * x, axis=-2)
+    centered = x - mean[..., None, :]
+    variance = ops.sum(p[..., :, None] * centered * centered, axis=-2)
+    return FactorRisk(mean, centered, (1 - shrinkage) * p, shrinkage * variance + floor)
+
+
+def prepare_risk(risk, ops, shape):
+    if not isinstance(risk, FactorRisk):
+        raise ValidationError("Provide FactorRisk; use factor_risk on historical/scenario returns.")
+    mean, factors, weights, diagonal = (ops.real(v) for v in risk)
+    n = shape[-1]
+    if (
+        factors.ndim < 2
+        or factors.shape[-1] != n
+        or weights.shape[-1:] != (factors.shape[-2],)
+        or diagonal.shape[-1:] != (n,)
+        or mean.shape[-1:] != (n,)
+    ):
+        raise ValidationError("Factor risk dimensions differ from the asset universe.")
+    prefix = np.broadcast_shapes(
+        shape[:-1], mean.shape[:-1], factors.shape[:-2], weights.shape[:-1], diagonal.shape[:-1]
+    )
+    mean = ops.broadcast(mean, prefix + (n,))
+    factors = ops.broadcast(factors, prefix + factors.shape[-2:])
+    weights = ops.broadcast(weights, prefix + weights.shape[-1:])
+    diagonal = ops.broadcast(diagonal, prefix + (n,))
+    weights = ops.check(weights, weights >= 0, "Factor weights must be nonnegative.")
+    diagonal = ops.check(diagonal, diagonal >= 0, "Specific variances must be nonnegative.")
+    return FactorRisk(mean, factors, weights, diagonal)
+
+
+def covariance_matvec(risk, vector):
+    ops = Ops(vector)
+    vector = ops.real(vector)
+    risk = prepare_risk(risk, ops, vector.shape)
+    projected = ops.xp.einsum("...rn,...n->...r", risk.factors, vector)
+    return risk.diagonal * vector + ops.xp.einsum(
+        "...rn,...r->...n", risk.factors, risk.factor_weights * projected
+    )
+
+
+def portfolio_variance(weights, risk):
+    ops = Ops(weights)
+    weights = ops.real(weights)
+    return ops.sum(weights * covariance_matvec(risk, weights))
+
+
+def dense_covariance(risk, *, max_memory_mb=256):
+    ops = Ops(risk.mean)
+    risk = prepare_risk(risk, ops, risk.mean.shape)
+    n = risk.mean.shape[-1]
+    admission(4 * rows(risk.mean.shape[:-1]) * (n * n + risk.factors.shape[-2] * n), max_memory_mb)
+    matrix = ops.xp.einsum(
+        "...ri,...r,...rj->...ij", risk.factors, risk.factor_weights, risk.factors
+    )
+    return matrix + ops.array(np.eye(n)) * risk.diagonal[..., None, :]
+
+
+def expected_shortfall(losses, *, confidence=0.95, probabilities=None):
+    """Upper-tail CVaR including fractional boundary mass; differentiable a.e."""
+    confidence = real(confidence)
+    if not 0 <= confidence < 1:
+        raise ValidationError("confidence must lie in [0,1).")
+    ops = Ops(losses)
+    losses = ops.real(losses)
+    if losses.ndim < 1 or losses.shape[-1] < 1:
+        raise ValidationError("Provide a nonempty scenario axis.")
+    p = ops.probabilities(probabilities, losses.shape[-1])
+    shape = np.broadcast_shapes(losses.shape, p.shape)
+    losses, p = ops.broadcast(losses, shape), ops.broadcast(p, shape)
+    order = ops.argsort(losses)
+    ordered, mass = ops.gather(losses, order), ops.gather(p, order)
+    count = ops.sum(
+        (ops.cumsum(mass) < confidence).to(ops.like.dtype)
+        if ops.name == "torch"
+        else (ops.cumsum(mass) < confidence).astype(ops.like.dtype)
+    )
+    index = ops.clip(count, 0, losses.shape[-1] - 1)
+    index = index.to(ops.xp.int64) if ops.name == "torch" else index.astype("int32")
+    threshold = ops.gather(ordered, index[..., None])[..., 0]
+    excess = ops.xp.maximum(losses - threshold[..., None], ops.array(0))
+    return threshold + ops.sum(p * excess) / (1 - confidence)
+
+
+def wasserstein_cvar(weights, scenarios, *, confidence=0.95, probabilities=None, radius=0):
+    """W1/L2 robust-CVaR upper bound; no finite-support restriction is imposed.
+
+    The norm margin is radius*||w||_2/(1-confidence). Its sharpness assumes an
+    unbounded return space; it is conservative for constrained supports.
+    Radius calibration and distribution-shift coverage are caller responsibilities.
+    """
+    confidence, radius = real(confidence), real(radius)
+    if not 0 <= confidence < 1 or radius < 0:
+        raise ValidationError("Invalid CVaR confidence or Wasserstein radius.")
+    ops = Ops(weights)
+    w, scenarios = ops.real(weights), ops.real(scenarios)
+    if scenarios.ndim < 2 or scenarios.shape[-1] != w.shape[-1]:
+        raise ValidationError("Scenario and portfolio asset dimensions must match.")
+    losses = -ops.xp.einsum("...sn,...n->...s", scenarios, w)
+    return expected_shortfall(
+        losses, confidence=confidence, probabilities=probabilities
+    ) + radius * ops.norm(w) / (1 - confidence)
+
+
+def quantile_loss(predictions, targets, quantiles, *, mask=None):
+    ops = Ops(predictions)
+    predictions, targets = ops.real(predictions), ops.real(targets, finite=False)
+    levels = np.asarray(quantiles, dtype=float)
+    if (
+        levels.ndim != 1
+        or not len(levels)
+        or not np.all((levels > 0) & (levels < 1))
+        or np.any(np.diff(levels) <= 0)
+        or predictions.shape[:-1] != targets.shape
+        or predictions.shape[-1] != len(levels)
+    ):
+        raise ValidationError("Ordered quantiles and targets must match predictions[...,assets,Q].")
+    valid = ops.xp.ones_like(targets) > 0 if mask is None else ops.array(mask, boolean=True)
+    if valid.shape != targets.shape:
+        raise ValidationError("Quantile masks must match target asset observations.")
+    targets = ops.xp.where(valid, targets, 0)
+    targets = ops.check(
+        targets, ops.xp.isfinite(targets), "Active financial targets must be finite."
+    )
+    error = targets[..., None] - predictions
+    level = ops.array(levels)
+    values = ops.xp.maximum(level * error, (level - 1) * error)
+    if mask is None:
+        return ops.sum(values, axis=(-1, -2)) / (targets.shape[-1] * len(levels))
+    values = ops.xp.where(valid[..., None], values, 0)
+    return ops.sum(values, axis=(-1, -2)) / ops.maximum(
+        ops.sum(valid.to(values.dtype) if ops.name == "torch" else valid.astype(values.dtype))
+        * len(levels),
+        1,
+    )

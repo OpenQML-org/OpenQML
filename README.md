@@ -65,6 +65,10 @@ parameter layout. `DepthSchedule` grows active depth while preserving optimizer 
 | Factor a dense projection | `TensorTrainLinear.from_dense(weight, bias)` |
 | Train with accumulation and checkpoints | `model.trainer(...)` |
 | Train a quantum policy | `QuantumActorCritic` and `PPOTrainer` |
+| Forecast joint market scenarios | `finance.MarketForecastPlan` and `finance.ScenarioPlan` |
+| Train cost-aware portfolio decisions | `finance.AllocationPlan` and `finance.factor_risk` |
+| Account for lagged trades and funding | `finance.SelfFinancingPlan` |
+| Optimize a fixed-size asset selection | `finance.PortfolioSelection` and `finance.CardinalityQAOAPlan` |
 | Add a quantum residual cell | `QuantumLayer.deep` |
 | Schedule time, price and precision | `CostAwareBackend` and `TrainingWorkload` |
 | Distribute circuit contractions | `DistributedTensorPlan` with a Torch `DeviceMesh` |
@@ -74,6 +78,7 @@ circuits into batched exact Pauli transfers. State attention shares one quantum
 feature bank across heads; pair graphs retain quadratic node-pair states.
 See [Models](https://github.com/OpenQML-org/OpenQML/blob/main/docs/models.md) for costs and input formats.
 See [Stateful and generative models](https://github.com/OpenQML-org/OpenQML/blob/main/docs/frontier-models.md) for sequence training, density carries and method sources.
+See [Quantitative finance](https://github.com/OpenQML-org/OpenQML/blob/main/docs/finance.md) for financial training, risk, execution timing and constrained optimization.
 
 Framework layers are available under `oq.torch`, `oq.jax` and `oq.flax`.
 JAX uses `layer.init(key)` and `layer(parameters, inputs)`; Flax uses Linen `init`/`apply`.
