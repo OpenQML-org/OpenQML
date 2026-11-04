@@ -69,6 +69,7 @@ parameter layout. `DepthSchedule` grows active depth while preserving optimizer 
 | Train cost-aware portfolio decisions | `finance.AllocationPlan` and `finance.factor_risk` |
 | Account for lagged trades and funding | `finance.SelfFinancingPlan` |
 | Optimize a fixed-size asset selection | `finance.PortfolioSelection` and `finance.CardinalityQAOAPlan` |
+| Estimate bounded prices and tail expectations | `AmplitudeEstimationPlan` and `finance.PayoffOraclePlan` |
 | Add a quantum residual cell | `QuantumLayer.deep` |
 | Schedule time, price and precision | `CostAwareBackend` and `TrainingWorkload` |
 | Distribute circuit contractions | `DistributedTensorPlan` with a Torch `DeviceMesh` |

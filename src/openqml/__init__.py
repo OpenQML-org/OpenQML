@@ -13,6 +13,7 @@ from .adaptive import AdaptivePlan, ExecutionCandidate, plan_execution
 from .adaptive_mps import AdaptiveMPSBackend, AdaptiveMPSResult
 from .adjoint import AdjointPlan, adjoint_jvp, adjoint_vjp
 from .aer import AerBackend
+from .amplitude import AmplitudeEstimate, AmplitudeEstimationPlan, AmplitudeOracle
 from .architecture import HybridArchitecture, NetworkParameter, QuantumCellSpec
 from .architecture_runtime import NetworkExecutionPlan
 from .autoregressive import detach_quantum_state, sample_tokens
@@ -200,6 +201,9 @@ def __dir__():
 __version__ = "0.13.0"
 
 __all__ = [
+    "AmplitudeOracle",
+    "AmplitudeEstimationPlan",
+    "AmplitudeEstimate",
     "QuantumActivationPlan",
     "QuantumChannelPlan",
     "BornCircuitPlan",

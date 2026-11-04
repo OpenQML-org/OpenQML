@@ -15,6 +15,7 @@ data, broker connection or extra core dependency is installed.
 | Funded execution | `SelfFinancingPlan.rollout(...)` | Delayed decisions, cash, proportional fees and quadratic impact |
 | Chronological validation | `PurgedWalkForward.split(times, label_end)` | Past-only training with overlapping labels removed |
 | Discrete asset selection | `PortfolioSelection(...).problem` | Equal-weight fixed-cardinality financial QUBO |
+| Coherent financial expectations | `PayoffOraclePlan` and `AmplitudeEstimationPlan` | Signed bounded payoffs, control variates and finite-shot intervals |
 
 ## Train decisions through the scenario model
 
@@ -177,6 +178,76 @@ a risk-neutral measure and no-arbitrage conditions are not inferred from data.
 No financial return improvement, quantum advantage or real multi-GPU/QPU
 throughput is established by the functional tests.
 
+## Quantum Monte Carlo for pricing and tail risk
+
+Use `import openqml as oq` and `from openqml import finance as f`.
+`PayoffOraclePlan(bound_preparation,payoffs,discount=...)` combines a coherent
+scenario circuit with a bounded signed payoff. Scenario order is q0-MSB.
+`preparation` must be an explicitly bound **unitary** `Circuit`, with no channels,
+measurement, classical feedback or unresolved parameters. A static
+`BornCircuitPlan.to_spec().circuit.bind(bindings)` is suitable when all its
+registers correspond to the table; an entire dissipative recurrent model cannot
+be inverted as a coherent oracle.
+
+The plan lazily synthesizes an exact affine arcsin payoff encoding using a
+Walsh transform and Gray-code controlled rotations. It preserves the signed
+expectation through `offset + scale * probability`, without a small-angle payoff
+approximation. Supply `control_values`, their independently known
+`control_expectation`, and `control_coefficient` to estimate a narrower residual.
+An incorrect control expectation biases the result. A constant residual returns
+analytically with zero circuit calls, including when wider bounds were supplied.
+
+Use `classical_value(probabilities)` when probabilities are already available:
+this differentiable exact sum compiles no quantum circuit. For a quantum
+expectation, construct `schedule = oq.AmplitudeEstimationPlan.geometric(
+max_power=32,ratio=1.45,shots=128,confidence=0.95)` and call
+`payoff.estimate(schedule,backend=...,seed=...)`. The returned `PayoffEstimate`
+contains a value, possibly disconnected `intervals`, their `interval` hull, the
+confidence level and the actual forward/inverse oracle query count. Constant
+payoffs need no amplitude estimate.
+
+For larger custom arithmetic oracles, use `oq.AmplitudeOracle(A,good_qubit)`
+directly and `schedule.run(oracle,...)`. Amplification executes the real A,
+its inverse and a zero-state reflection with clean linear workspace; it uses
+neither controlled A calls nor quantum Fourier transforms. Independent depth
+circuits are available through `schedule.circuits(oracle)` for external parallel
+submission; `run` groups equal-shot tasks through the existing batched backend
+interface and cost-aware hardware scheduler. External records can be supplied
+to `fit_counts`, so inference does not require a particular provider.
+
+The geometric non-power-of-two depth ladder and multimodal likelihood inference
+adapt the September 2026 method cited below. Grid resolution accounts for the
+largest depth and shot counts; every detected likelihood mode is refined. The
+point estimate is numerical. Confidence sets are constructed independently:
+per-depth binomial KL-Chernoff intervals receive a simultaneous union-bound error
+budget, then **all** inverse-trigonometric branches are intersected. A shallow
+single-start fit cannot silently discard an unresolved alias. These intervals
+are conservative, rather than a claim to reproduce the paper's empirical error
+constants or optimized shot profile.
+
+`visibility` may be a calibrated value per depth, with the model
+`P(1|m) = (1-v)/2 + v*sin((2*m+1)*theta)**2` and target probability
+`sin(theta)**2`. Zero visibility provides no information. Incompatible records
+raise `BackendError`; the model does not learn unknown device noise. Confidence
+requires independent binomial measurements under this specified model and a
+fixed shot/depth schedule. It does not cover calibration, discretization,
+market-model, payoff-truncation or floating-point errors.
+
+Digital loss payoffs `1[loss > threshold]` estimate tail probabilities; positive
+excess-loss payoffs `max(loss-threshold,0)` estimate shortfall integrals. Both
+reuse the same oracle and estimator, without separate risk-specific circuit
+engines. A market price additionally needs the correct risk-neutral measure.
+
+Inspect `schedule.resource_profile(oracle)` before execution: it includes
+state preparation, inverse preparation, reflection workspace, shot counts and
+portable IR operation counts. The theoretical quantum sampling advantage
+requires efficient coherent preparation/payoff arithmetic, sufficient useful
+circuit depth and an appropriate classical sampling comparison. A payoff table
+has O(S) storage/gates and O(S log S) synthesis; classical summation over known
+probabilities is O(S). Table loading, hardware transpilation, fault tolerance,
+queue time and competitive variance-reduced or quasi-Monte-Carlo methods can
+erase the oracle-query advantage. No end-to-end speedup is certified here.
+
 ## Method sources
 
 - [Integrated Prediction and Multi-period Portfolio Optimization](https://arxiv.org/abs/2512.11273): decision-focused training and fixed-point differentiation. OpenQML implements its own single-stage active-face factor solver, not the full multi-period algorithm.
@@ -185,3 +256,4 @@ throughput is established by the functional tests.
 - [Large-scale portfolio optimization on a trapped-ion quantum computer](https://arxiv.org/abs/2602.23976): hybrid decomposition motivation; no hardware results are reproduced here.
 - [Shift-Aware Gaussian-Supremum Validation for Wasserstein-DRO CVaR Portfolios](https://arxiv.org/abs/2512.16748): robust tail-risk formulation. Radius calibration and statistical validation are separate from the implemented margin.
 - [Quantum generative modeling for financial time series with temporal correlations](https://doi.org/10.1088/2632-2153/ae39a2), Machine Learning: Science and Technology 7, 015027 (2026): financial quantum generative modeling; the finite-atom Born model here differs from its QGAN and MPS experiments.
+- [Quantum amplitude estimation beyond power-of-two schedules](https://arxiv.org/abs/2609.02715) (September 2026): geometric depth schedules and full multimodal likelihood inference. OpenQML uses its own conservative finite-shot confidence construction and configurable shot allocation.
