@@ -29,6 +29,7 @@ class AmplitudeOracle:
     max_operations: int = 100_000
     max_memory_mb: float = 256
     _adjoint: Circuit = field(init=False, repr=False)
+    _matrix_entries: int = field(init=False, repr=False)
 
     def __post_init__(self):
         limit = integer(self.max_operations, "max_operations", 1)
@@ -43,11 +44,17 @@ class AmplitudeOracle:
             or memory <= 0
         ):
             raise ValidationError("Amplitude preparation needs a bound unitary and a valid qubit.")
+        matrix_entries = sum(
+            len(op.matrix) ** 2 for op in self.preparation.operations if op.matrix is not None
+        )
+        if 512 * len(self.preparation.operations) + 32 * matrix_entries > memory * 2**20:
+            raise ResourceError("Amplitude preparation exceeds descriptor memory before inversion.")
         adjoint = inverse(self.preparation)
         object.__setattr__(self, "good_qubit", good)
         object.__setattr__(self, "max_operations", limit)
         object.__setattr__(self, "max_memory_mb", memory)
         object.__setattr__(self, "_adjoint", adjoint)
+        object.__setattr__(self, "_matrix_entries", matrix_entries)
         self.resource_profile(0)
 
     def resource_profile(self, power):
@@ -59,12 +66,9 @@ class AmplitudeOracle:
         )
         reflection = 3 if n == 1 else 5 if n == 2 else 4 * n - 3
         count = forward + m * (1 + backward + reflection + forward) + 1
-        matrix_entries = sum(
-            len(op.matrix) ** 2 for op in self.preparation.operations if op.matrix is not None
-        )
         if (
             count > self.max_operations
-            or 512 * count + 32 * matrix_entries > self.max_memory_mb * 2**20
+            or 512 * count + 32 * self._matrix_entries > self.max_memory_mb * 2**20
         ):
             raise ResourceError("Amplitude circuit exceeds descriptor or operation budgets.")
         return dict(

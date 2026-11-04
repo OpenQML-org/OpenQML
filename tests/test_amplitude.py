@@ -161,7 +161,7 @@ def test_classical_payoff_path_does_not_compile_a_quantum_oracle():
         _ = plan.oracle
 
 
-def test_coherent_input_and_resource_failures_reject_before_expansion():
+def test_coherent_input_and_resource_failures_reject_before_expansion(monkeypatch):
     for circuit in (
         q.Circuit(1).measure_all(),
         q.Circuit(1).ry(q.Parameter("theta"), 0),
@@ -182,3 +182,8 @@ def test_coherent_input_and_resource_failures_reject_before_expansion():
         f.PayoffOraclePlan(q.Circuit(1), [-1, 1], bounds=(0, 1))
     with pytest.raises(q.ValidationError):
         f.PayoffOraclePlan(q.Circuit(1), [0, 1], control_values=[0, 1])
+    import openqml.amplitude as amplitude
+
+    monkeypatch.setattr(amplitude, "inverse", lambda *_: pytest.fail("Inversion before admission"))
+    with pytest.raises(q.ResourceError):
+        q.AmplitudeOracle(q.Circuit(1).h(0), 0, max_memory_mb=0.0001)
