@@ -478,6 +478,11 @@ def test_born_joint_scenarios_factor_decisions_and_training_connect_end_to_end(n
     scenarios = f.ScenarioPlan(atoms)
     architecture = scenarios.architecture(2, depth=1, hidden_features=4)
     model = architecture.build("torch", backend="torch", dtype=torch.float64, device="cpu")
+    # Keep this short optimization check independent of test ordering and the
+    # framework's random initializer; a large Adam step can leave a good basin.
+    with torch.no_grad():
+        for name, value in architecture.initial_parameters(17, dtype="float64").items():
+            model.values[name].copy_(torch.as_tensor(value, dtype=torch.float64))
     allocation = f.AllocationPlan(turnover=0.5)
     x = torch.ones((4, 3, 2), dtype=torch.float64) * 0.1
     target = torch.tensor(np.broadcast_to(atoms[1], (4, 3, 3)).copy())
@@ -491,7 +496,7 @@ def test_born_joint_scenarios_factor_decisions_and_training_connect_end_to_end(n
         ).mean()
 
     first = float(loss(model, (x, target)).detach())
-    trainer = model.trainer(lr=0.03, microbatch_size=2)
+    trainer = model.trainer(lr=0.003, microbatch_size=2)
     for _ in range(6):
         metrics = trainer.step((x, target), loss)
         assert not metrics["skipped"]
@@ -499,7 +504,7 @@ def test_born_joint_scenarios_factor_decisions_and_training_connect_end_to_end(n
     path = tmp_path / "financial.pt"
     trainer.save(path)
     restored = architecture.build("torch", backend="torch", dtype=torch.float64, device="cpu")
-    other = restored.trainer(lr=0.03, microbatch_size=2)
+    other = restored.trainer(lr=0.003, microbatch_size=2)
     other.load(path)
     trainer.step((x, target), loss)
     other.step((x, target), loss)

@@ -134,10 +134,14 @@ def test_readme_uses_the_public_package_import():
     namespace = {}
     for block in blocks:
         program = ast.parse(block)
-        if "oq.torch" in block or any(
-            (isinstance(node, ast.Import) and any(a.name == "torch" for a in node.names))
-            or (isinstance(node, ast.ImportFrom) and node.module == "torch")
-            for node in ast.walk(program)
+        if (
+            "oq.torch" in block
+            or "oq.Model(" in block
+            or any(
+                (isinstance(node, ast.Import) and any(a.name == "torch" for a in node.names))
+                or (isinstance(node, ast.ImportFrom) and node.module == "torch")
+                for node in ast.walk(program)
+            )
         ):
             pytest.importorskip("torch")
         imports = [

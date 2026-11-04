@@ -4,7 +4,7 @@ INTEGRATION_EXTRAS = {
     "torch": "torch",
     "jax": "jax",
     "flax": "flax",
-    "optax": "flax",
+    "optax": "jax",
     "qiskit": "qiskit",
     "qiskit_aer": "aer",
     "pennylane": "pennylane",
