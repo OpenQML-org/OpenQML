@@ -1,15 +1,51 @@
 """Native dynamic-switch references and bounded shared-definition compilation."""
 
+import importlib.util
+import io
+import json
+import os
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 
 import openqml as oq
 
 
+def native_density(native):
+    """Keep the independent Aer oracle's OpenMP runtime in its own process."""
+    if importlib.util.find_spec("qiskit_aer") is None:
+        pytest.skip("Qiskit Aer is required for the independent density reference")
+    from qiskit import qpy
+
+    buffer = io.BytesIO()
+    qpy.dump(native, buffer)
+    script = """import io, json, sys
+import numpy as np
+from qiskit import qpy
+from qiskit_aer import AerSimulator
+circuit = qpy.load(io.BytesIO(sys.stdin.buffer.read()))[0]
+circuit.save_density_matrix()
+result = AerSimulator(method='density_matrix').run(circuit, shots=16, seed_simulator=7).result()
+matrix = np.asarray(result.data(0)['density_matrix'])
+print(json.dumps([matrix.real.tolist(), matrix.imag.tolist()]))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        input=buffer.getvalue(),
+        capture_output=True,
+        check=True,
+        timeout=90,
+        env=dict(os.environ, OMP_NUM_THREADS="1"),
+    )
+    real, imag = json.loads(completed.stdout)
+    return np.array(real) + 1j * np.array(imag)
+
+
 @pytest.mark.parametrize("selector", range(4))
 def test_grouped_switch_default_and_selector_write_match_native_density(selector):
     qiskit = pytest.importorskip("qiskit")
-    aer = pytest.importorskip("qiskit_aer")
     from qiskit.circuit import CASE_DEFAULT
 
     from openqml.adapters._common import reverse_local_basis
@@ -30,9 +66,7 @@ def test_grouped_switch_default_and_selector_write_match_native_density(selector
     plan = oq.plan_conversion(native, source="qiskit", target="openqasm3")
     assert "SWITCH_CASE_LOWERED" in {d.code for d in plan.diagnostics}
     assert plan.verify().matched
-    native.save_density_matrix()
-    result = aer.AerSimulator(method="density_matrix").run(native, shots=16).result()
-    expected = reverse_local_basis(np.asarray(result.data(0)["density_matrix"]))
+    expected = reverse_local_basis(native_density(native))
     np.testing.assert_allclose(oq.density_matrix(plan.circuit), expected, atol=2e-14)
 
 
