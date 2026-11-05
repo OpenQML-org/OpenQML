@@ -4,6 +4,7 @@ import math
 
 import numpy as np
 
+from .._norms import vector_norm
 from ..errors import ResourceError, ValidationError
 from ..parameters import real
 from ..rl import _floating, _Ops
@@ -157,8 +158,7 @@ class Ops(_Ops):
         )
 
     def norm(self, value, axis=-1):
-        squared = self.sum(value * value, axis)
-        return self.xp.where(squared > 0, self.xp.sqrt(self.xp.where(squared > 0, squared, 1)), 0)
+        return vector_norm(value, self.xp, self.name, axis=axis)
 
     def probabilities(self, value, size):
         if size < 1:

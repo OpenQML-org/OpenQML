@@ -14,7 +14,21 @@ def _prox(values, center, caps, penalty, budget, ops):
     and linear space; no iterative bisection or asset-by-asset active set.
     """
     xp = ops.xp
-    values = values - ops.sum(values, keepdims=True) / values.shape[-1]
+    # A capacity-weighted quantile bounds the optimal multiplier around a
+    # represented input score. Clip only scores guaranteed to saturate. This
+    # preserves unit-scale breakpoints even with very large common offsets.
+    order = ops.argsort(-values)
+    capacity = ops.cumsum(ops.gather(caps, order))
+    crossed = capacity >= budget[..., None]
+    index = (
+        xp.argmax(crossed.to(xp.int64), dim=-1)
+        if ops.name == "torch"
+        else xp.argmax(crossed, axis=-1)
+    )
+    pivot = ops.gather(ops.gather(values, order), index[..., None])
+    bound = ops.max(caps, keepdims=True) + 2 * ops.max(penalty, keepdims=True)
+    half = values * 0.5 - pivot * 0.5
+    values = xp.minimum(xp.maximum(half, -bound * 0.5), bound * 0.5) * 2
     center = ops.clip(center, 0, caps)
     heights = ops.cat((center, caps - center), axis=-1)
     ends = ops.cat((values + penalty, values - penalty - center), axis=-1)

@@ -47,6 +47,9 @@ def _solve(diagonal, factors, mass, rhs, iterations, tolerance, ops):
 
 def _pcg(diagonal, factors, mass, rhs, iterations, tolerance, ops):
     xp = ops.xp
+    rhs_scale = ops.stop(ops.max(xp.abs(rhs), axis=-2, keepdims=True))
+    rhs_scale = xp.where(rhs_scale > 0, rhs_scale, 1)
+    rhs = rhs / rhs_scale
     eps = np.finfo(np.float64 if "64" in str(rhs.dtype) else np.float32).eps
     tolerance = max(tolerance, 8 * eps)
     weighted = factors * xp.sqrt(xp.abs(mass))[..., :, None]
@@ -77,7 +80,8 @@ def _pcg(diagonal, factors, mass, rhs, iterations, tolerance, ops):
             index, state = carry
             return (index < iterations) & xp.any(ops.norm(state[1], axis=-2) > tolerance * scale)
 
-        return jax.lax.while_loop(condition, lambda c: (c[0] + 1, step(c[1])), (0, initial))[1][0]
+        result = jax.lax.while_loop(condition, lambda c: (c[0] + 1, step(c[1])), (0, initial))[1][0]
+        return result * rhs_scale
     state = initial
     for i in range(iterations):
         state = step(state)
@@ -86,7 +90,7 @@ def _pcg(diagonal, factors, mass, rhs, iterations, tolerance, ops):
         ):
             if bool(xp.all(ops.norm(state[1], axis=-2) <= tolerance * scale)):
                 break
-    return state[0]
+    return state[0] * rhs_scale
 
 
 def _torch_class():

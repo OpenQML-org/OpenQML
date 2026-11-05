@@ -197,6 +197,19 @@ atom before summing the interior. Native
 gradients remain piecewise; ties can select different valid subgradients across
 backends. Selection uses the native array backend's partition or top-k kernel.
 
+## Numerical range and projection admission
+
+Native financial L2 norms use scaled sum-of-squares. Factor-space PCG normalizes
+each right-hand-side column and restores its scale after solving; implicit
+Torch/JAX derivatives continue to use the original linear operator.
+
+The capped cost-aware proximal map selects a capacity-weighted score quantile
+`p`. For an interior budget, with `C=max(caps)` and `P=max(penalty)`, the equality
+multiplier lies in `[p-C-P,p+P]`. Scores relative to `p` can therefore be clipped
+to `[-C-2P,C+2P]` without changing the optimum. The resulting native sorted
+breakpoints retain small financing quantities even when input scores have very
+large common offsets. Work remains `O(N log N)` with linear temporary storage.
+
 ## Differentiable decision risk budgets
 
 `risk_budget_projection` takes a long-only proposal whose asset weights sum to

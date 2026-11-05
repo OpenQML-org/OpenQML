@@ -141,7 +141,15 @@ def reverse_local_basis(matrix):
 
 
 def bound_for_export(circuit, bindings):
-    return circuit if bindings is None else circuit.bind(bindings)
+    if bindings is not None:
+        return circuit.bind(bindings)
+    if circuit.global_phase._raw_constants or any(
+        any(value._raw_constants for value in operation.params)
+        or any(block.global_phase._raw_constants for block in operation.blocks)
+        for _, operation in circuit.walk_operations()
+    ):
+        return circuit.bind({}, partial=True)
+    return circuit
 
 
 def check_matrix_width(width, limit, location):

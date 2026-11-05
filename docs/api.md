@@ -190,3 +190,8 @@ native gradients; collection additionally admits retained output storage.
 cash to meet weighted CVaR plus a W1/L2 margin. Native batched radii and budgets
 retain PyTorch/JAX derivatives. The input proposal must sum to at most one and
 the budget must admit cash. See [risk budgets](finance.md#differentiable-decision-risk-budgets).
+
+Native JAX/Flax network trainers accept
+`trainer.load(path,max_bytes=256*2**20)`. Tensor archive headers and expanded sizes
+are admitted before NumPy loading; duplicate JSON metadata fields are rejected.
+`Model.load(...,max_bytes=...)` forwards the selected budget to its native loader.

@@ -75,6 +75,9 @@ def diagnose(
         _check_circuit_limits(circuit, max_operations=max_operations, max_depth=max_depth)
     except ConversionError as exc:
         return exc.diagnostics
+    from .adapters._common import bound_for_export
+
+    circuit = bound_for_export(circuit, None)
     if target not in BUILTIN_FORMATS:
         adapter = get_adapter(target)
         diagnostics = () if adapter.diagnose is None else tuple(adapter.diagnose(circuit))
@@ -690,8 +693,9 @@ def plan_conversion(
             )
             for key, bits in source_options["measurement_map"].items()
         )
-    if bindings is not None:
-        circuit = circuit.bind(bindings)
+    from .adapters._common import bound_for_export
+
+    circuit = bound_for_export(circuit, bindings)
     optimization = None
     if optimize:
         from .optimization import optimize as optimize_circuit

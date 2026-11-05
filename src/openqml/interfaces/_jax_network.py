@@ -287,7 +287,7 @@ class NetworkTrainer:
 
         return save_network(self, path)
 
-    def load(self, path):
+    def load(self, path, *, max_bytes=256 * 2**20):
         from ._network_checkpoint import load_network
 
-        return load_network(self, path)
+        return load_network(self, path, max_bytes=max_bytes)

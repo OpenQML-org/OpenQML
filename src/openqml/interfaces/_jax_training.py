@@ -3,6 +3,7 @@
 import jax
 import jax.numpy as jnp
 
+from .._norms import global_norm
 from ..errors import ValidationError
 from ..ir import integer
 from ..parameters import real
@@ -148,7 +149,7 @@ def make_train_step(
             raise ValidationError(
                 "Train-step auxiliary metrics must be a dictionary without reserved keys."
             )
-        norm = jnp.sqrt(sum(jnp.vdot(g, g).real for g in jax.tree_util.tree_leaves(gradient)))
+        norm = global_norm(jax.tree_util.tree_leaves(gradient), jnp, "jax")
         diagnostics = {} if gradient_metrics is None else gradient_metrics(gradient)
         if not isinstance(diagnostics, dict) or set(diagnostics) & (
             set(auxiliary) | {"loss", "grad_norm", "samples", "skipped"}

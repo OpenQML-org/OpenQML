@@ -148,3 +148,18 @@ validation entry includes `val_loss`. Checkpoints retain history and selection
 positions. Repeated `fit` calls resume the selected optimizer state and start a
 new monitoring window. Financial data can use the nested chronological
 validation in [`finance.walk_forward`](finance.md#rolling-hybrid-model-selection).
+
+## Wide-range optimization
+
+Training norms and quantum/classical gradient diagnostics retain finite values
+without first squaring unscaled gradients. JAX uses native scaled reductions;
+CPU Torch float32 leaves use float64 accumulation, and other Torch leaves use
+scaled reductions. Torch clipping groups gradient tensors by dtype for native
+foreach updates. Finite large gradients can be clipped and applied, while
+nonfinite losses or gradients still reject the optimizer step.
+
+Native natural-gradient CG normalizes its right-hand side, retains the existing
+absolute/relative stopping contract, and reports the fresh residual in original
+gradient units. The method uses matrix products without materializing a dense
+metric or moving arrays to the host. The scaled sum-of-squares construction is
+consistent with [LAPACK safe scaling](https://www.netlib.org/lapack/explore-html/d8/d76/group__lassq.html).

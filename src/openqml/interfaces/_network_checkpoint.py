@@ -8,6 +8,8 @@ from pathlib import Path
 import jax
 import numpy as np
 
+from .._checkpoint_archive import check_npz_payload
+from .._serialization import load_json
 from ..errors import ValidationError
 from ..ir import integer
 from ..network_training import DepthSchedule
@@ -56,10 +58,12 @@ def save_network(trainer, path):
     return path
 
 
-def load_network(trainer, path):
+def load_network(trainer, path, *, max_bytes=256 * 2**20):
+    maximum = integer(max_bytes, "max_bytes", 1)
+    check_npz_payload(path, maximum)
     expected, definition, templates = _layout((trainer.parameters, trainer.optimizer_state))
     with np.load(path, allow_pickle=False) as data:
-        metadata = json.loads(str(data["metadata"]))
+        metadata = load_json(str(data["metadata"]), maximum, label="Network checkpoint")
         if (
             metadata.get("format") != "openqml.network.training.v1"
             or metadata.get("architecture") != trainer.model.architecture.fingerprint
