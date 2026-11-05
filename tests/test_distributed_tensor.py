@@ -43,6 +43,25 @@ def test_communication_cost_changes_layouts_and_search_is_bounded():
         q.DistributedTensorPlan(c, obs, 3, hardware())
 
 
+def test_partial_layouts_preserve_mesh_axes_and_charge_only_collective_moves():
+    from openqml.distributed_tensor import _layouts, _redistribution
+
+    candidates = _layouts((0, 1), (1, 2), (1,), (None, 0), (None, 2), 2, 12)
+    assert (None, 0) in candidates and (None, 2) in candidates
+    assert any(sum(x is not None for x in p) == 1 for p in candidates)
+    assert _redistribution((0, 1), (None, None), (0, 1), hardware(1)) == (0, 0)
+    assert _redistribution((0, 1), (0, None), (None, None), hardware(1))[0] >= 1
+
+
+def test_latency_aware_search_keeps_replication_as_a_completion_candidate():
+    c, obs = circuit(), (q.PauliString("XYZXZ"),)
+    for beam in (1, 2):
+        plan = q.DistributedTensorPlan(c, obs, 4, hardware(10), beam_width=beam)
+        assert plan.to_dict()["distributed_contractions"] == 0
+    partial = q.DistributedTensorPlan(c, obs, 4, hardware(1e-9))
+    assert partial.to_dict()["partially_sharded_contractions"] > 0
+
+
 def _worker(rank, directory, size, cuda):
     import torch
     import torch.distributed as dist
@@ -87,6 +106,17 @@ def _worker(rank, directory, size, cuda):
         reference = torch.autograd.grad(expected.square().sum(), tuple(bindings.values()))
         for got, wanted in zip(gradient, reference, strict=True):
             torch.testing.assert_close(got, wanted, atol=2e-11, rtol=2e-11)
+        if size == 4:
+            mixed = q.DistributedTensorPlan(c, obs, size, hardware(1e-9), rematerialize=True)
+            assert mixed.to_dict()["partially_sharded_contractions"] > 0
+            mixed_bindings = {k: v.detach().clone().requires_grad_() for k, v in bindings.items()}
+            mixed_result = mixed.evaluate(mixed_bindings, mesh=mesh, like=like)
+            torch.testing.assert_close(mixed_result, expected.detach(), atol=2e-12, rtol=2e-12)
+            mixed_gradients = torch.autograd.grad(
+                mixed_result.square().sum(), tuple(mixed_bindings.values())
+            )
+            for got, wanted in zip(mixed_gradients, reference, strict=True):
+                torch.testing.assert_close(got, wanted, atol=2e-11, rtol=2e-11)
         if size == 2:
             architecture = q.HybridArchitecture(
                 2,

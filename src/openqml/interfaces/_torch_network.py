@@ -89,7 +89,7 @@ class _QuantumExecution:
                     device=execution_device,
                     max_memory_mb=architecture.max_memory_mb,
                     execution_method="auto" if self.external else architecture.native_execution,
-                    tensor_options={"reuse_intermediates": True}
+                    tensor_options={"reuse_intermediates": True, "optimizer": "portfolio"}
                     if not self.external and architecture.native_execution == "tensor-network"
                     else None,
                 )

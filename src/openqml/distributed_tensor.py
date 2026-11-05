@@ -2,8 +2,8 @@
 
 One rank owns one CUDA device. A binary DeviceMesh maps quantum mode bits to
 DTensor shards. Contractions become distributed GEMMs with explicit layouts;
-only scalar/readout outputs are replicated. CPU/Gloo is a correctness path and
-is never reported as CUDA/NCCL performance evidence.
+scalar/readout outputs are replicated. Partial mode layouts retain replica axes
+when their lower communication cost offsets duplicate local arithmetic.
 """
 
 import hashlib
@@ -21,7 +21,7 @@ from .tensor_contraction import TensorNetworkPlan
 class Interconnect:
     """Sustained, caller-calibrated rates in bytes/s and complex multiply-adds/s.
 
-    These values guide planning. They do not prove hardware throughput.
+    These values guide compute, memory and collective-latency planning.
     """
 
     compute_flops: float
@@ -47,27 +47,44 @@ def _layouts(la, lb, shared, old_a, old_b, bits, limit):
     orders = (retained + reduced, reduced + retained, tuple(reversed(retained)) + reduced)
     result = []
 
-    def add(order):
+    def preserve(layout):
+        value = tuple(x if x in la or x in lb else None for x in layout)
+        if value not in result:
+            result.append(value)
+
+    def add(order, count=None):
         chosen = list(dict.fromkeys(x for x in order if x is not None))[:bits]
+        if count is not None:
+            chosen = chosen[:count]
         value = tuple(chosen + [None] * (bits - len(chosen)))
         if value not in result:
             result.append(value)
 
     # Keeping a child's layout avoids communication at large intermediates.
     add(())
-    add(old_a + old_b)
-    add(old_b + old_a)
+    preserve(old_a)
+    preserve(old_b)
+    merged = list(old_a)
+    for axis, mode in enumerate(old_b):
+        if mode is not None and mode not in merged and merged[axis] is None:
+            merged[axis] = mode
+    preserve(merged)
     for order in orders:
         for start in range(min(len(order), limit)):
-            add(order[start:] + order[:start])
+            rotated = order[start:] + order[:start]
+            add(rotated)
+            for count in range(1, bits):
+                add(rotated, count)
             if len(result) >= limit:
-                return tuple(result)
-    return tuple(result)
+                return tuple(result[:limit])
+    return tuple(result[:limit])
 
 
 def _redistribution(labels, old, new, hardware):
     size = 16 * max(_local_elements(labels, old), _local_elements(labels, new))
-    changes = sum(a != b and (a in labels or b in labels) for a, b in zip(old, new, strict=True))
+    # Replicate -> Shard takes a rank-local chunk. Only an existing shard that
+    # changes ownership needs gathering/all-to-all communication.
+    changes = sum(a != b and a in labels for a, b in zip(old, new, strict=True))
     return (
         changes * (hardware.collective_latency + size / hardware.network_bandwidth),
         changes * size,
@@ -128,6 +145,19 @@ def _plan_graph(graph, bits, hardware, budget, beam_width, max_layouts, charge):
         if not next_states:
             raise ResourceError("No distributed layout fits the per-rank memory budget.")
         states = sorted(next_states.values(), key=lambda s: s[0])[:beam_width]
+        # Local chunking can look cheap before a later join needs a gather.
+        # Retain the feasible fully replicated incumbent through the search so
+        # a short beam cannot discard its zero-communication completion.
+        replicated = next(
+            (
+                s
+                for s in next_states.values()
+                if all(all(x is None for x in layout) for layout in s[1].values())
+            ),
+            None,
+        )
+        if replicated is not None and all(s is not replicated for s in states):
+            states.append(replicated)
         sizes[len(desc) + k] = out
         sizes.pop(a)
         sizes.pop(b)
@@ -224,6 +254,11 @@ class DistributedTensorPlan:
             "layout_work": self.layout_work,
             "distributed_contractions": sum(
                 any(x is not None for x in layout) for graph in self._schedules for layout in graph
+            ),
+            "partially_sharded_contractions": sum(
+                0 < sum(x is not None for x in layout) < self.world_size.bit_length() - 1
+                for graph in self._schedules
+                for layout in graph
             ),
             "exactness": "all_modes_and_slices_retained; floating_point_roundoff",
             "memory_scope": "forward_admission; excludes_autodiff_tapes_and_allocator_reserves",

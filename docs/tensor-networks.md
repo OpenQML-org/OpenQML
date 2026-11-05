@@ -20,13 +20,67 @@ autodiff-tape bounds. No global qubit-count ceiling is introduced.
 
 ## Differentiable circuit contraction
 
+### Compiled paths and bounded tree reconfiguration
+
+`optimizer="portfolio"` compares deterministic size-, arithmetic- and
+separator-oriented greedy trees, then applies bounded three-way subtree
+rotations. It selects a memory-admitted path by estimated complex arithmetic;
+when slicing is necessary, it first selects a smaller separator and repeats
+the search on the sliced graph. `search_trials` bounds the expensive joins
+considered for reconfiguration and `max_work` accounts for candidate generation
+and complete path profiling. `greedy` remains the low-planning-cost option;
+`cotengra` enables the optional external hyper-optimizer.
+
+Every chosen binary join compiles its axis permutations and GEMM dimensions
+once. Forward execution uses the compiled kernels with native batched matrix
+multiplication. The optimized tree retains all input tensors, index assignments
+and observable coefficients. This preserves Torch/JAX differentiation and
+explicit rematerialization.
+
+Native `HybridArchitecture(...,native_execution="tensor-network")` models use
+the portfolio planner and shared-subtree execution in Torch, JAX and Flax.
+Direct `TensorNetworkPlan` and `QuantumLayer` users can select these controls:
+
+```python
+import openqml as oq
+
+angle = oq.Parameter("angle")
+circuit = oq.Circuit(3).ry(angle, 0).cx(0, 1).ry(0.3, 2).cx(1, 2)
+observables = (oq.PauliString("ZZZ"), oq.PauliString("ZII"))
+plan = oq.TensorNetworkPlan(
+    circuit,
+    observables,
+    optimizer="portfolio",
+    reuse_intermediates=True,
+    max_memory_mb=64,
+)
+values, report = plan.evaluate({"angle": [0.2, 0.4]}, return_report=True)
+print(values)
+print(report)
+```
+
+`return_report=True` returns `(values,report)` with executed contraction count,
+subtree cache hits, evaluated slices, cache high-water bytes and its budget.
+These are forward-execution counters. Rematerialized backward execution creates
+its own numerical cache and preserves the returned report snapshot. Compare
+planning cost, forward counters and complete training time separately.
+
+### Demand-driven shared subtrees
+
 `TensorNetworkPlan(...,reuse_intermediates=True)` reserves a bounded part of its
 memory budget for common contraction subexpressions across readouts and exact
-slices. Matching tensors, contraction axes and dependencies are interned; shared
-native autodiff nodes accumulate their adjoints. Eviction only repeats work and
-never changes values. The cache is discarded after every evaluation, including
-each rematerialized replay. Distributed placement uses its own executor and does
-not use this local cache. This adapts shared-work DAG ideas from
+slices. Symbolic tensor identities, compiled joins and slice dependencies belong
+to the plan. Execution checks a subtree's cache entry before visiting its
+children, so a hit skips the full repeated traversal. Slice keys include only
+the cut assignments on which that subtree depends; distinct sliced graphs use
+separate cut namespaces while compatible unsliced branches can share work.
+
+Shared native autodiff nodes accumulate their adjoints. The bounded LRU cache
+accounts for tensor bytes and entry overhead; eviction repeats exact work.
+Leaf slice views remain outside the value cache, keeping their backing gate
+storage under the gate/working-memory admission. Numerical values are discarded
+after every evaluation, including each rematerialized replay. Distributed
+placement uses its own executor. This adapts shared-work DAG ideas from
 [Jet](https://arxiv.org/abs/2107.09793); effectiveness depends on overlap between
 chosen contraction trees. Use `tensor_options={"reuse_intermediates":True}` on a
 native tensor-network `QuantumLayer` to enable it in training.
@@ -134,6 +188,12 @@ compact quantum representation independent of input qubit count.
 - [Hyper-optimized tensor network contraction, Quantum 5, 410
   (2021)](https://quantum-journal.org/papers/q-2021-03-15-410/): optional cotengra
   contraction search, with current APIs checked against its official documentation.
+- [cuTensorNet 26.09 contraction optimization](https://docs.nvidia.com/cuda/cuquantum/26.09.0/cutensornet/overview.html):
+  memory-constrained paths, interleaved slicing/reconfiguration and constant-input
+  reuse. OpenQML's portable executor implements bounded local tree rotations,
+  compiled native GEMMs and forward-local subtree caching.
+- [cotengra tree surgery](https://cotengra.readthedocs.io/en/main/trees.html):
+  contraction-tree topology, depth-first paths, slicing and subtree modification.
 - [Oseledets, Tensor-Train Decomposition, SIAM Journal on Scientific Computing
   33(5), 2295–2317 (2011)](https://epubs.siam.org/doi/10.1137/090752286): TT-SVD
   factorization and truncation error control.

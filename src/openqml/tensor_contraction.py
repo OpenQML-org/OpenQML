@@ -24,7 +24,7 @@ def _step(left, right):
     return shared, a + b
 
 
-def _greedy(labels, charge):
+def _greedy(labels, charge, *, objective="size"):
     live = {i: tuple(x) for i, x in enumerate(labels)}
     owners = {}
     for i, indices in live.items():
@@ -37,7 +37,15 @@ def _greedy(labels, charge):
             a, b = b, a
         charge(1)
         shared, out = _step(live[a], live[b])
-        heapq.heappush(heap, (len(out), len(set(live[a]) | set(live[b])), a, b))
+        union = len(live[a]) + len(live[b]) - len(shared)
+        score = (
+            (union, len(out))
+            if objective == "flops"
+            else (max(len(out), len(live[a]), len(live[b])), union)
+            if objective == "balanced"
+            else (len(out), union)
+        )
+        heapq.heappush(heap, (*score, a, b))
 
     for sites in owners.values():
         if len(sites) != 2:
@@ -149,17 +157,6 @@ def _network(circuit, observable, max_operations):
     return c, tuple(descriptors), tuple(labels)
 
 
-def _contract(left, right, la, lb, shared, ops):
-    a, b = tuple(x for x in la if x not in shared), tuple(x for x in lb if x not in shared)
-    na, nb = left.ndim - len(la), right.ndim - len(lb)
-    pa = tuple(range(na)) + tuple(na + la.index(x) for x in a + shared)
-    pb = tuple(range(nb)) + tuple(nb + lb.index(x) for x in shared + b)
-    left = ops.transpose(left, pa).reshape(left.shape[:na] + (1 << len(a), 1 << len(shared)))
-    right = ops.transpose(right, pb).reshape(right.shape[:nb] + (1 << len(shared), 1 << len(b)))
-    value = left @ right
-    return value.reshape(value.shape[:-2] + (2,) * (len(a) + len(b)))
-
-
 @dataclass(frozen=True, eq=False)
 class TensorNetworkPlan:
     circuit: object
@@ -180,6 +177,7 @@ class TensorNetworkPlan:
     working_bytes: int = field(init=False)
     planning_work: int = field(init=False)
     _reuse_bytes: int = field(init=False, repr=False)
+    _programs: tuple = field(init=False, repr=False)
 
     def __post_init__(self):
         if type(self.rematerialize) is not bool:
@@ -189,8 +187,8 @@ class TensorNetworkPlan:
         _check_circuit_limits(self.circuit, max_operations=self.max_operations)
         if self.circuit.has_effects:
             raise ValidationError("Circuit tensor contractions currently require unitary circuits.")
-        if self.optimizer not in {"greedy", "cotengra"}:
-            raise ValidationError("optimizer must be greedy or cotengra.")
+        if self.optimizer not in {"greedy", "portfolio", "cotengra"}:
+            raise ValidationError("optimizer must be greedy, portfolio or cotengra.")
         for name in ("max_work", "max_operations", "max_slices", "max_flops", "search_trials"):
             integer(getattr(self, name), name, 1)
         budget = real(self.max_memory_mb)
@@ -214,7 +212,7 @@ class TensorNetworkPlan:
         for word in words:
             c, desc, labels = _network(self.circuit, word, self.max_operations)
             charge(len(labels) + sum(len(row) for row in labels))
-            metadata += 512 * len(labels) + 128 * sum(map(len, labels))
+            metadata += 768 * len(labels) + 128 * sum(map(len, labels))
             if metadata >= budget * 2**20:
                 raise ResourceError("Tensor contraction descriptors exceed max_memory_mb.")
             raw.append((c, desc, labels))
@@ -229,11 +227,24 @@ class TensorNetworkPlan:
             raw_storage = sum(1 << len(row) for row in original)
             while True:
                 labels = tuple(tuple(x for x in row if x not in sliced) for row in original)
-                steps = (
-                    _greedy(labels, charge)
-                    if self.optimizer == "greedy"
-                    else _cotengra(labels, self.search_trials, charge)
-                )
+                from ._contraction_path import depth_first, portfolio
+
+                if self.optimizer == "portfolio":
+                    steps = portfolio(
+                        labels,
+                        charge,
+                        _greedy,
+                        _step,
+                        _profile,
+                        max(0, capacity // 16 - raw_storage),
+                        self.search_trials,
+                    )
+                elif self.optimizer == "cotengra":
+                    steps = _cotengra(labels, self.search_trials, charge)
+                else:
+                    steps = _greedy(labels, charge)
+                if self.reuse_intermediates:
+                    steps = depth_first(labels, steps, _step)
                 peak, flops, largest = _profile(labels, steps)
                 needed = 16 * (peak + raw_storage)
                 if needed <= capacity:
@@ -265,10 +276,15 @@ class TensorNetworkPlan:
             )
             for ts in terms
         )
+        from ._contraction_program import ContractionProgram
+
+        intern = {}
+        programs = tuple(ContractionProgram(g, i, intern) for i, g in enumerate(graphs))
         for name, value in (
             ("observables", obs),
             ("_graphs", tuple(graphs)),
             ("_routes", routes),
+            ("_programs", programs),
             ("_metadata_bytes", metadata),
             ("working_bytes", metadata + maximum + reuse_bytes),
             ("_reuse_bytes", reuse_bytes),
@@ -293,6 +309,7 @@ class TensorNetworkPlan:
             "rematerialize": self.rematerialize,
             "reuse_intermediates": self.reuse_intermediates,
             "reuse_cache_bytes": self._reuse_bytes,
+            "execution": "compiled_gemm_with_demand_driven_subtrees",
             "num_qubits": self.circuit.num_qubits,
             "readouts": len(self.observables),
             "working_bytes": self.working_bytes,
@@ -312,7 +329,23 @@ class TensorNetworkPlan:
             "memory_scope": "representation_admission; excludes_autodiff_tapes_and_process_RSS",
         }
 
-    def evaluate(self, bindings=None, *, backend="numpy", like=None, batch_shape=None):
+    def evaluate(
+        self, bindings=None, *, backend="numpy", like=None, batch_shape=None, return_report=False
+    ):
+        """Evaluate readouts; optionally return forward execution/cache counters."""
+        if type(return_report) is not bool:
+            raise ValidationError("return_report must be a boolean.")
+        statistics = (
+            {
+                "contractions_executed": 0,
+                "subtree_cache_hits": 0,
+                "slices_evaluated": 0,
+                "cache_peak_bytes": 0,
+                "cache_budget_bytes": self._reuse_bytes,
+            }
+            if return_report
+            else None
+        )
         if self.rematerialize and bindings and backend in {"torch", "jax"}:
             keys, values = tuple(bindings), tuple(bindings.values())
 
@@ -322,19 +355,36 @@ class TensorNetworkPlan:
                     backend=backend,
                     like=like,
                     batch_shape=batch_shape,
+                    _statistics=statistics,
                 )
 
             if backend == "torch":
                 from torch.utils.checkpoint import checkpoint
 
-                return checkpoint(forward, *values, use_reentrant=False, preserve_rng_state=False)
-            import jax
+                result = checkpoint(forward, *values, use_reentrant=False, preserve_rng_state=False)
+            else:
+                import jax
 
-            return jax.checkpoint(forward)(*values)
-        return self._evaluate(bindings, backend=backend, like=like, batch_shape=batch_shape)
+                result = jax.checkpoint(forward)(*values)
+        else:
+            result = self._evaluate(
+                bindings,
+                backend=backend,
+                like=like,
+                batch_shape=batch_shape,
+                _statistics=statistics,
+            )
+        return (result, dict(statistics)) if return_report else result
 
     def _evaluate(
-        self, bindings=None, *, backend="numpy", like=None, batch_shape=None, _executor=None
+        self,
+        bindings=None,
+        *,
+        backend="numpy",
+        like=None,
+        batch_shape=None,
+        _executor=None,
+        _statistics=None,
     ):
         from .simulator import _I, _X, _Y, _Z, _gate_matrix
 
@@ -371,12 +421,12 @@ class TensorNetworkPlan:
         ):
             # Gate tensors are pure functions of this call's bindings. Reuse
             # ket tensors for their conjugates and across all exact slices.
-            gates, raw, origins = {}, [], []
+            gates, raw = {}, []
             for j, (kind, op, bra) in enumerate(desc):
                 if kind == "gate":
                     key = (op.name, op.params, op.matrix)
                     if key not in gates:
-                        gate_id = reuse.node(("gate", key)) if reuse else None
+                        gate_id = ("gate", key) if reuse else None
                         matrix = reuse.get(gate_id) if reuse else None
                         if matrix is None:
                             angles = tuple(p.evaluate(local) for p in op.params)
@@ -390,23 +440,17 @@ class TensorNetworkPlan:
                 else:
                     value = constants["zero" if kind == "zero" else op]
                 raw.append(value)
-                origins.append(
-                    reuse.node(
-                        (
-                            "input",
-                            kind,
-                            key if kind == "gate" else op,
-                            bra if kind == "gate" else False,
-                            len(original[j]),
-                        )
-                    )
-                    if reuse
-                    else None
-                )
             total = zero
+            program = self._programs[graph_index]
             for assignment in range(1 << len(sliced)):
+                if _statistics is not None:
+                    _statistics["slices_evaluated"] += 1
+                if reuse is not None:
+                    result = program.run(raw, assignment, reuse, ops, _statistics)
+                    total = total + ops.real(result)
+                    continue
                 fixed = {index: (assignment >> j) & 1 for j, index in enumerate(sliced)}
-                values, identities = {}, {}
+                values = {}
                 for j, value in enumerate(raw):
                     prefix = value.ndim - len(original[j])
                     select = (slice(None),) * prefix + tuple(
@@ -416,42 +460,16 @@ class TensorNetworkPlan:
                     values[j] = (
                         selected if _executor is None else _executor.input(selected, labels[j])
                     )
-                    identities[j] = (
-                        reuse.node(
-                            ("slice", origins[j], tuple(fixed.get(index) for index in original[j]))
-                        )
-                        if reuse and origins[j] is not None
-                        else None
-                    )
                 for k, (a, b, la, lb, shared, _) in enumerate(steps):
                     left, right = values.pop(a), values.pop(b)
-                    ia, ib = identities.pop(a), identities.pop(b)
-                    key = (
-                        reuse.node(
-                            (
-                                "contract",
-                                ia,
-                                ib,
-                                tuple(la.index(i) for i in shared),
-                                tuple(lb.index(i) for i in shared),
-                            )
-                        )
-                        if reuse and ia is not None and ib is not None
-                        else None
-                    )
-                    cached = reuse.get(key) if reuse else None
                     result = (
-                        cached
-                        if cached is not None
-                        else (
-                            _contract(left, right, la, lb, shared, ops)
-                            if _executor is None
-                            else _executor.contract(left, right, la, lb, shared, graph_index, k)
-                        )
+                        program.kernels[k].apply(left, right, ops)
+                        if _executor is None
+                        else _executor.contract(left, right, la, lb, shared, graph_index, k)
                     )
-                    values[len(desc) + k], identities[len(desc) + k] = result, key
-                    if reuse and cached is None:
-                        reuse.put(key, result)
+                    values[len(desc) + k] = result
+                    if _statistics is not None:
+                        _statistics["contractions_executed"] += 1
                 result = next(iter(values.values()))
                 if _executor is not None:
                     result = _executor.finish(result)
@@ -463,4 +481,6 @@ class TensorNetworkPlan:
             for coefficient, index in route:
                 result = result + coefficient * (1 if index is None else readouts[index])
             outputs.append(result)
+        if _statistics is not None and reuse is not None:
+            _statistics["cache_peak_bytes"] = reuse.peak_bytes
         return ops.real(ops.stack(outputs, axis=-1))

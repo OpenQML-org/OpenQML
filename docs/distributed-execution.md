@@ -14,9 +14,20 @@ time, traffic and memory values as planning estimates.
 The layout search considers keeping input shards, redistributing retained modes,
 and distributing contracted modes. It compares compute, memory bandwidth,
 interconnect bandwidth and collective latency with a bounded beam search.
-Sharded bits are ordered within GEMM dimensions. DTensor performs the required
+Candidates preserve each child's existing mesh-axis assignments, including
+replica axes. The search also considers partially sharded layouts, balancing
+duplicate local arithmetic against collective cost. A feasible fully replicated
+completion remains an incumbent alongside the bounded beam, so a cheap early
+local shard cannot remove the zero-communication alternative before a later
+gather. `max_layout_work` bounds the total layout search.
+
+Replicate-to-shard transitions use local chunking. Existing-shard gathers,
+all-to-all ownership changes and contraction reductions receive communication
+and latency costs. Sharded bits are ordered within GEMM dimensions. DTensor performs the required
 all-to-all, gather and reduction operations; large intermediates remain sharded.
 High communication costs can make replicated local execution preferable.
+`to_dict()["partially_sharded_contractions"]` reports joins that retain replica
+mesh axes while distributing other modes.
 
 ## Execution contract
 
@@ -62,3 +73,9 @@ ordering from [Pan et al., 2026](https://arxiv.org/abs/2606.01852), using Torch
 DTensor and bounded search. OpenQML's planner uses the declared interconnect,
 per-rank memory and candidate layouts. DTensor layout/gradient
 semantics follow the [PyTorch documentation](https://docs.pytorch.org/docs/stable/distributed.tensor.html).
+
+The [cuQuantum 26.09 distributed tensor APIs](https://docs.nvidia.com/cuda/cuquantum/26.09.0/python/tensornet.html)
+also expose explicit operand distributions and replica layers. OpenQML executes
+its own binary mode layouts through Torch DeviceMesh and DTensor. The distributed
+CI checks two- and four-rank values, first-order gradients, rematerialization and
+mixed sharded/replicated layouts against the independent local executor.
