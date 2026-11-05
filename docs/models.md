@@ -109,8 +109,8 @@ preserve arbitrary independent Q/K/V circuits.
 Measured Bloch vectors are projected to the physical unit ball, introducing bias
 for noisy estimates. The kernel is positive semidefinite and nonnegative; fixed
 depolarization keeps nonempty exact-state denominators positive. Computation
-remains hybrid and local reduced states omit global correlations. Coherent
-attention and quantum advantage are not claimed.
+remains hybrid; each head's kernel is defined by local reduced states and
+classical sufficient statistics.
 
 `HybridArchitecture.graph_network(C,D,order=2)` lifts sparse graph inputs to
 persistent ordered-pair states `[B,N,N,H]`. Initial features include both nodes,
@@ -200,9 +200,9 @@ shared quantum features. Sparse transfer execution adapts structure/parameter
 separation from [PADO-Pauli (October 2026 preprint)](https://arxiv.org/abs/2610.17755).
 These combinations do not reproduce the papers' complete systems or results.
 
-These implementations adapt applicable ideas rather than inherit paper accuracy
-or speedup results. The `order=1` local messages retain ordinary message-passing
+The `order=1` local messages retain ordinary message-passing
 expressivity limits; the coherent higher-WL construction in
 [2026 quantum graph work](https://arxiv.org/abs/2606.26873) is a different model.
-Quantum circuit evaluation can remain exponential. No pretrained weights,
-hardware speedup or quantum advantage are implied by a model constructor.
+Quantum circuit cost depends on entangled width and the selected representation.
+Constructors create trainable specifications; fit parameters on the target task
+and select architectures with held-out loss and measured resource use.

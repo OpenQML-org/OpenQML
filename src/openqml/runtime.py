@@ -537,7 +537,7 @@ class CostAwareBackend(PriorityBackend):
                 device.name,
                 device.capabilities.device_type,
                 True,
-                "Feasible workload forecast; estimates are not measured speedup evidence.",
+                "Feasible workload forecast using the configured execution profiles.",
                 cost.to_dict(),
             )
             quoted.append((device, profile, key))

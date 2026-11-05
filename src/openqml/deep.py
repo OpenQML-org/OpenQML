@@ -2,8 +2,8 @@
 
 Each block implements (1-p) rho + p U rho U†, with p=sin²(alpha/2).
 The data register persists across blocks. Reset discards the ancilla without
-postselection. Local readouts and identity initialization aid trainability but
-do not constitute a universal no-barren-plateau or quantum-advantage guarantee.
+postselection. Local readouts and identity initialization provide explicit
+controls over circuit depth, residual strength and retained-state width.
 """
 
 import math

@@ -33,8 +33,8 @@ def fuse_pauli_rotations(circuit, *, max_work=1_000_000, max_operations=100_000)
     Binary symplectic masks avoid matrices of size 2**n. An incoming rotation
     moves left only through commuting rotations or fixed Clifford gates. Its
     signed generator is tracked in the Clifford frame until a matching gate
-    is found. No synthesis, approximation, angle modulo, routing, or claimed
-    optimality is involved. Barriers and unsupported gates stop the search.
+    is found. Fusion preserves exact angles and uses the existing gate order.
+    Barriers and unsupported gates stop the search.
     """
     integer(max_work, "max_work", 1)
     _check_circuit_limits(circuit, max_operations=max_operations)

@@ -2,7 +2,7 @@
 
 import json
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 from .compiler import _check_circuit_limits, _operation_location
@@ -380,7 +380,7 @@ class ConversionPlan:
         max_component_qubits=None,
         source_options=None,
     ):
-        """Export with an exact algebraic certificate or raise if unproved.
+        """Export with an exact algebraic certificate within the selected proof budget.
 
         This checks the adapter's imported artifact semantics. Native runtime
         differential verification remains a separate ``verify(mode='native')``
@@ -396,6 +396,69 @@ class ConversionPlan:
             max_component_qubits=max_component_qubits,
             source_options=source_options,
         )
+
+    def bind(self, bindings, *, partial=False):
+        """Bind source parameter names while reusing compatible target preparation.
+
+        A target requiring concrete angles is prepared after binding. Compatible
+        symbolic targets reuse their lowered topology and parameter aliases.
+        Every bound artifact receives a fresh representability check.
+        """
+        if type(partial) is not bool:
+            raise ValidationError("partial must be a boolean.")
+        bound = self.circuit.bind(bindings, partial=partial)
+        if not self.compatible:
+            plan = plan_conversion(
+                bound,
+                target=self.target_format,
+                max_operations=self.max_operations,
+                max_depth=self.max_depth,
+                max_output_statements=self.max_output_statements,
+            )
+            return replace(plan, source_format=self.source_format, optimization=self.optimization)
+        prepared = self.prepared_circuit if self.prepared_circuit is not None else self.circuit
+        aliases = {self.parameter_map.get(k, k): v for k, v in bindings.items()}
+        prepared = prepared.bind(
+            {k: v for k, v in aliases.items() if k in prepared.parameters}, partial=partial
+        )
+        diagnostics = diagnose(
+            prepared,
+            self.target_format,
+            max_operations=self.max_operations,
+            max_depth=self.max_depth,
+            max_output_statements=self.max_output_statements,
+        )
+        notes = tuple(d for d in self.diagnostics if d.severity == "info")
+        return replace(
+            self,
+            circuit=bound,
+            prepared_circuit=prepared,
+            diagnostics=diagnostics + notes,
+        )
+
+    def iter_exports(self, binding_sets, *, max_bindings=1024):
+        """Stream checked parameter-sweep exports after importing the source once.
+
+        Rows use the source's parameter names. Outputs follow input order and
+        are independent SDK artifacts. max_bindings bounds exported rows.
+        """
+        maximum = integer(max_bindings, "max_bindings", 1)
+        if isinstance(binding_sets, (dict, str, bytes)):
+            raise ValidationError("Provide an iterable of parameter-binding mappings.")
+        try:
+            iterator = iter(binding_sets)
+        except TypeError as exc:
+            raise ValidationError("Provide an iterable of parameter-binding mappings.") from exc
+        for index, bindings in enumerate(iterator):
+            if index >= maximum:
+                from .errors import ResourceError
+
+                raise ResourceError("Parameter sweep exceeds max_bindings.")
+            yield self.bind(bindings).export()
+
+    def export_many(self, binding_sets, *, max_bindings=1024):
+        """Collect a bounded sweep; use iter_exports to keep one artifact in memory."""
+        return tuple(self.iter_exports(binding_sets, max_bindings=max_bindings))
 
     def export(self):
         """Export exactly this plan, refusing every reported incompatibility."""

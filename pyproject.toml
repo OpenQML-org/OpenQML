@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openqml"
-version = "0.15.0"
-description = "Deep quantum-classical neural networks with tensor-network execution and hardware-aware training"
+version = "0.16.0"
+description = "Quantum-classical hybrid AI, quantitative research and cross-framework quantum programming"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{name = "OpenQML contributors"}]
-keywords = ["quantum", "machine-learning", "pytorch", "jax", "quantum-computing"]
+keywords = ["quantum", "machine-learning", "quantitative-finance", "pytorch", "jax", "interoperability"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",

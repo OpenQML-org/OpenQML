@@ -75,6 +75,10 @@ from . import models as models
 from . import pricing as pricing
 from . import projection as projection
 from . import quantum as quantum
+from . import research as research
 from . import risk as risk
 from . import trading as trading
 from . import validation as validation
+from .research import WalkForwardMetrics as WalkForwardMetrics
+from .research import WalkForwardResult as WalkForwardResult
+from .research import walk_forward as walk_forward

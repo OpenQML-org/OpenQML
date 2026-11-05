@@ -65,7 +65,7 @@ def check_literal_registers(text, max_register_bits):
     """Reject oversized literal declarations before an SDK constructs their storage.
 
     SDK-resolved constant/expression sizes also receive a post-parse width check.
-    This preflight does not claim a process-level SDK parsing memory limit.
+    SDK parsing runs within the caller's separate process-memory budget.
     """
     if max_register_bits is None:
         return

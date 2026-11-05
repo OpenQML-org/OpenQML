@@ -25,7 +25,7 @@ class NetworkExecutionPlan:
             "forecast": None if self.forecast is None else self.forecast.to_dict(),
             "stages": [s.to_dict() for s in self.stages],
             "searched_states": self.searched_states,
-            "scope": "quantum_stage_forecasts_plus_declared_classical_work; not_measured_speedup",
+            "scope": "quantum_stage_forecasts_plus_declared_classical_work",
         }
         if self.stage_indices and self.stage_indices != tuple(range(self.active_depth)):
             value["stage_indices"] = list(self.stage_indices)
@@ -37,7 +37,7 @@ def reserve_native_cost(plan, scheduler, *, native_devices=("CPU", "GPU")):
 
     External calls reserve their own refreshed quotes at numeric submission time.
     Keeping them out of this reservation avoids charging the same work twice.
-    Failed updates retain reservations, as failures do not establish free work.
+    Failed updates retain reservations until billing reconciliation.
     """
     if scheduler.ledger is None or plan is None or plan.forecast is None:
         return

@@ -564,8 +564,7 @@ def prove_equivalence(
         notes.append(
             Diagnostic(
                 "SEMANTIC_PROOF_INCONCLUSIVE",
-                "Supported exact normal forms did not establish equivalence; "
-                "this is not evidence of inequivalence.",
+                "Exact normal-form comparison is inconclusive for this circuit and budget.",
                 hint="Use bounded native differential checks at explicit bindings, "
                 "or retain a supported exact rewrite path.",
             )

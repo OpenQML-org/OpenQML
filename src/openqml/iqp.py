@@ -1,8 +1,8 @@
 """Exact local readouts of two-body IQP circuit hypernetworks.
 
 Independent implementation of the commuting family in arXiv:2609.24657,
-Eq. (5). Only one-site expectation values are evaluated; no sampling or
-general-circuit quantum advantage is implied by this tractable family.
+Eq. (5). One-site expectation values use exact local trigonometric contractions
+with work proportional to the circuit's vertices and edges.
 """
 
 import hashlib

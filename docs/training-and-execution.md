@@ -112,8 +112,8 @@ requested count by at most the number of environments minus one.
 DDP uses distinct rank seeds, synchronized stopping, and collective checkpoints;
 its requested environment-step budget and rollout counters are per rank.
 
-SAC and V-trace remain composable objectives; `PPOTrainer` does not claim to be a
-SAC runner. No environment, dataset, trained policy or performance suite is bundled.
+SAC and V-trace are composable native objectives. `PPOTrainer` owns the PPO
+collection/update loop; applications supply environments and data.
 
 ## Structured program compilation
 
@@ -139,8 +139,9 @@ export support differ; see the [official feature table](https://quantum.cloud.ib
 
 ## Research basis
 
-These components are independent implementations of applicable methods, with
-explicit scope. A newer paper is not evidence of superiority on every task.
+These components independently implement the methods listed below. Architecture,
+execution mode and training budget can be selected using task-specific validation
+and measured execution costs.
 
 | Source | Applied method |
 | --- | --- |

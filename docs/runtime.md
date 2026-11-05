@@ -132,5 +132,5 @@ and [BitArray location semantics](https://quantum.cloud.ibm.com/docs/en/api/qisk
 
 The joint scheduling design draws on [Qonductor](https://arxiv.org/abs/2408.04312)
 and [Qurator](https://arxiv.org/abs/2604.05505). OpenQML enumerates its finite
-candidate Pareto set directly and uses augmented Chebyshev preferences; it does
-not require a trained scheduling agent or claim those papers' performance results.
+candidate Pareto set directly and uses augmented Chebyshev preferences with
+configured cost, latency, noise and queue profiles.

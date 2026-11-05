@@ -28,6 +28,9 @@ EXPORTS = {
     "TradingState": (".trading", "TradingState"),
     "FinancialFold": (".validation", "FinancialFold"),
     "PurgedWalkForward": (".validation", "PurgedWalkForward"),
+    "WalkForwardMetrics": (".research", "WalkForwardMetrics"),
+    "WalkForwardResult": (".research", "WalkForwardResult"),
+    "walk_forward": (".research", "walk_forward"),
     "allocate": (".api", "allocate"),
     "price": (".api", "price"),
 }
@@ -62,6 +65,9 @@ PUBLIC = [
     "TradingState",
     "FinancialFold",
     "PurgedWalkForward",
+    "WalkForwardMetrics",
+    "WalkForwardResult",
+    "walk_forward",
 ]
 
 MODULES = {
@@ -74,6 +80,7 @@ MODULES = {
     "projection": ".projection",
     "trading": ".trading",
     "pricing": ".pricing",
+    "research": ".research",
 }
 
 MODULES["api"] = ".api"

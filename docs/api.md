@@ -35,9 +35,9 @@ Pass Python lists, NumPy arrays, or tensors belonging to the selected framework.
 | `forecast` | Next-return labels `[B,T,N]` for causal features `[B,T,F]` | Asset medians; `predict_quantiles` returns ordered `[B,T,N,Q]` quantiles |
 
 Specify `output_features=1` for scalar sequence regression with targets `[B,T]`.
-Forecast medians are not mean-return estimates. Construct financial features and
-labels causally and fit on training observations only; the interface does not
-create a validation split or fit preprocessing on future data.
+Forecast medians describe the 0.5 quantile. Construct financial features and
+labels causally, fit preprocessing on training observations and supply a
+chronologically separate validation set when selecting a model.
 
 `num_qubits` and `quantum_depth` set each quantum cell's width and depth. A
 forecast cell reserves one environment qubit and uses the remaining qubits as
@@ -54,6 +54,22 @@ Repeated `fit` calls preserve the native parameter tree and optimizer state.
 `history` records each epoch's mean loss and accepted updates. The same
 `microbatch_size` option works across all frameworks; changing it invalidates
 only the relevant compiled update. Shuffling is off by default.
+
+`fit(...,validation_data=(x_val,y_val),patience=5,min_delta=1e-5)` evaluates
+held-out loss after each epoch. `patience` counts epochs without a reduction
+greater than `min_delta`. With `restore_best=True` (the default), early stopping
+restores parameters, optimizer, update counters and shuffle/framework RNG to
+the best validation epoch, including when the epoch budget ends first.
+`restore_best=False` retains the final training state. With validation data and
+`patience=None`, training runs every requested epoch and records validation loss.
+`history` retains all attempted epochs with optional `val_loss`; `best_epoch`
+and `stopped_epoch` identify 1-based positions in that history for the latest fit.
+Each fit starts a new monitoring window while preserving optimizer ownership.
+
+`model.evaluate(x,y,batch_size=256)` returns the mean task loss in bounded batches.
+It preserves the Torch module's training/evaluation mode and optimizer state.
+Early stopping keeps one full training snapshot on the model's native device;
+include that additional state in the training memory budget.
 
 `model.save("model.oqm")` writes one atomic archive. Restore it with
 `oq.Model.load("model.oqm",device="cpu",backend="auto")`; prediction works
@@ -114,7 +130,23 @@ returns the partial result and its amplitude diagnostics. A supplied plan can
 configure depth costs, per-batch overhead, contrast, rounds and shot batching.
 See [finance](finance.md) for mathematical assumptions and method sources.
 
-All exact calculations exclude floating-point/model errors from their statistical
-intervals. Fair pricing still requires the appropriate supplied probability
-measure. Neither numerical convergence nor a small sampling interval establishes
-financial alpha or an end-to-end quantum speedup.
+Pricing requires an explicitly supplied probability measure. Statistical
+intervals cover sampling uncertainty; assess floating-point, discretization and
+market-model errors separately. Resource profiles account for oracle loading,
+circuit execution and the selected backend's scheduling costs.
+
+## Rolling quantitative research
+
+`oq.finance.walk_forward(factory,x,y,times=...,label_end=...,splitter=...)`
+refits a fresh `Model` per purged training fold and aligns test predictions with
+the original observation axis. `validation_size` reserves a training-tail
+validation set and purges its overlapping training labels. `fit_options` and
+`predict_options` configure native fitting and prediction. See
+[quantitative research](finance.md#rolling-hybrid-model-selection).
+
+## Parameter-sweep conversion
+
+`plan.bind(mapping,partial=False)` returns a plan with bound source parameters.
+`plan.iter_exports(rows,max_bindings=1024)` streams checked artifacts;
+`plan.export_many(rows,...)` returns a tuple. Compatible symbolic targets reuse
+prepared topology. See [interoperability](interoperability.md).

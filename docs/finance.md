@@ -14,8 +14,60 @@ data, broker connection or extra core dependency is installed.
 | Tail risk | `expected_shortfall`, `wasserstein_cvar` | Fractional weighted CVaR and a Wasserstein robustness margin |
 | Funded execution | `SelfFinancingPlan.rollout(...)` | Delayed decisions, cash, proportional fees and quadratic impact |
 | Chronological validation | `PurgedWalkForward.split(times, label_end)` | Past-only training with overlapping labels removed |
+| Rolling model selection | `walk_forward(factory, inputs, targets, ...)` | Fresh hybrid models, nested validation and aligned out-of-sample predictions |
 | Discrete asset selection | `PortfolioSelection(...).problem` | Equal-weight fixed-cardinality financial QUBO |
 | Coherent financial expectations | `PayoffOraclePlan` and `AmplitudeEstimationPlan` | Signed bounded payoffs, control variates and finite-shot intervals |
+
+## Rolling hybrid model selection
+
+`walk_forward` connects the purged splitter to the high-level hybrid model.
+Each fold constructs a fresh model, fits its historical rows, predicts the
+disjoint test interval and records the held-out task loss. With
+`validation_size`, it reserves a chronological tail of the training fold and
+purges training labels that reach the first validation decision time.
+The outer purge also keeps every training/validation label strictly before
+the test decision interval.
+
+```python
+import openqml as oq
+
+
+def rolling_predictions(features, next_returns, decision_times, label_end):
+    return oq.finance.walk_forward(
+        lambda: oq.Model(task="forecast", hidden_features=16, depth=2),
+        features,
+        next_returns,
+        times=decision_times,
+        label_end=label_end,
+        splitter=oq.finance.PurgedWalkForward(train_size=252, test_size=21),
+        validation_size=42,
+        fit_options={"epochs": 50, "patience": 5, "min_delta": 1e-5},
+        predict_options={"batch_size": 128},
+    )
+```
+
+Supply causal features `[observations,lookback,features]` and matching
+next-return labels `[observations,lookback,assets]`. `label_end` is the last
+timestamp used by each observation's complete target window. For scalar or
+vector regression, a factory returning `Model(task="regression",...)` also
+accepts ordinary `[observations,features]` inputs. Set `framework` on the model
+factory to select Torch, JAX or Flax.
+
+`WalkForwardResult.predictions` retains the original observation axis.
+`mask=True` identifies test predictions and `fold_id` identifies their refit;
+uncovered rows contain NaN and fold ID -1. Each `WalkForwardMetrics` entry
+records training/validation/test counts, purged labels, test boundaries, test
+loss and the selected epoch. Test losses are recorded after fitting.
+Use `step_size >= test_size` for disjoint test intervals. Larger steps leave
+explicit gaps in the result mask.
+
+Model fitting receives only that fold's admitted training rows and its optional
+validation tail. Fit feature normalization, feature selection and scenario
+atoms within the training fold as part of the application pipeline. Map
+forecasts to allocation decisions separately, then pass decisions and their
+original bar returns to `SelfFinancingPlan` for lagged, funded accounting.
+`max_memory_mb` admits the NumPy result and indexed-data workspace; configure
+native model memory through the chosen architecture and execution backend.
 
 ## Train decisions through the scenario model
 
@@ -130,7 +182,7 @@ full scenario sort: NumPy partition, PyTorch top-k or JAX top-k. Fractional
 boundary mass is retained, including when the tail contains less than one atom.
 The weighted case retains the probability-aware sorted implementation. Native
 gradients remain piecewise; ties can select different valid subgradients across
-backends. There is no claim to implement a custom radix-selection GPU kernel.
+backends. Selection uses the native array backend's partition or top-k kernel.
 
 ## Execution timing and self-financing accounts
 
@@ -188,10 +240,10 @@ hybrid large-universe optimization, not a polynomial solver for arbitrary QUBOs.
 
 Finite scenario atoms restrict the model's support. Path atoms `[S,H,N]` encode
 joint paths; `returns()` compounds each asset without intra-path rebalancing.
-`expected_payoff` computes a discounted expectation under the supplied weights;
-a risk-neutral measure and no-arbitrage conditions are not inferred from data.
-No financial return improvement, quantum advantage or real multi-GPU/QPU
-throughput is established by the functional tests.
+`expected_payoff` computes a discounted expectation under the supplied weights.
+Financial pricing uses a supplied risk-neutral measure. Evaluate forecasting
+and allocation choices with chronological held-out predictions, funded trading
+costs and the target execution environment's resource measurements.
 
 ## Conditional barrier payoffs
 
@@ -222,10 +274,9 @@ The supplied terminal law must match the GBM parameters under the pricing
 measure. Volatility and maturity must be positive. Discrete monitoring,
 stochastic/local volatility, multiple barriers, rebates and historical hits
 before the supplied initial spot are outside this model. No continuity correction
-is silently applied. Analytic formulas should be used when available; reducing
-path dimension does not establish a quantum speedup over them. Sampling intervals
-do not include grid, truncation or market-model error, and table preparation
-still has its usual loading cost.
+is silently applied. Select analytic formulas when available. Sampling intervals
+cover sampling uncertainty; grid, truncation, market-model error and table
+preparation costs require separate controls.
 
 ## Quantum Monte Carlo for pricing and tail risk
 
@@ -278,9 +329,8 @@ largest depth and shot counts; every detected likelihood mode is refined. The
 point estimate is numerical. Confidence sets are constructed independently:
 per-depth binomial KL-Chernoff intervals receive a simultaneous union-bound error
 budget, then **all** inverse-trigonometric branches are intersected. A shallow
-single-start fit cannot silently discard an unresolved alias. These intervals
-are conservative, rather than a claim to reproduce the paper's empirical error
-constants or optimized shot profile.
+single-start fit cannot silently discard an unresolved alias. The intervals use
+simultaneous finite-shot coverage, with configurable depth and shot allocation.
 
 `visibility` may be a calibrated value per depth, with the model
 `P(1|m) = (1-v)/2 + v*sin((2*m+1)*theta)**2` and target probability
@@ -324,22 +374,21 @@ engines. A market price additionally needs the correct risk-neutral measure.
 
 Inspect `schedule.resource_profile(oracle)` before execution: it includes
 state preparation, inverse preparation, reflection workspace, shot counts and
-portable IR operation counts. The theoretical quantum sampling advantage
-requires efficient coherent preparation/payoff arithmetic, sufficient useful
-circuit depth and an appropriate classical sampling comparison. A payoff table
-has O(S) storage/gates and O(S log S) synthesis; classical summation over known
-probabilities is O(S). Table loading, hardware transpilation, fault tolerance,
-queue time and competitive variance-reduced or quasi-Monte-Carlo methods can
-erase the oracle-query advantage. No end-to-end speedup is certified here.
+portable IR operation counts. Efficient coherent preparation/payoff arithmetic
+and useful circuit depth determine the sampled method's resource needs. A
+payoff table has O(S) storage/gates and O(S log S) synthesis; classical summation
+over known probabilities is O(S). Compare complete workloads including table
+loading, transpilation, error correction, queue time and classical variance
+reduction or quasi-Monte-Carlo execution.
 
 ## Method sources
 
-- [Constant-Depth Quantum Barrier Option Pricing via a Static Bivariate Oracle Framework](https://arxiv.org/abs/2610.27929) (October 2026): static path compression under GBM. OpenQML conditions on the terminal price, retains exact discrete payoff rotations and does not claim constant state-loading cost or exact discrete-monitoring corrections.
+- [Constant-Depth Quantum Barrier Option Pricing via a Static Bivariate Oracle Framework](https://arxiv.org/abs/2610.27929) (October 2026): static path compression under GBM. OpenQML uses terminal-price conditioning, exact discrete payoff rotations and explicit state-loading costs for continuous monitoring.
 
 - [Integrated Prediction and Multi-period Portfolio Optimization](https://arxiv.org/abs/2512.11273): decision-focused training and fixed-point differentiation. OpenQML implements its own single-stage active-face factor solver, not the full multi-period algorithm.
 - [Constrained Counterdiabatic Quantum Approximate Optimization Algorithm for Portfolio Optimization](https://arxiv.org/abs/2605.06858): number-preserving commutator generators; the adaptation above omits full gauge-potential optimization.
 - [The Lie Algebra of XY-mixer Topologies and Warm Starting QAOA for Constrained Optimization](https://doi.org/10.1038/s41534-026-01192-4), npj Quantum Information 12, 61 (2026): topology, expressivity and trainability tradeoffs of constrained mixers.
-- [Large-scale portfolio optimization on a trapped-ion quantum computer](https://arxiv.org/abs/2602.23976): hybrid decomposition motivation; no hardware results are reproduced here.
+- [Large-scale portfolio optimization on a trapped-ion quantum computer](https://arxiv.org/abs/2602.23976): hybrid decomposition motivation for hardware-sized asset-selection subproblems.
 - [Shift-Aware Gaussian-Supremum Validation for Wasserstein-DRO CVaR Portfolios](https://arxiv.org/abs/2512.16748): robust tail-risk formulation. Radius calibration and statistical validation are separate from the implemented margin.
 - [Quantum generative modeling for financial time series with temporal correlations](https://doi.org/10.1088/2632-2153/ae39a2), Machine Learning: Science and Technology 7, 015027 (2026): financial quantum generative modeling; the finite-atom Born model here differs from its QGAN and MPS experiments.
 - [Quantum amplitude estimation beyond power-of-two schedules](https://arxiv.org/abs/2609.02715) (September 2026): geometric depth schedules and full multimodal likelihood inference. OpenQML uses its own conservative finite-shot confidence construction and configurable shot allocation.

@@ -22,8 +22,8 @@ through an update. Rebuild the layer after changing devices or their configurati
 
 `quantum_layer` accepts a matching native module/functional layer. Supplying
 `IQPQuantumLayer` gives exact structured local readouts with native higher
-derivatives and O(n + edges) arithmetic. This restricted family is efficiently
-classically evaluable; it does not imply a quantum speedup. Native PyTorch/JAX
+derivatives and O(n + edges) arithmetic. This commuting family has an exact
+classical local-readout evaluator. Native PyTorch/JAX
 backends preserve accelerator tensors and ordinary optimizer parameter ownership.
 
 ## Objectives and trajectory targets
@@ -89,5 +89,6 @@ surrogate-assisted training are deliberately separate explicit modes.
 - [PPO](https://arxiv.org/abs/1707.06347) and
   [GAE](https://arxiv.org/abs/1506.02438): clipped objectives and advantage targets.
 
-These are independently implemented components. The cited preprints are not
-treated as journal-validated superiority or task-level quantum advantage.
+OpenQML implements these components independently. Choose policy architecture,
+hardware response mode and training budget using the target environment's
+held-out episode returns and measured execution costs.
