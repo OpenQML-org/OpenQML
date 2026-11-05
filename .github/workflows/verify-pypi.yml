@@ -1,0 +1,74 @@
+name: Verify PyPI release
+on:
+  push:
+    branches: ['verify/pypi-0.18.3']
+permissions:
+  contents: read
+jobs:
+  isolated-wheel-install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify the published wheel in an isolated environment
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/openqml-release"
+          "$RUNNER_TEMP/openqml-release/bin/python" -m pip install --index-url https://pypi.org/simple --no-cache-dir --only-binary=:all: openqml==0.18.3
+          "$RUNNER_TEMP/openqml-release/bin/python" -m pip check
+          "$RUNNER_TEMP/openqml-release/bin/python" - <<'PY'
+          import importlib.metadata
+          import json
+          import sys
+          import urllib.request
+          
+          import numpy as np
+          import openqml as oq
+          
+          assert oq.__version__ == importlib.metadata.version("openqml") == "0.18.3"
+          assert not {"torch", "jax", "cirq", "qiskit", "pennylane"}.intersection(sys.modules)
+          files = {str(name) for name in importlib.metadata.files("openqml")}
+          assert {"openqml/_norms.py", "openqml/finance/_torch_linear.py"} <= files
+          
+          np.testing.assert_allclose(
+              oq.finance.cost_aware_projection(np.array([1e8, 1e8, 0], dtype=np.float32)),
+              [0.5, 0.5, 0],
+          )
+          np.testing.assert_allclose(
+              oq.finance.cost_aware_projection(np.array([0.1, -0.2, 0.3], dtype=np.float32), penalty=1e20),
+              [11 / 30, 1 / 15, 17 / 30],
+              atol=2e-6,
+          )
+          
+          raw = oq.Expression(op="sin", args=(oq.Expression(constant=0.7),))
+          for location in ("gate", "phase"):
+              circuit = oq.Circuit(1).ry(raw, 0) if location == "gate" else oq.Circuit(1).with_global_phase(raw)
+              assert oq.plan_conversion(circuit, target="openqasm3").verify().matched
+          assert "GLOBAL_PHASE_UNSUPPORTED" in {
+              item.code for item in oq.diagnose(oq.Circuit(1).with_global_phase(raw), "openqasm2")
+          }
+          
+          matrix = np.diag([1.0, 2, 3, 4]) + np.random.default_rng(9).normal(size=(4, 4)) * 0.01
+          for scale in (1e200, 1e-200):
+              compressed = oq.TensorTrainMatrix.from_dense(
+                  matrix * scale, input_modes=(2, 2), output_modes=(2, 2), relative_error=0.02
+              )
+              assert np.linalg.norm(compressed.to_dense() / scale - matrix) <= 0.02 * np.linalg.norm(matrix)
+              np.testing.assert_allclose(compressed.source_norm / scale, np.linalg.norm(matrix), rtol=1e-14)
+          
+          channel = oq.QuantumChannelPlan()
+          weights = np.zeros(len(channel.spec.weight_parameters))
+          received = channel.apply(weights, np.array([0.1]), [[1, 0], [0, 0]], backend="numpy")
+          expected = channel.apply(weights, np.array([0.1]), np.diag([1, 0]), backend="numpy")
+          np.testing.assert_allclose(received, expected, atol=2e-6)
+          assert not {"torch", "jax", "cirq", "qiskit", "pennylane"}.intersection(sys.modules)
+          
+          with urllib.request.urlopen("https://pypi.org/pypi/openqml/0.18.3/json", timeout=30) as stream:
+              release = json.load(stream)
+          assert release["info"]["version"] == "0.18.3"
+          print("OpenQML 0.18.3: isolated public PyPI installation and regression smoke checks passed.")
+          print("Installed module:", oq.__file__)
+          print("PyPI artifacts:", [(item["filename"], item["digests"]["sha256"]) for item in release["urls"]])
+          PY
