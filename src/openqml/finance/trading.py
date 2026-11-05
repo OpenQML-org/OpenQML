@@ -71,7 +71,14 @@ class SelfFinancingPlan:
         No trade is sent. Carry contains marked position values, cash, and the
         lag queue; passing it between chunks preserves both funding and AD.
         """
-        ops = Ops(decisions)
+        ops = Ops(
+            decisions,
+            returns,
+            cash_returns,
+            initial_equity,
+            initial_weights,
+            *(state[:3] if isinstance(state, TradingState) else ()),
+        )
         xp = ops.xp
         r, w = ops.real(returns, finite=False), ops.real(decisions, finite=False)
         if min(r.ndim, w.ndim) < 2 or r.shape[-2:] != w.shape[-2:] or min(r.shape[-2:]) < 1:

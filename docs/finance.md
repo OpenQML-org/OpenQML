@@ -125,6 +125,13 @@ CVaR bound, sharp for unrestricted return support. A bounded support can tighten
 the bound. The caller must calibrate the radius; this function does not supply
 out-of-sample coverage, shift estimation or block-bootstrap validation.
 
+When probabilities are omitted, CVaR uses exact partial selection instead of a
+full scenario sort: NumPy partition, PyTorch top-k or JAX top-k. Fractional
+boundary mass is retained, including when the tail contains less than one atom.
+The weighted case retains the probability-aware sorted implementation. Native
+gradients remain piecewise; ties can select different valid subgradients across
+backends. There is no claim to implement a custom radix-selection GPU kernel.
+
 ## Execution timing and self-financing accounts
 
 Pass arithmetic bar returns and close-time decisions, both `[...,T,N]`, to
@@ -185,6 +192,40 @@ joint paths; `returns()` compounds each asset without intra-path rebalancing.
 a risk-neutral measure and no-arbitrage conditions are not inferred from data.
 No financial return improvement, quantum advantage or real multi-GPU/QPU
 throughput is established by the functional tests.
+
+## Conditional barrier payoffs
+
+`BarrierOption(spot,strike,barrier,volatility,maturity)` evaluates a continuously
+monitored, single-barrier option with zero rebate under constant-volatility GBM.
+Choose `direction="up"/"down"`, `knock="in"/"out"` and `kind="call"/"put"`.
+The result is the conditional expected terminal payoff, without discounting.
+Parameters broadcast over batch axes; the last terminal-price axis is the
+scenario axis. PyTorch/JAX parameters retain native derivatives away from kinks.
+
+For an upper barrier, write `b=log(B/S0)`, `x=log(ST/S0)` and
+`v=sigma**2*T`. If both endpoints are below the barrier, the Brownian reflection
+principle gives `P(hit | ST)=exp(-2*b*(b-x)/v)`; otherwise it is one.
+The lower-barrier construction reverses the log distances. Multiplying a
+terminal payoff by the conditional survival/crossing probability integrates out
+the path extremum. Stable `expm1` evaluation preserves survival probabilities
+close to a barrier, and the initial spot is included in crossing checks.
+
+Pass `option(terminal_grid)` to the existing `finance.price`, using either known
+terminal probabilities or a coherent terminal preparation. This representation
+needs no monitoring-date loop or running-maximum register. It also removes the
+conditional Bernoulli crossing variance from a classical estimator. The static
+representation adapts the October 2026 source below, using a conditional
+one-variable payoff instead of its bivariate maximum register and linearized
+rotation. Existing payoff encoding remains exact for the supplied discrete table.
+
+The supplied terminal law must match the GBM parameters under the pricing
+measure. Volatility and maturity must be positive. Discrete monitoring,
+stochastic/local volatility, multiple barriers, rebates and historical hits
+before the supplied initial spot are outside this model. No continuity correction
+is silently applied. Analytic formulas should be used when available; reducing
+path dimension does not establish a quantum speedup over them. Sampling intervals
+do not include grid, truncation or market-model error, and table preparation
+still has its usual loading cost.
 
 ## Quantum Monte Carlo for pricing and tail risk
 
@@ -292,6 +333,8 @@ queue time and competitive variance-reduced or quasi-Monte-Carlo methods can
 erase the oracle-query advantage. No end-to-end speedup is certified here.
 
 ## Method sources
+
+- [Constant-Depth Quantum Barrier Option Pricing via a Static Bivariate Oracle Framework](https://arxiv.org/abs/2610.27929) (October 2026): static path compression under GBM. OpenQML conditions on the terminal price, retains exact discrete payoff rotations and does not claim constant state-loading cost or exact discrete-monitoring corrections.
 
 - [Integrated Prediction and Multi-period Portfolio Optimization](https://arxiv.org/abs/2512.11273): decision-focused training and fixed-point differentiation. OpenQML implements its own single-stage active-face factor solver, not the full multi-period algorithm.
 - [Constrained Counterdiabatic Quantum Approximate Optimization Algorithm for Portfolio Optimization](https://arxiv.org/abs/2605.06858): number-preserving commutator generators; the adaptation above omits full gauge-potential optimization.

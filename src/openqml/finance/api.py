@@ -167,7 +167,7 @@ def price(
     if probabilities is not None and method != "quantum":
         if probabilities is None or payoffs is None:
             raise ValidationError("Classical pricing needs payoffs and scenario probabilities.")
-        ops = Ops(probabilities)
+        ops = Ops(probabilities, payoffs)
         values = ops.real(payoffs)
         if values.ndim < 1 or not values.shape[-1]:
             raise ValidationError("Payoffs need a nonempty scenario axis.")

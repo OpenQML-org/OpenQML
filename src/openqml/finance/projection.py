@@ -50,7 +50,7 @@ def _prox(values, center, caps, penalty, budget, ops):
 
 
 def cost_aware_projection(values, *, previous=None, caps=1, penalty=0, budget=1, max_memory_mb=256):
-    ops = Ops(values)
+    ops = Ops(values, previous, caps, penalty, budget)
     values = ops.real(values)
     if values.ndim < 1 or values.shape[-1] < 1:
         raise ValidationError("Portfolio vectors require a nonempty asset axis.")

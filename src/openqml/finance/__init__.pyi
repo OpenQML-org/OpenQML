@@ -1,7 +1,9 @@
+from . import barrier as barrier
 from .allocation import AllocationPlan as AllocationPlan
 from .allocation import AllocationResult as AllocationResult
 from .api import allocate as allocate
 from .api import price as price
+from .barrier import BarrierOption as BarrierOption
 from .models import (
     MarketForecast as MarketForecast,
 )

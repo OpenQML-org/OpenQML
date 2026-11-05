@@ -17,7 +17,7 @@ from ..parameters import real
 from ._array import Ops, admission, rows
 from ._linear import linear_solve, matmat
 from .projection import _prox
-from .risk import prepare_risk
+from .risk import FactorRisk, prepare_risk
 
 
 class AllocationResult(NamedTuple):
@@ -85,7 +85,9 @@ class AllocationPlan:
         )
 
     def solve(self, mean, risk, *, previous=None, caps=1, fees=0, budget=1, warm_start=None):
-        ops = Ops(mean)
+        ops = Ops(
+            mean, *(risk if isinstance(risk, FactorRisk) else ()), previous, caps, fees, budget
+        )
         xp = ops.xp
         mean = ops.real(mean)
         if mean.ndim < 1 or mean.shape[-1] < 1:
