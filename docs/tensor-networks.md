@@ -65,6 +65,45 @@ These are forward-execution counters. Rematerialized backward execution creates
 its own numerical cache and preserves the returned report snapshot. Compare
 planning cost, forward counters and complete training time separately.
 
+### Stream broadcast parameter grids
+
+`plan.iter_evaluate(bindings, batch_chunk_size=128, backend="torch", like=x)`
+yields native `[chunk_rows, readouts]` arrays in flat row-major order. The plan
+reuses its compiled contraction topology and starts a fresh numerical cache for
+each chunk. Parameter shapes such as `[B,1]` and `[1,T]` are gathered directly
+from their source arrays; the full `[B,T]` parameter grid is never materialized.
+If no chunk size is given, the memory model chooses the admitted row count.
+
+```python
+import numpy as np
+import openqml as oq
+
+a, b = oq.Parameter("a"), oq.Parameter("b")
+circuit = oq.Circuit(2).ry(a, 0).rxx(b, 0, 1)
+plan = oq.TensorNetworkPlan(circuit, (oq.PauliString("ZZ"),), max_memory_mb=16)
+grid = {"a": np.linspace(-1, 1, 100)[:, None], "b": np.linspace(0, 1, 200)[None]}
+total, count = 0.0, 0
+for chunk in plan.iter_evaluate(grid, batch_chunk_size=128):
+    total += chunk.sum()
+    count += chunk.shape[0]
+print(total / count)
+```
+
+`evaluate(...,batch_chunk_size=128)` collects chunks and restores the original
+broadcast shape. Collection reserves memory for retained readouts and their
+concatenation; use the iterator for larger outputs. The admission includes
+quantum workspace, compiled metadata, subtree cache, parameter gathers and
+indexing arrays. Supplied source arrays, framework allocators and retained
+autodiff tapes are managed by the caller. Backpropagate chunk objectives or use
+the trainer's microbatch accumulation to bound training graph retention.
+
+Torch and JAX gathers remain in their native computation graphs, including
+broadcast adjoints and higher derivatives. Chunk geometry is static for JAX JIT;
+choose a practical chunk size to control the unrolled compiled graph. With
+`return_report=True`, the iterator yields `(chunk, report)` and collection sums
+forward work counters, reports the maximum cache high-water mark and adds
+`chunks`. Empty grids return correctly shaped empty readouts.
+
 ### Demand-driven shared subtrees
 
 `TensorNetworkPlan(...,reuse_intermediates=True)` reserves a bounded part of its

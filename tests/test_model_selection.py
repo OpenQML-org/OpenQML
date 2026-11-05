@@ -78,7 +78,10 @@ def test_task_loss_uses_native_evaluation_without_updating_state(framework, task
     assert model.trainer.updates == updates
     if task == "classification":
         p = model.predict_proba(x)
-        assert expected == pytest.approx(-np.log(p[np.arange(4), y]).mean(), abs=1e-7)
+        # Native log-softmax and log(softmax) have different rounding paths.
+        eps = np.finfo(p.dtype).eps
+        reference = -np.log(p[np.arange(4), y].astype(np.float64)).mean()
+        np.testing.assert_allclose(expected, reference, rtol=4 * eps, atol=4 * eps)
     if framework == "torch":
         model.module.eval()
         model.evaluate(x, y)

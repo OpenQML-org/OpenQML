@@ -164,3 +164,17 @@ returns values plus forward contraction, cache and slice counters. Native
 tensor-network architecture models enable portfolio planning and subtree reuse
 automatically. See [tensor networks](tensor-networks.md) for memory accounting,
 compiled kernels and rematerialization.
+
+`plan.iter_evaluate(bindings,batch_chunk_size=None,...)` streams flattened
+row-major chunks from broadcast parameter grids. `evaluate(...,batch_chunk_size=N)`
+collects admitted chunks and restores the broadcast output shape. Both retain
+native gradients; collection additionally admits retained output storage.
+
+## Risk-budget projection
+
+`oq.finance.risk_budget_projection(weights,scenarios,probabilities=None,confidence=0.95,`
+`budget=0.02,radius=0,cash_return=0,max_memory_mb=256)` returns a
+`RiskBudgetResult` named tuple. It scales a funded long-only proposal toward
+cash to meet weighted CVaR plus a W1/L2 margin. Native batched radii and budgets
+retain PyTorch/JAX derivatives. The input proposal must sum to at most one and
+the budget must admit cash. See [risk budgets](finance.md#differentiable-decision-risk-budgets).

@@ -438,7 +438,9 @@ class PauliPlan:
         return _evaluate_program(self._nodes, self._roots, local, ops, shape)
 
 
-def _prepare_bindings(bindings, backend, like, batch_shape, source_parameters, active_parameters):
+def _prepare_bindings(
+    bindings, backend, like, batch_shape, source_parameters, active_parameters, *, numpy_copy=True
+):
     bindings = {} if bindings is None else bindings
     if not isinstance(bindings, Mapping):
         raise ValidationError("Pauli bindings require a name mapping.")
@@ -454,7 +456,7 @@ def _prepare_bindings(bindings, backend, like, batch_shape, source_parameters, a
             array = np.asarray(value)
             if array.dtype.kind not in "iuf" or not np.isfinite(array).all():
                 raise ValidationError("Pauli bindings must be finite real scalars or arrays.")
-            clean[name] = array.astype(float, copy=True)
+            clean[name] = array.astype(float, copy=True) if numpy_copy else array
         bindings = clean
     if like is None and backend != "numpy":
         like = next((v for v in bindings.values() if hasattr(v, "dtype")), None)
@@ -469,7 +471,10 @@ def _prepare_bindings(bindings, backend, like, batch_shape, source_parameters, a
             or (backend == "torch" and dtype == ops.xp.bool)
         ):
             raise ValidationError("Pauli bindings must be real numeric values.")
-    local = {n: ops.array(v, real_value=True) for n, v in bindings.items()}
+    local = {
+        n: v if backend == "numpy" and not numpy_copy else ops.array(v, real_value=True)
+        for n, v in bindings.items()
+    }
     try:
         shape = np.broadcast_shapes(*(tuple(v.shape) for v in local.values()))
         if batch_shape is not None:

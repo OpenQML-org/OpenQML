@@ -12,6 +12,7 @@ data, broker connection or extra core dependency is installed.
 | Factor risk | `factor_risk(returns, probabilities)` | Weighted centered factors plus shrinkage diagonal |
 | Differentiable allocation | `AllocationPlan.solve(mean, risk, ...)` | Long-only capped allocation with funding and turnover costs |
 | Tail risk | `expected_shortfall`, `wasserstein_cvar` | Fractional weighted CVaR and a Wasserstein robustness margin |
+| Decision risk budgets | `risk_budget_projection(weights, scenarios, ...)` | Maximal funded cash-ray scaling under weighted robust CVaR |
 | Funded execution | `SelfFinancingPlan.rollout(...)` | Delayed decisions, cash, proportional fees and quadratic impact |
 | Chronological validation | `PurgedWalkForward.split(times, label_end)` | Past-only training with overlapping labels removed |
 | Rolling model selection | `walk_forward(factory, inputs, targets, ...)` | Fresh hybrid models, nested validation and aligned out-of-sample predictions |
@@ -148,8 +149,12 @@ subject to 0 <= w <= caps, sum(w) = budget.
 
 The positive ridge gives a unique solution. A sorted exact cost-aware proximal
 projection identifies active bounds and no-trade facets. The final constrained
-solve uses preconditioned conjugate gradients with factor matrix products,
-without a dense asset KKT factorization or a stored optimizer-iteration tape.
+solve uses a residual-refined Woodbury solve when the factor rank is at most
+64 and at most one quarter of the asset count. It solves a factor-sized system
+and keeps probability masses outside square roots, retaining finite derivatives
+at zero-mass atoms. Other factor shapes use preconditioned conjugate gradients
+with factor matrix products. Both paths avoid an asset-sized KKT factorization
+and a stored optimizer-iteration tape.
 PyTorch implicit adjoints/JVPs and JAX `custom_linear_solve` differentiate the
 fixed active face; derivatives at changing faces are piecewise, not globally
 smooth. Small-rank spectral work still costs `min(rank,N)**2` workspace.
@@ -183,6 +188,40 @@ boundary mass is retained, including when the tail contains less than one atom.
 The weighted case retains the probability-aware sorted implementation. Native
 gradients remain piecewise; ties can select different valid subgradients across
 backends. Selection uses the native array backend's partition or top-k kernel.
+
+## Differentiable decision risk budgets
+
+`risk_budget_projection` takes a long-only proposal whose asset weights sum to
+at most one, a joint scenario table, optional Born probabilities, a CVaR budget
+and a nonnegative Wasserstein radius. It returns `RiskBudgetResult` with
+`weights`, `cash`, `scale`, `cvar`, `robust_cvar` and `budget`.
+
+```python
+import openqml as oq
+
+scenarios = [[-0.12, -0.03], [0.04, -0.08], [0.10, 0.02], [-0.05, 0.01]]
+decision = oq.finance.risk_budget_projection(
+    [0.4, 0.5], scenarios, confidence=0.95, budget=0.02, radius=0.0005
+)
+print(decision.weights, decision.cash, decision.robust_cvar)
+```
+
+For proposal `w`, scenario returns `R` and deterministic cash return `r_c`,
+define `D = CVaR(r_c*sum(w) - R@w) + radius*||w||2/(1-confidence)`.
+The implementation selects `scale=1` when `D <= budget+r_c`, otherwise
+`scale=(budget+r_c)/D`. Positive homogeneity and cash translation make this the
+largest feasible scale on the proposal's ray toward cash. The budget must admit
+the all-cash position. Asset caps and funding remain satisfied when a feasible
+proposal is scaled; pass the resulting holdings to the self-financing ledger
+for transaction costs and execution timing.
+
+Scenarios, probabilities, proposals, budgets, cash returns and contextual radii
+can be native batched tensors. Gradients reach a scenario model and a learned
+radius head through the selected CVaR ordering and projection branch; ties and
+active-budget boundaries have piecewise derivatives. Fit/calibrate contextual
+radii within the training fold. The reported risk applies to the supplied
+scenario horizon and robust margin; price spreads, fees, impact and realized
+future returns are accounted for by the execution model.
 
 ## Execution timing and self-financing accounts
 
@@ -382,6 +421,12 @@ loading, transpilation, error correction, queue time and classical variance
 reduction or quasi-Monte-Carlo execution.
 
 ## Method sources
+
+- [Learning Predictive Ambiguity Sets for Decision-Focused Distributionally
+  Robust Optimization](https://arxiv.org/abs/2607.09820) (July 2026):
+  motivates contextual scenario masses and learned ambiguity radii. OpenQML's
+  cash-ray layer uses an isotropic W1/L2 margin with a closed-form funded risk
+  projection; trainable anisotropic metrics require a separate risk model.
 
 - [Constant-Depth Quantum Barrier Option Pricing via a Static Bivariate Oracle Framework](https://arxiv.org/abs/2610.27929) (October 2026): static path compression under GBM. OpenQML uses terminal-price conditioning, exact discrete payoff rotations and explicit state-loading costs for continuous monitoring.
 

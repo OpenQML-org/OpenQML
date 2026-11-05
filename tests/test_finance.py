@@ -127,17 +127,23 @@ def test_matrix_free_factor_path_scales_without_asset_kkt(monkeypatch):
     rng = np.random.default_rng(8)
     risk = f.factor_risk(rng.normal(size=(6, 512)) * 0.01)
     real_eigen = np.linalg.eigvalsh
+    real_solve = np.linalg.solve
 
     def eigen(matrix, *args, **kwargs):
         assert matrix.shape[-1] <= 6
         return real_eigen(matrix, *args, **kwargs)
 
     monkeypatch.setattr(np.linalg, "eigvalsh", eigen)
-    monkeypatch.setattr(np.linalg, "solve", lambda *a, **k: pytest.fail("Dense asset solve used"))
+
+    def factor_solve(matrix, *args, **kwargs):
+        assert matrix.shape[-1] <= 6, "Dense asset solve used"
+        return real_solve(matrix, *args, **kwargs)
+
+    monkeypatch.setattr(np.linalg, "solve", factor_solve)
     plan = f.AllocationPlan(turnover=0.2)
     output = plan.solve(rng.normal(size=512) * 0.0001, risk, previous=np.ones(512) / 512, caps=0.01)
     assert output.converged and abs(sum(output.weights) - 1) < 1e-9
-    assert plan.resource_profile(512, 6)["solver"] == "factor_PCG; no_dense_asset_KKT"
+    assert plan.resource_profile(512, 6)["solver"] == "factor_Woodbury_refinement"
 
 
 def test_implicit_allocation_derivatives_and_higher_derivatives(native):

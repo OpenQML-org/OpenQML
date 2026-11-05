@@ -5,6 +5,38 @@ Conversion plans separate source import, target preparation and artifact export.
 JSON and IR targets work with the core installation. Install the corresponding
 extra when importing or exporting a native SDK object.
 
+## Dynamic control and compilation reuse
+
+| Source feature | Lowering and semantic contract |
+| --- | --- |
+| Qiskit `if_else` | Atomic equality selection over explicit classical bits |
+| Qiskit `switch` | Bit/register selectors, grouped integer labels and a default branch |
+| Qiskit finite `for` | Bounded static expansion with explicit parameter binding |
+| Repeated Qiskit definitions | One imported body per source object and option set, with fresh wire remapping |
+| Qiskit symbolic angles | Per-import expression reuse and iterative DAG export |
+| OpenQASM 3 guards | Bit/register/index-set equality and conjunctions, preserving arbitrary bit order |
+
+Switch lowering uses a nested equality decision chain. After a case is selected,
+its body runs once; writes to the selector cannot enter another case. Grouped
+labels share the imported body. The default body is reached only after every
+label fails. Source operation, loop-expansion and control-depth budgets apply
+to the resulting decision structure. Switch expression selectors receive a
+structured diagnostic unless they directly wrap a bit or register.
+
+OpenQASM 3 emission uses one register equality or ordered index-set equality,
+such as `if (c[{2, 0}] == 2)`, with one copy of each branch body. These compact
+guards also load through Qiskit's OpenQASM 3 importer. Text size grows with the
+represented branch tree and guard width. The built-in parser also accepts
+equality conjunctions with nested grouping, combines consistent repeated bits
+and diagnoses contradictory terms. Conditions
+are evaluated before either body executes. `max_output_statements` admits the
+complete output before emission, including declarations, phases and braces.
+
+Definition and expression caches live within one conversion call. They preserve
+symbolic parameter identity, global phase, wire mappings and operation budgets;
+subsequent calls import the current source object afresh. Numerical bindings and
+target objects remain independent across exported artifacts.
+
 ## Prepare once, bind many
 
 ```python

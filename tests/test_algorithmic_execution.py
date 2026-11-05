@@ -128,27 +128,17 @@ def test_clifford_frame_fusion_preserves_full_unitaries_and_global_phase():
         q.fuse_pauli_rotations(circuits[0], max_work=1)
 
 
-def test_readout_contraction_reuse_reduces_work_and_does_not_cache_new_bindings(monkeypatch):
-    import openqml.tensor_contraction as tn
-
+def test_readout_contraction_reuse_reduces_work_and_does_not_cache_new_bindings():
     c = q.Circuit(3).ry(q.Parameter("a"), 0).cx(0, 1).rx(0.4, 1).cx(1, 2)
     obs = tuple(q.PauliString("".join(p)) for p in product("IZ", repeat=3))
-    calls, original = [], tn._contract
-
-    def contract(*args):
-        calls.append(1)
-        return original(*args)
-
-    monkeypatch.setattr(tn, "_contract", contract)
     plain, shared = (
         q.TensorNetworkPlan(c, obs),
         q.TensorNetworkPlan(c, obs, reuse_intermediates=True),
     )
-    expected = plain.evaluate(dict(a=0.3))
-    baseline = len(calls)
-    calls.clear()
-    np.testing.assert_allclose(shared.evaluate(dict(a=0.3)), expected, atol=2e-14)
-    assert 0 < len(calls) < baseline
+    expected, baseline = plain.evaluate(dict(a=0.3), return_report=True)
+    actual, report = shared.evaluate(dict(a=0.3), return_report=True)
+    np.testing.assert_allclose(actual, expected, atol=2e-14)
+    assert 0 < report["contractions_executed"] < baseline["contractions_executed"]
     changed = shared.evaluate(dict(a=-0.6))
     np.testing.assert_allclose(changed, q.expectations(c, obs, dict(a=-0.6)), atol=2e-14)
     assert np.linalg.norm(changed - expected) > 0.01

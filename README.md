@@ -8,11 +8,11 @@ Build and train hybrid neural networks with PyTorch, JAX or Flax. Use `Model.fit
 
 ## Quantum–classical hybrid quantitative research
 
-Model return distributions, estimate tail risk, allocate constrained portfolios and price bounded payoffs. Purged walk-forward refits produce aligned out-of-sample predictions; self-financing accounting applies execution delays, fees and market impact. Differentiable financial calculations share native tensors with hybrid networks. Coherent estimation exposes precision, confidence, noise and query budgets. [Explore quantitative research](https://github.com/OpenQML-org/OpenQML/blob/main/docs/finance.md).
+Train scenario distributions, allocate constrained portfolios and project decisions onto explicit CVaR budgets with a funded cash position. Low-rank factor solves and native PyTorch/JAX derivatives connect financial objectives to hybrid models. Purged walk-forward refits and self-financing accounting preserve chronological evaluation, execution delays, fees and market impact. [Explore quantitative research](https://github.com/OpenQML-org/OpenQML/blob/main/docs/finance.md).
 
 ## Cross-framework quantum programming
 
-Connect Qiskit, Cirq, PennyLane and OpenQASM through a shared circuit representation. Prepare conversions, inspect target compatibility and stream parameter sweeps from one imported source. Conversion plans preserve parameter ownership, explicit channels, classical control and global phase where the target supports them. [Explore interoperability](https://github.com/OpenQML-org/OpenQML/blob/main/docs/interoperability.md).
+Connect Qiskit, Cirq, PennyLane and OpenQASM through a shared circuit representation. Compile grouped switch cases, finite loops and atomic classical guards; reuse shared definitions and symbolic expressions. Prepare conversions once, stream parameter sweeps and verify their semantics against round-trip or native execution. [Explore interoperability](https://github.com/OpenQML-org/OpenQML/blob/main/docs/interoperability.md).
 
 ## Install
 
@@ -49,6 +49,11 @@ print(model.predict(x[:2]))
 ```
 
 Select `framework="jax"` or `framework="flax"` to change training frameworks. `backend` chooses circuit execution; `device` chooses native tensor placement. Qubit counts follow the selected backend's available resources.
+
+`TensorNetworkPlan` compiles native batched GEMMs, searches bounded contraction
+portfolios and shares compatible intermediate tensors. `iter_evaluate` streams
+broadcast parameter grids within the configured working-memory budget while
+retaining PyTorch/JAX gradients. [Tensor-network execution](https://github.com/OpenQML-org/OpenQML/blob/main/docs/tensor-networks.md).
 
 [API](https://github.com/OpenQML-org/OpenQML/blob/main/docs/api.md) · [Training and validation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md) · [Quantitative research](https://github.com/OpenQML-org/OpenQML/blob/main/docs/finance.md) · [Interoperability](https://github.com/OpenQML-org/OpenQML/blob/main/docs/interoperability.md) · [Tensor networks](https://github.com/OpenQML-org/OpenQML/blob/main/docs/tensor-networks.md) · [Runtime](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md)
 

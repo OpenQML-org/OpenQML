@@ -330,11 +330,27 @@ class TensorNetworkPlan:
         }
 
     def evaluate(
-        self, bindings=None, *, backend="numpy", like=None, batch_shape=None, return_report=False
+        self,
+        bindings=None,
+        *,
+        backend="numpy",
+        like=None,
+        batch_shape=None,
+        return_report=False,
+        batch_chunk_size=None,
     ):
         """Evaluate readouts; optionally return forward execution/cache counters."""
         if type(return_report) is not bool:
             raise ValidationError("return_report must be a boolean.")
+        if batch_chunk_size is not None:
+            return self._evaluate_chunks(
+                bindings,
+                backend=backend,
+                like=like,
+                batch_shape=batch_shape,
+                return_report=return_report,
+                batch_chunk_size=batch_chunk_size,
+            )
         statistics = (
             {
                 "contractions_executed": 0,
@@ -375,6 +391,104 @@ class TensorNetworkPlan:
                 _statistics=statistics,
             )
         return (result, dict(statistics)) if return_report else result
+
+    def iter_evaluate(
+        self,
+        bindings=None,
+        *,
+        backend="numpy",
+        like=None,
+        batch_shape=None,
+        batch_chunk_size=None,
+        return_report=False,
+    ):
+        """Yield row-major native readout chunks while reusing the compiled plan.
+
+        Broadcast parameter grids are gathered per chunk without constructing
+        the full broadcasted grid. Each yield has shape [chunk_rows,readouts].
+        Consumers control retained outputs; native gradients remain connected.
+        """
+        from ._tensor_batches import chunk_capacity, gather_rows
+
+        if type(return_report) is not bool:
+            raise ValidationError("return_report must be a boolean.")
+        ops, local, shape = _prepare_bindings(
+            bindings,
+            backend,
+            like,
+            batch_shape,
+            frozenset(self.circuit.parameters),
+            self.active_parameters,
+            numpy_copy=False,
+        )
+        capacity = chunk_capacity(self, local, shape)
+        size = (
+            capacity
+            if batch_chunk_size is None
+            else min(capacity, integer(batch_chunk_size, "batch_chunk_size", 1))
+        )
+        total = math.prod(shape)
+        for start in range(0, max(1, total), size):
+            stop = min(start + size, total)
+            chunk = gather_rows(local, shape, start, stop, ops)
+            yield self.evaluate(
+                chunk,
+                backend=backend,
+                like=like,
+                batch_shape=(stop - start,),
+                return_report=return_report,
+            )
+
+    def _evaluate_chunks(
+        self,
+        bindings,
+        *,
+        backend,
+        like,
+        batch_shape,
+        return_report,
+        batch_chunk_size,
+    ):
+        size = integer(batch_chunk_size, "batch_chunk_size", 1)
+        from ._tensor_batches import chunk_capacity
+
+        ops, local, shape = _prepare_bindings(
+            bindings,
+            backend,
+            like,
+            batch_shape,
+            frozenset(self.circuit.parameters),
+            self.active_parameters,
+            numpy_copy=False,
+        )
+        output_bytes = 16 * math.prod(shape) * len(self.observables)
+        capacity = chunk_capacity(self, local, shape, output_bytes)
+        values, reports = [], []
+        for chunk in self.iter_evaluate(
+            bindings,
+            backend=backend,
+            like=like,
+            batch_shape=batch_shape,
+            batch_chunk_size=min(size, capacity),
+            return_report=return_report,
+        ):
+            value, report = chunk if return_report else (chunk, None)
+            values.append(value)
+            if report is not None:
+                reports.append(report)
+        result = (
+            ops.xp.cat(values, dim=0) if backend == "torch" else ops.xp.concatenate(values, axis=0)
+        ).reshape(shape + (len(self.observables),))
+        if not return_report:
+            return result
+        report = {
+            key: max(r[key] for r in reports)
+            if key in {"cache_peak_bytes", "cache_budget_bytes"}
+            else sum(r[key] for r in reports)
+            for key in reports[0]
+        }
+        report["chunks"] = len(reports)
+        return result, report
 
     def _evaluate(
         self,
