@@ -14,6 +14,33 @@ def matmat(diagonal, factors, mass, value, ops):
     )
 
 
+def _woodbury(diagonal, factors, mass, rhs, ops):
+    """Solve in factor space with finite derivatives at zero scenario mass."""
+    inverse = 1 / diagonal
+    scaled = factors * inverse[..., None, :]
+    core = (scaled @ factors.swapaxes(-1, -2)) * mass[..., None, :]
+    core = core + ops.array(np.eye(factors.shape[-2]))
+
+    def apply(value):
+        direct = inverse[..., :, None] * value
+        dual = ops.xp.linalg.solve(core, factors @ direct)
+        return direct - scaled.swapaxes(-1, -2) @ (mass[..., :, None] * dual)
+
+    result = apply(rhs)
+    # Reuse the small factor system for a residual correction after the
+    # subtraction in Woodbury, improving cancellation-sensitive float32 cases.
+    return result + apply(rhs - matmat(diagonal, factors, mass, result, ops))
+
+
+def _solve(diagonal, factors, mass, rhs, iterations, tolerance, ops):
+    rank, assets = factors.shape[-2:]
+    if rank == 0:
+        return rhs / diagonal[..., :, None]
+    if rank <= 64 and 4 * rank <= assets:
+        return _woodbury(diagonal, factors, mass, rhs, ops)
+    return _pcg(diagonal, factors, mass, rhs, iterations, tolerance, ops)
+
+
 def _pcg(diagonal, factors, mass, rhs, iterations, tolerance, ops):
     xp = ops.xp
     eps = np.finfo(np.float64 if "64" in str(rhs.dtype) else np.float32).eps
@@ -66,7 +93,7 @@ def _torch_class():
     class ImplicitFactorSolve(torch.autograd.Function):
         @staticmethod
         def forward(diagonal, factors, mass, rhs, iterations, tolerance):
-            return _pcg(diagonal, factors, mass, rhs, iterations, tolerance, Ops(diagonal))
+            return _solve(diagonal, factors, mass, rhs, iterations, tolerance, Ops(diagonal))
 
         @staticmethod
         def setup_context(ctx, inputs, output):
@@ -128,7 +155,7 @@ def linear_solve(diagonal, factors, mass, rhs, iterations, tolerance, ops):
         import jax
 
         def solve(_, value):
-            return _pcg(diagonal, factors, mass, value, iterations, tolerance, ops)
+            return _solve(diagonal, factors, mass, value, iterations, tolerance, ops)
 
         return jax.lax.custom_linear_solve(
             lambda value: matmat(diagonal, factors, mass, value, ops),
@@ -137,4 +164,4 @@ def linear_solve(diagonal, factors, mass, rhs, iterations, tolerance, ops):
             transpose_solve=solve,
             symmetric=True,
         )
-    return _pcg(diagonal, factors, mass, rhs, iterations, tolerance, ops)
+    return _solve(diagonal, factors, mass, rhs, iterations, tolerance, ops)

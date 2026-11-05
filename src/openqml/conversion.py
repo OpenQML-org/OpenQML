@@ -40,7 +40,7 @@ def _format(value):
 
 
 def _qasm_statement_count(circuit, version, cap):
-    """Count emitted lines without expanding repeated false branches into strings."""
+    """Count compact atomic guard output before allocating its text."""
 
     def count(body):
         size = int(
@@ -48,7 +48,7 @@ def _qasm_statement_count(circuit, version, cap):
         )
         for op in body.operations:
             if op.name == "if_else":
-                size += count(op.blocks[0]) + len(op.condition.bits) * (count(op.blocks[1]) + 3)
+                size += count(op.blocks[0]) + count(op.blocks[1]) + 3
             else:
                 size += 1
             if size > cap:

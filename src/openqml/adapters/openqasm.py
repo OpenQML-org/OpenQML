@@ -17,6 +17,7 @@ from ._common import bound_for_export
 def _statements(text):
     """Split semicolons/braces outside strings, retaining original source lines."""
     tokens, start, line, start_line, quoted, escaped = [], 0, 1, 1, False, False
+    brackets = 0
     for i, char in enumerate(text):
         if quoted:
             if escaped:
@@ -27,7 +28,11 @@ def _statements(text):
                 quoted = False
         elif char == '"':
             quoted = True
-        elif char in ";{}":
+        elif char == "[":
+            brackets += 1
+        elif char == "]":
+            brackets -= 1
+        elif char in ";{}" and brackets == 0:
             piece = text[start:i]
             leading = piece[: len(piece) - len(piece.lstrip())]
             location = start_line + leading.count("\n")
@@ -158,7 +163,11 @@ def from_openqasm(
     stack, work, skip_else = [], 0, False
 
     def reference(token, registers, location):
-        match = re.fullmatch(r"([A-Za-z_]\w*)(?:\[\s*(\d+)\s*\])?", token.strip(), re.ASCII)
+        match = re.fullmatch(
+            r"([A-Za-z_]\w*)(?:\[\s*(\d+|\{\s*\d+(?:\s*,\s*\d+)*\s*\})\s*\])?",
+            token.strip(),
+            re.ASCII,
+        )
         if not match or match.group(1) not in registers:
             raise conversion_error(
                 "REGISTER_REFERENCE", f"Unknown register reference {token!r}.", location
@@ -172,10 +181,19 @@ def from_openqasm(
                     location,
                 )
             return tuple(range(start, start + width))
-        index = int(match.group(2))
-        if index >= width:
+        selector = match.group(2)
+        indices = (
+            tuple(int(i.strip()) for i in selector[1:-1].split(","))
+            if selector.startswith("{")
+            else (int(selector),)
+        )
+        if len(indices) > max_operations - work:
+            raise conversion_error(
+                "OPERATION_LIMIT", "Index set exceeds the work budget.", location
+            )
+        if any(index >= width for index in indices):
             raise conversion_error("REGISTER_BOUNDS", "Register index is out of bounds.", location)
-        return (start + index,)
+        return tuple(start + index for index in indices)
 
     def append(op, location):
         nonlocal work
@@ -185,6 +203,75 @@ def from_openqasm(
                 "OPERATION_LIMIT", "Expanded gate count exceeds limit.", location
             )
         operations.append(op)
+
+    def classical_guard(source, location):
+        """Parse equality conjunctions without expanding their branch bodies."""
+        position, depth, expect_term, terms = 0, 0, True, 0
+        assignments = {}
+        atom = re.compile(
+            r"([A-Za-z_]\w*(?:\[\s*(?:\d+|\{\s*\d+(?:\s*,\s*\d+)*\s*\})\s*\])?)"
+            r"\s*(?:==\s*(true|false|\d+))?",
+            re.ASCII,
+        )
+        while position < len(source):
+            if source[position].isspace():
+                position += 1
+                continue
+            if expect_term and source[position] == "(":
+                depth += 1
+                if depth > 64:
+                    raise conversion_error(
+                        "EXPRESSION_LIMIT", "Guard grouping exceeds 64 levels.", location
+                    )
+                position += 1
+                continue
+            if not expect_term and source[position] == ")" and depth:
+                depth -= 1
+                position += 1
+                continue
+            if not expect_term and source.startswith("&&", position):
+                expect_term, position = True, position + 2
+                continue
+            match = atom.match(source, position) if expect_term else None
+            if match is None:
+                raise conversion_error(
+                    "UNSUPPORTED_STATEMENT",
+                    "Use bit/register equality guards joined by &&.",
+                    location,
+                )
+            bits = reference(match.group(1), cregs, location)
+            literal = match.group(2)
+            if literal in {"true", "false"} and len(bits) != 1:
+                raise conversion_error(
+                    "CLASSICAL_CONDITION", "Boolean equality requires one bit.", location
+                )
+            if literal is None and len(bits) != 1:
+                raise conversion_error(
+                    "UNSUPPORTED_STATEMENT", "Bare guards require a single bit.", location
+                )
+            value = 1 if literal in {None, "true"} else 0 if literal == "false" else int(literal)
+            try:
+                ClassicalCondition(bits, value)
+            except ValidationError as exc:
+                raise conversion_error("CLASSICAL_CONDITION", str(exc), location) from exc
+            for i, bit in enumerate(bits):
+                wanted = (value >> i) & 1
+                if bit in assignments and assignments[bit] != wanted:
+                    raise conversion_error(
+                        "CLASSICAL_CONDITION", "Contradictory equality terms.", location
+                    )
+                assignments[bit] = wanted
+            terms += 1
+            if terms > min(max_operations, 4096):
+                raise conversion_error(
+                    "EXPRESSION_LIMIT", "Guard exceeds its term budget.", location
+                )
+            position, expect_term = match.end(), False
+        if expect_term or depth:
+            raise conversion_error("SYNTAX", "Incomplete conditional guard.", location)
+        return ClassicalCondition(
+            tuple(assignments), sum(value << i for i, value in enumerate(assignments.values()))
+        )
 
     for index, (kind, statement, line) in enumerate(statements[1:], 1):
         location = f"line {line}"
@@ -226,30 +313,7 @@ def from_openqasm(
                     "Conditional nesting exceeds max_depth or the 128-level traversal ceiling.",
                     location,
                 )
-            match = re.fullmatch(
-                r"([A-Za-z_]\w*(?:\[\s*\d+\s*\])?)\s*(?:==\s*(true|false|\d+))?",
-                guard.group(1),
-                re.ASCII,
-            )
-            if match is None:
-                raise conversion_error(
-                    "UNSUPPORTED_STATEMENT", "Use bit/register equality guards.", location
-                )
-            bits = reference(match.group(1), cregs, location)
-            literal = match.group(2)
-            if literal in {"true", "false"} and len(bits) != 1:
-                raise conversion_error(
-                    "CLASSICAL_CONDITION", "Boolean equality requires one bit.", location
-                )
-            if literal is None and len(bits) != 1:
-                raise conversion_error(
-                    "UNSUPPORTED_STATEMENT", "Bare guards require a single bit.", location
-                )
-            value = 1 if literal in {None, "true"} else 0 if literal == "false" else int(literal)
-            try:
-                condition = ClassicalCondition(bits, value)
-            except ValidationError as exc:
-                raise conversion_error("CLASSICAL_CONDITION", str(exc), location) from exc
+            condition = classical_guard(guard.group(1), location)
             if not nq:
                 raise conversion_error(
                     "NO_QUBITS", "Declare qubits before control blocks.", location
@@ -513,23 +577,21 @@ def to_openqasm(
                         "QASM_EXPORT_LIMIT", "A conditional QASM guard is limited to 64 bits."
                     )
 
-                # Nested guards preserve one-time branch selection, including
-                # writes to condition bits inside either selected body. False
-                # bodies are duplicated syntactically along exclusive paths.
-                def guard(position, prefix, op=op):
-                    bit = op.condition.bits[position]
-                    value = (op.condition.value >> position) & 1
-                    literal = "true" if value else "false"
-                    lines.append(prefix + f"if (c[{bit}] == {literal}) {{")
-                    if position + 1 == len(op.condition.bits):
-                        emit_body(op.blocks[0], prefix + "  ")
-                    else:
-                        guard(position + 1, prefix + "  ")
-                    lines.append(prefix + "} else {")
-                    emit_body(op.blocks[1], prefix + "  ")
-                    lines.append(prefix + "}")
-
-                guard(0, indent)
+                # Evaluate the full condition once. Each selected body is
+                # emitted once even when it writes to its own selector bits.
+                bits, value = op.condition.bits, op.condition.value
+                if len(bits) == 1:
+                    guard = f"c[{bits[0]}] == {'true' if value else 'false'}"
+                elif bits == tuple(range(circuit.num_clbits)):
+                    guard = f"c == {value}"
+                else:
+                    selector = "c[{" + ", ".join(str(bit) for bit in bits) + "}]"
+                    guard = f"{selector} == {value}"
+                lines.append(indent + f"if ({guard}) {{")
+                emit_body(op.blocks[0], indent + "  ")
+                lines.append(indent + "} else {")
+                emit_body(op.blocks[1], indent + "  ")
+                lines.append(indent + "}")
             elif op.name == "measure":
                 q, c = op.qubits[0], op.clbits[0]
                 lines.append(

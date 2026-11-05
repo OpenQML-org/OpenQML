@@ -95,6 +95,60 @@ def test_nested_bare_bit_empty_else_phase_only_and_later_global_wires():
         assert all(b.num_qubits == 2 and b.num_clbits == 2 for b in op.blocks)
 
 
+def test_compact_guards_preserve_sparse_bit_order_and_atomic_writes_with_native_parser():
+    from openqml.adapters.openqasm import from_openqasm, to_openqasm
+
+    circuit = (
+        Circuit(3)
+        .h(0)
+        .h(1)
+        .measure(0, 2)
+        .measure(1, 0)
+        .if_else(
+            ClassicalCondition((2, 0), 2),
+            Circuit(3).x(0).measure(0, 2).y(2),
+            Circuit(3).h(2),
+        )
+    )
+    text = to_openqasm(circuit)
+    assert "c[{2, 0}] == 2" in text
+    assert text.count("h q[2]") == 1
+    np.testing.assert_allclose(density_matrix(from_openqasm(text)), density_matrix(circuit))
+    qasm3 = pytest.importorskip("qiskit.qasm3")
+    from openqml.adapters.qiskit import from_qiskit
+
+    np.testing.assert_allclose(
+        density_matrix(from_qiskit(qasm3.loads(text))), density_matrix(circuit), atol=2e-14
+    )
+
+
+@pytest.mark.parametrize(
+    "guard,code",
+    [
+        ("(c == true) && (c == false)", "CLASSICAL_CONDITION"),
+        ("c || c", "UNSUPPORTED_STATEMENT"),
+        ("c &&", "SYNTAX"),
+        ("(c && c", "SYNTAX"),
+        ("c) && c", "UNSUPPORTED_STATEMENT"),
+    ],
+)
+def test_composite_guard_rejects_conflicts_and_malformed_grouping(guard, code):
+    from openqml.adapters.openqasm import from_openqasm
+
+    with pytest.raises(ConversionError, match=code):
+        from_openqasm(f"OPENQASM 3; qubit q; bit c; if ({guard}) {{ x q; }}")
+
+
+def test_consistent_nested_guard_terms_merge_before_branch_import():
+    from openqml.adapters.openqasm import from_openqasm
+
+    ir = from_openqasm(
+        "OPENQASM 3; qubit q; bit[3] c; "
+        "if (((c[2] == false) && (c[0] == true)) && c[0] == true) { x q; }"
+    )
+    assert ir.operations[0].condition == ClassicalCondition((2, 0), 2)
+
+
 @pytest.mark.parametrize(
     "tail,code",
     [

@@ -33,6 +33,8 @@ EXPORTS = {
     "walk_forward": (".research", "walk_forward"),
     "allocate": (".api", "allocate"),
     "price": (".api", "price"),
+    "RiskBudgetResult": (".budget", "RiskBudgetResult"),
+    "risk_budget_projection": (".budget", "risk_budget_projection"),
 }
 
 PUBLIC = [
@@ -68,6 +70,8 @@ PUBLIC = [
     "WalkForwardMetrics",
     "WalkForwardResult",
     "walk_forward",
+    "RiskBudgetResult",
+    "risk_budget_projection",
 ]
 
 MODULES = {
@@ -81,6 +85,7 @@ MODULES = {
     "trading": ".trading",
     "pricing": ".pricing",
     "research": ".research",
+    "budget": ".budget",
 }
 
 MODULES["api"] = ".api"

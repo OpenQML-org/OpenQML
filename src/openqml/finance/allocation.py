@@ -79,7 +79,11 @@ class AllocationPlan:
             batch_size=b,
             primal_workspace_bytes=16 * elements,
             arithmetic_upper_estimate=work,
-            solver="factor_PCG; no_dense_asset_KKT",
+            solver="diagonal"
+            if r == 0
+            else "factor_Woodbury_refinement"
+            if r <= 64 and 4 * r <= n
+            else "factor_PCG; no_dense_asset_KKT",
             derivative="implicit_on_fixed_active_face",
             excludes="autodiff_tapes_allocator_and_framework_reserves",
         )

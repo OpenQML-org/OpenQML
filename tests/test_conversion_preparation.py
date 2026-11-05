@@ -146,13 +146,15 @@ def test_sdk_synthesis_result_is_rechecked_for_expansion_and_phase():
         phase_plan.export()
 
 
-def test_qasm_statement_budget_predicts_repeated_false_branches_before_emission(monkeypatch):
+def test_qasm_statement_budget_predicts_compact_atomic_branches_before_emission(monkeypatch):
     reject_sdks(monkeypatch)
     leaf = Circuit(1).ry(Parameter("theta"), 0).with_global_phase(0.2)
     nested = Circuit(1).if_else(ClassicalCondition((0, 1, 2), 5), Circuit(1).x(0), leaf)
     circuit = Circuit(1).if_else(ClassicalCondition((0, 1), 1), nested, nested)
     text = to_openqasm(circuit)
     lines = len(text.splitlines())
+    assert text.count("gphase(0.2)") == 2
+    assert "c[{0, 1}] == 1" in text
     assert lines > sum(1 for _ in circuit.walk_operations())
     assert plan_conversion(circuit, target="openqasm3", max_output_statements=lines).compatible
     limited = plan_conversion(circuit, target="openqasm3", max_output_statements=lines - 1)

@@ -21,6 +21,7 @@ def from_qiskit(
     max_depth=64,
     max_matrix_qubits=10,
     _loop_budget=None,
+    _context=None,
 ) -> Circuit:
     from ..ir import integer
     from ._common import check_matrix_width
@@ -40,11 +41,31 @@ def from_qiskit(
         Instruction,
         Measure,
         Reset,
+        SwitchCaseOp,
     )
 
     nested = _loop_budget is not None
     if _loop_budget is None:
         _loop_budget = {"remaining": max_operations}
+    if _context is None:
+        _context = {"angles": {}, "bodies": {}}
+    cache_key = (id(native), expand, max_depth, max_matrix_qubits)
+    cached = _context["bodies"].get(cache_key)
+    if cached is not None and cached[0] is native:
+        _, result, cost, loop_cost = cached
+        if cost > max_operations or loop_cost > _loop_budget["remaining"]:
+            raise conversion_error("EXPANSION_LIMIT", "Cached body exceeds the expansion budget.")
+        _loop_budget["remaining"] -= loop_cost
+        return result
+    loop_start = _loop_budget["remaining"]
+
+    def angle(value, location):
+        key = id(value)
+        cached = _context["angles"].get(key)
+        if cached is None or cached[0] is not value:
+            cached = (value, _angle(value, location))
+            _context["angles"][key] = cached
+        return cached[1]
 
     standard_classes = {
         getattr(library, name)
@@ -106,7 +127,7 @@ def from_qiskit(
         operations.append(operation)
         used += cost
 
-    phase = _angle(native.global_phase, "global_phase")
+    phase = angle(native.global_phase, "global_phase")
     from ..ir import GATES
 
     for index, item in enumerate(native.data):
@@ -116,6 +137,26 @@ def from_qiskit(
                 "CLASSICAL_CONTROL", "break/continue cannot be statically unrolled.", location
             )
         name = {"i": "id", "u1": "p", "u2": "u", "u3": "u", "cu1": "cp"}.get(op.name, op.name)
+        if isinstance(op, SwitchCaseOp):
+            from ._qiskit_switch import lower_switch
+
+            lowered = lower_switch(
+                op,
+                native,
+                item,
+                width=width,
+                location=location,
+                expand=expand,
+                max_operations=max_operations - used,
+                max_depth=max_depth,
+                max_matrix_qubits=max_matrix_qubits,
+                loop_budget=_loop_budget,
+                context=_context,
+            )
+            for operation in lowered.operations:
+                append(operation, location)
+            phase += lowered.global_phase
+            continue
         if isinstance(op, IfElseOp):
             if used >= max_operations:
                 raise conversion_error(
@@ -136,6 +177,7 @@ def from_qiskit(
                     max_depth=max_depth - 1,
                     max_matrix_qubits=max_matrix_qubits,
                     _loop_budget=_loop_budget,
+                    _context=_context,
                 )
                 remaining -= sum(1 for _ in child.walk_operations())
                 blocks.append(
@@ -195,6 +237,7 @@ def from_qiskit(
                 max_depth=max_depth - 1,
                 max_matrix_qubits=max_matrix_qubits,
                 _loop_budget=_loop_budget,
+                _context=_context,
             )
             nested_work = before - _loop_budget["remaining"]
             extra = count + (count - 1) * nested_work
@@ -274,7 +317,7 @@ def from_qiskit(
                 if getattr(op, "condition", None) is not None or hasattr(op, "blocks"):
                     raise conversion_error(
                         "CLASSICAL_CONTROL",
-                        "Only equality if/else and finite static for loops lower to IR.",
+                        "Use equality if/else, switch cases or finite static for loops for IR.",
                         location,
                     )
                 if isinstance(op, library.UnitaryGate):
@@ -301,6 +344,7 @@ def from_qiskit(
                         max_depth=max_depth - 1,
                         max_matrix_qubits=max_matrix_qubits,
                         _loop_budget=_loop_budget,
+                        _context=_context,
                     )
                     qmap = tuple(native.find_bit(q).index for q in item.qubits)
                     cmap = tuple(native.find_bit(c).index for c in item.clbits)
@@ -345,7 +389,7 @@ def from_qiskit(
                 )
                 continue
         try:
-            params = tuple(_angle(p, location) for p in op.params)
+            params = tuple(angle(p, location) for p in op.params)
             if op.name == "u2":
                 from math import pi
 
@@ -369,7 +413,9 @@ def from_qiskit(
             )
     if diagnostics:
         raise ConversionError(diagnostics)
-    return Circuit(width, tuple(operations), native.num_clbits, phase)
+    result = Circuit(width, tuple(operations), native.num_clbits, phase)
+    _context["bodies"][cache_key] = (native, result, used, loop_start - _loop_budget["remaining"])
+    return result
 
 
 def to_qiskit(circuit: Circuit, bindings=None, *, _symbols=None):
@@ -382,21 +428,30 @@ def to_qiskit(circuit: Circuit, bindings=None, *, _symbols=None):
         {name: Parameter(name) for name in circuit.parameters} if _symbols is None else _symbols
     )
 
+    angle_cache = {}
+
     def angle(value):
-        if value.op is None:
-            return value.constant + sum(c * symbols[name] for name, c in value.terms)
-        values = [angle(v) for v in value.args]
-        if value.op == "add":
-            return values[0] + values[1]
-        if value.op == "mul":
-            return values[0] * values[1]
-        if value.op == "div":
-            return values[0] / values[1]
-        if value.op == "pow":
-            return values[0] ** values[1]
-        if value.op == "sqrt":
-            return values[0] ** 0.5
-        return getattr(values[0], value.op)()
+        from ..parameters import _postorder
+
+        for node in _postorder((value,), angle_cache):
+            if node.op is None:
+                converted = node.constant + sum(c * symbols[name] for name, c in node.terms)
+            else:
+                args = [angle_cache[id(v)] for v in node.args]
+                if node.op == "add":
+                    converted = args[0] + args[1]
+                elif node.op == "mul":
+                    converted = args[0] * args[1]
+                elif node.op == "div":
+                    converted = args[0] / args[1]
+                elif node.op == "pow":
+                    converted = args[0] ** args[1]
+                elif node.op == "sqrt":
+                    converted = args[0] ** 0.5
+                else:
+                    converted = getattr(args[0], node.op)()
+            angle_cache[id(node)] = converted
+        return angle_cache[id(value)]
 
     native.global_phase = angle(circuit.global_phase)
     for op in circuit.operations:
@@ -492,7 +547,7 @@ def _condition(value, native, location):
 
 def static_loop_notes(native):
     """Describe successful static control lowering without retaining SDK objects."""
-    from qiskit.circuit import ForLoopOp
+    from qiskit.circuit import ForLoopOp, SwitchCaseOp
 
     from ..errors import Diagnostic
 
@@ -514,6 +569,15 @@ def static_loop_notes(native):
                 )
                 if len(op.params[0]) == 0:
                     continue
+            if isinstance(op, SwitchCaseOp):
+                notes.append(
+                    Diagnostic(
+                        "SWITCH_CASE_LOWERED",
+                        "Switch selection is preserved by atomic nested equality guards.",
+                        path,
+                        severity="info",
+                    )
+                )
             for i, block in enumerate(getattr(op, "blocks", ())):
                 stack.append((block, path + f".blocks[{i}]."))
     return tuple(notes)

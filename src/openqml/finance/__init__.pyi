@@ -71,6 +71,7 @@ __all__: list[str]
 
 from . import allocation as allocation
 from . import api as api
+from . import budget as budget
 from . import models as models
 from . import pricing as pricing
 from . import projection as projection
@@ -79,6 +80,8 @@ from . import research as research
 from . import risk as risk
 from . import trading as trading
 from . import validation as validation
+from .budget import RiskBudgetResult as RiskBudgetResult
+from .budget import risk_budget_projection as risk_budget_projection
 from .research import WalkForwardMetrics as WalkForwardMetrics
 from .research import WalkForwardResult as WalkForwardResult
 from .research import walk_forward as walk_forward
