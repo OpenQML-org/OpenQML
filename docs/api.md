@@ -80,7 +80,8 @@ NPZ format. Loading uses no pickle object deserialization.
 `max_bytes` bounds the uncompressed archive size on load (256 MiB by default).
 Loading checks unique NPZ member names, bounded NPY headers, object-free dtypes
 and declared tensor sizes before constructing the model or allocating tensor
-payloads. JSON metadata rejects duplicate fields and oversized input.
+payloads. Forecast configuration must match the admitted saved architecture
+before native reconstruction; depth admission precedes operator expansion. JSON metadata rejects duplicate fields and oversized input.
 The training framework is retained; device and execution backend can be selected
 again. Runtime/provider objects and credentials are not serialized. Custom
 optimizers and distributed meshes should use their native checkpoint interfaces.

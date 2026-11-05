@@ -116,6 +116,52 @@ def save_model(model, path):
     return path
 
 
+def _check_forecast_config(config, architecture):
+    """Validate reconstructed forecast dimensions before native allocation."""
+    if config["task"] != "forecast":
+        return
+    from .architecture import QuantumCellSpec
+    from .finance.models import MarketForecastPlan
+
+    qubits = integer(config["num_qubits"], "num_qubits", 2)
+    plan = MarketForecastPlan(
+        config["input_features"],
+        config["output_features"],
+        hidden_features=config["hidden_features"],
+        depth=config["depth"],
+        memory_qubits=qubits - 1,
+        environment_qubits=1,
+        quantum_depth=config["quantum_depth"],
+    )
+    dimensions = (
+        plan.input_features,
+        plan.num_assets * len(plan.quantiles),
+        plan.hidden_features,
+        plan.depth,
+    )
+    saved = (
+        architecture.input_features,
+        architecture.output_features,
+        architecture.hidden_features,
+        architecture.depth,
+    )
+    cells = (
+        (architecture.quantum,)
+        if isinstance(architecture.quantum, QuantumCellSpec)
+        else architecture.quantum
+    )
+    if dimensions != saved or any(
+        cell.kind != "memory"
+        or cell.num_qubits != qubits
+        or cell.memory_qubits != plan.memory_qubits
+        or cell.depth != plan.quantum_depth
+        for cell in cells
+    ):
+        raise ValidationError("Forecast configuration differs from the saved architecture.")
+    if plan.architecture().fingerprint != architecture.fingerprint:
+        raise ValidationError("Forecast configuration differs from the saved architecture.")
+
+
 def load_model(cls, path, *, device, backend, max_bytes):
     maximum = integer(max_bytes, "max_bytes", 1)
     try:
@@ -143,6 +189,7 @@ def load_model(cls, path, *, device, backend, max_bytes):
             architecture = HybridArchitecture.from_dict(specification)
             if 4 * sum(np.prod(p.shape, dtype=object) for p in architecture.parameters) > maximum:
                 raise ResourceError("Model parameters exceed the checkpoint size budget.")
+            _check_forecast_config(config, architecture)
             micro = integer(metadata["microbatch_size"], "microbatch_size", 1)
             rng = np.random.default_rng()
             rng.bit_generator.state = metadata["shuffle_rng"]
