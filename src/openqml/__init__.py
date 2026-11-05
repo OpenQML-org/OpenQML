@@ -5,7 +5,7 @@ from ._exports import MODULES as _MODULES
 from ._exports import PUBLIC as _PUBLIC
 from ._lazy import resolve as _resolve
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"
 __all__ = _PUBLIC
 
 
