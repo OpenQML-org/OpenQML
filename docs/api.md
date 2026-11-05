@@ -150,3 +150,17 @@ validation set and purges its overlapping training labels. `fit_options` and
 `plan.iter_exports(rows,max_bindings=1024)` streams checked artifacts;
 `plan.export_many(rows,...)` returns a tuple. Compatible symbolic targets reuse
 prepared topology. See [interoperability](interoperability.md).
+
+## Tensor-network execution
+
+`TensorNetworkPlan(...,optimizer="portfolio",reuse_intermediates=True)` selects
+a deterministic, memory-admitted tree and reuses compatible subtrees across
+readouts and exact slices. `search_trials`, `max_work`, `max_slices` and
+`max_flops` bound planning and execution. The default `optimizer="greedy"`
+provides the lower-planning-cost path.
+
+`plan.evaluate(bindings,backend="numpy"|"torch"|"jax",return_report=True)`
+returns values plus forward contraction, cache and slice counters. Native
+tensor-network architecture models enable portfolio planning and subtree reuse
+automatically. See [tensor networks](tensor-networks.md) for memory accounting,
+compiled kernels and rematerialization.

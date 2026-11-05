@@ -59,7 +59,7 @@ class HybridNetwork:
             backend=backend,
             max_memory_mb=self.architecture.max_memory_mb,
             execution_method=self.architecture.native_execution if backend == "jax" else "auto",
-            tensor_options={"reuse_intermediates": True}
+            tensor_options={"reuse_intermediates": True, "optimizer": "portfolio"}
             if backend == "jax" and self.architecture.native_execution == "tensor-network"
             else None,
         )

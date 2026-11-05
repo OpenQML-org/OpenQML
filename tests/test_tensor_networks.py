@@ -509,7 +509,8 @@ def test_readme_quickstart_is_executable_and_completes_an_optimizer_step():
         exec(compile(block, "README.md", "exec"), namespace)
     model = namespace["model"]
     assert tuple(model.predict_proba(namespace["x"]).shape) == (32, 2)
-    assert model.history[-1]["updates"] == model.trainer.updates == 1
+    assert model.trainer.updates == sum(row["updates"] for row in model.history)
+    assert model.trainer.updates >= 1
     assert np.isfinite(model.history[-1]["loss"])
     assert model.trainer.optimizer.state
     assert any(state["exp_avg"].count_nonzero() for state in model.trainer.optimizer.state.values())

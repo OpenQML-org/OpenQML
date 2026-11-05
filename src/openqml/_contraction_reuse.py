@@ -6,20 +6,11 @@ from collections import OrderedDict
 
 class ContractionReuse:
     def __init__(self, budget):
-        # Half for symbolic interning, half for live tensor references. Neither
-        # bindings nor tensors survive a forward; autodiff adds shared adjoints.
-        self.slots = budget // 1024
-        self.capacity = budget // 2
-        self.nodes, self.values, self.bytes = {}, OrderedDict(), 0
-
-    def node(self, key):
-        if key in self.nodes:
-            return self.nodes[key]
-        if len(self.nodes) >= self.slots:
-            return None
-        index = len(self.nodes)
-        self.nodes[key] = index
-        return index
+        # Symbolic identities belong to the compiled plan. This budget covers
+        # numerical references and their keys only, with explicit entry overhead.
+        self.capacity = budget
+        self.values, self.bytes = OrderedDict(), 0
+        self.peak_bytes = 0
 
     def get(self, key):
         if key is None or key not in self.values:
@@ -40,3 +31,4 @@ class ContractionReuse:
             self.bytes -= old_size
         self.values[key] = (value, size)
         self.bytes += size
+        self.peak_bytes = max(self.peak_bytes, self.bytes)
