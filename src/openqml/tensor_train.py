@@ -278,14 +278,20 @@ class TensorTrainMatrix:
         tolerance = None if relative_error is None else real(relative_error)
         if tolerance is not None and not 0 <= tolerance <= 1:
             raise ValidationError("relative_error must be in [0,1].")
-        norm = float(np.linalg.norm(value.astype(float)))
+        from ._norms import vector_norm
+
+        value = value.astype(float)
+        scale = float(np.max(np.abs(value))) or 1.0
+        value = value / scale
+        unit_norm = float(vector_norm(value, np, "numpy"))
+        norm = unit_norm * scale
         matrix = np.zeros((math.prod(outs), math.prod(ins)))
         matrix[:out_features, :in_features] = value
         d = len(ins)
         axes = tuple(j for i in range(d) for j in (d + i, i))
         tail = matrix.reshape(outs + ins).transpose(axes)
         cores, ranks, error_squared, rank = [], [], 0.0, 1
-        allowance = 0.0 if tolerance is None else (tolerance * norm) ** 2 / max(1, d - 1)
+        allowance = 0.0 if tolerance is None else (tolerance * unit_norm) ** 2 / max(1, d - 1)
         for k, (i, o) in enumerate(zip(ins[:-1], outs[:-1], strict=True)):
             remaining = math.prod(ins[k + 1 :]) * math.prod(outs[k + 1 :])
             u, s, vh = np.linalg.svd(tail.reshape(rank * i * o, remaining), full_matrices=False)
@@ -300,9 +306,10 @@ class TensorTrainMatrix:
             tail = s[:selected, None] * vh[:selected]
             ranks.append(selected)
             rank = selected
-        cores.append(tail.reshape(rank, ins[-1], outs[-1], 1))
-        bound = math.sqrt(error_squared)
-        if tolerance is not None and bound > tolerance * norm:
+        cores.append(tail.reshape(rank, ins[-1], outs[-1], 1) * scale)
+        unit_bound = math.sqrt(error_squared)
+        bound = unit_bound * scale
+        if tolerance is not None and unit_bound > tolerance * unit_norm:
             raise ResourceError("The rank cap cannot satisfy the requested relative_error.")
         plan = TensorTrainPlan(ins, outs, tuple(ranks), in_features, out_features, budget, max_work)
         return cls(plan, tuple(cores), bound, norm)

@@ -2,6 +2,7 @@
 
 from typing import NamedTuple
 
+from ._norms import global_norm, stop
 from .errors import ValidationError
 from .ir import integer
 from .parameters import real
@@ -29,6 +30,9 @@ def solve_metric(matvec, gradient, ops, *, damping=1e-3, tolerance=1e-6, max_ite
     if not gradient:
         raise ValidationError("Native metric solve requires a nonempty parameter gradient.")
     keys = tuple(gradient)
+    scale = stop(global_norm(gradient.values(), ops.xp, ops.backend), ops.backend)
+    scale = ops.xp.where((scale > 0) & ops.xp.isfinite(scale), scale, 1)
+    gradient = {key: value / scale for key, value in gradient.items()}
 
     def dot(a, b):
         return sum((a[k] * b[k]).sum() for k in keys)
@@ -41,8 +45,8 @@ def solve_metric(matvec, gradient, ops, *, damping=1e-3, tolerance=1e-6, max_ite
     residual = dict(gradient)
     search = dict(residual)
     squared = dot(residual, residual)
-    threshold = tolerance * ops.xp.maximum(ops.xp.sqrt(squared), ops.array(1, real_value=True))
-    active = squared > threshold * threshold
+    threshold = ops.xp.maximum(tolerance * ops.xp.sqrt(squared), tolerance / scale)
+    active = ops.xp.sqrt(squared) > threshold
     iterations = ops.array(0, real_value=True)
 
     def iteration(_, state):
@@ -58,7 +62,7 @@ def solve_metric(matvec, gradient, ops, *, damping=1e-3, tolerance=1e-6, max_ite
         beta = ops.xp.where(valid, updated / ops.xp.where(squared > 0, squared, 1.0), 0.0)
         search = {k: residual[k] + beta * search[k] for k in keys}
         iterations = iterations + active
-        active = valid & (updated > threshold * threshold)
+        active = valid & (ops.xp.sqrt(updated) > threshold)
         squared = updated
         return direction, residual, search, squared, active, iterations
 
@@ -73,10 +77,11 @@ def solve_metric(matvec, gradient, ops, *, damping=1e-3, tolerance=1e-6, max_ite
     direction, _, _, _, _, iterations = state
     product = apply(direction)
     error = {k: gradient[k] - product[k] for k in keys}
-    norm = ops.xp.sqrt(dot(error, error))
+    relative_norm = global_norm(error.values(), ops.xp, ops.backend)
+    norm = relative_norm * scale
     return NativeNaturalGradientResult(
-        direction,
-        ops.xp.isfinite(norm) & (norm <= threshold),
+        {key: value * scale for key, value in direction.items()},
+        ops.xp.isfinite(norm) & (relative_norm <= threshold),
         iterations.to(dtype=ops.xp.int64)
         if ops.backend == "torch"
         else iterations.astype(ops.xp.int32),

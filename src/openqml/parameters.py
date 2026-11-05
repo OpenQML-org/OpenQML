@@ -259,6 +259,11 @@ class Expression:
                 raise ValidationError("A nonlinear node cannot also contain affine terms.")
             object.__setattr__(self, "args", tuple(expression(v) for v in self.args))
             object.__setattr__(self, "_parameter_free", all(_constant(v) for v in self.args))
+            object.__setattr__(
+                self,
+                "_raw_constants",
+                self._parameter_free or any(v._raw_constants for v in self.args),
+            )
             return
         if self.args:
             raise ValidationError("Affine expressions cannot contain graph arguments.")
@@ -271,6 +276,7 @@ class Expression:
             self, "terms", tuple((k, real(v)) for k, v in sorted(combined.items()) if v)
         )
         object.__setattr__(self, "_parameter_free", not self.terms)
+        object.__setattr__(self, "_raw_constants", False)
 
     def __eq__(self, other):
         if other.__class__ is not self.__class__:

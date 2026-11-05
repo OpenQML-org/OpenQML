@@ -10,7 +10,20 @@ from .errors import ResourceError, ValidationError
 
 
 def check_npz_payload(payload, maximum):
-    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+    from .ir import integer
+
+    maximum = integer(maximum, "max_bytes", 1)
+    try:
+        _check_npz_payload(payload, maximum)
+    except (ValidationError, ResourceError):
+        raise
+    except (zipfile.BadZipFile, EOFError, ValueError, RuntimeError, OverflowError) as exc:
+        raise ValidationError("Malformed training tensor archive.") from exc
+
+
+def _check_npz_payload(payload, maximum):
+    source = io.BytesIO(payload) if isinstance(payload, (bytes, bytearray)) else payload
+    with zipfile.ZipFile(source) as archive:
         members = archive.infolist()
         if len({item.filename for item in members}) != len(members):
             raise ValidationError("Training tensor archive contains duplicate members.")
@@ -42,7 +55,7 @@ def check_npz_payload(payload, maximum):
                 if dtype.hasobject:
                     raise ValidationError("Training tensors must be pickle-free numeric arrays.")
                 required = math.prod(shape) * dtype.itemsize
-                if required > maximum:
+                if required > maximum or any(v > np.iinfo(np.intp).max for v in shape):
                     raise ResourceError("Declared tensor shape exceeds max_bytes.")
                 if required != item.file_size - (8 + length_size + length):
                     raise ValidationError("Tensor shape and stored payload size differ.")

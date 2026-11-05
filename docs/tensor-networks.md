@@ -245,3 +245,9 @@ compact quantum representation independent of input qubit count.
   33(5), 2295–2317 (2011)](https://epubs.siam.org/doi/10.1137/090752286): TT-SVD
   factorization and truncation error control.
 
+
+TT-SVD imports normalize dense weights before singular-value decomposition and
+rank selection, then restore the source scale in the final core. Relative-error
+admission uses normalized singular-value tails, and reported Frobenius norms and
+absolute error bounds retain source units. This supports very large and very
+small finite matrices without overflow or underflow in squared error budgets.

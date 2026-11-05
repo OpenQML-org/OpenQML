@@ -219,7 +219,7 @@ def load_model(cls, path, *, device, backend, max_bytes):
                         state = _restore_tree(metadata["state_tree"], arrays)
                     model.trainer.load_state_dict(state)
                 else:
-                    model.trainer.load(payload)
+                    model.trainer.load(payload, max_bytes=maximum)
             model._rng, model.history = rng, history
             for name in ("best_epoch", "stopped_epoch"):
                 value = metadata.get(name)

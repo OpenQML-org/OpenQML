@@ -107,3 +107,10 @@ a binding. `mode="native"` executes supported native artifacts, and
 `plan.certify()` applies bounded exact algebraic checks. See
 [semantic kernels](semantic-kernels.md) and [execution](training-and-execution.md)
 for the supported verification domains and resource controls.
+
+Directly constructed parameter-free expression nodes are evaluated at conversion
+boundaries, including constant children of symbolic expressions. Immutable node
+metadata identifies these subgraphs without rescanning every expression DAG.
+The prepared circuit retains source parameter names and global phase, while the
+original input circuit remains unchanged. Direct SDK exporters use the same
+constant-folding boundary as conversion plans and compatibility diagnostics.

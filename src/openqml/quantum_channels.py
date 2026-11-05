@@ -216,7 +216,10 @@ class QuantumChannelPlan:
             self.environment_qubits,
         ):
             raise ValidationError("Channel weights or controls have an invalid shape.")
-        self._admit(math.prod(np.broadcast_shapes(controls.shape[:-1], rho.shape[:-2])))
+        shape = np.shape(rho) if not hasattr(rho, "shape") else rho.shape
+        if shape[-2:] != (1 << self.memory_qubits,) * 2:
+            raise ValidationError("Density shape must match the memory Hilbert space.")
+        self._admit(math.prod(np.broadcast_shapes(controls.shape[:-1], shape[:-2])))
         rho = (
             _validate_density(rho, 1 << self.memory_qubits, ops)
             if validate_state

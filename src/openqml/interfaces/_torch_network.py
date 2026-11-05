@@ -7,6 +7,7 @@ from pathlib import Path
 import torch
 from torch import nn
 
+from .._norms import global_norm
 from ..architecture import HybridArchitecture
 from ..architecture_runtime import reserve_native_cost
 from ..backends import get_backend
@@ -380,9 +381,9 @@ class NetworkTrainer(HybridTrainer):
             gradient = self.network.values[descriptor.name].grad
             if gradient is not None:
                 key = "quantum_grad_norm" if descriptor.role == "quantum" else "classical_grad_norm"
-                groups[key].append(gradient.detach().square().sum())
+                groups[key].append(gradient.detach())
         return {
-            name: 0.0 if not values else float(torch.sqrt(sum(values)).cpu())
+            name: 0.0 if not values else float(global_norm(values, torch, "torch").cpu())
             for name, values in groups.items()
         }
 

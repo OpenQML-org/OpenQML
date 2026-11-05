@@ -197,6 +197,28 @@ atom before summing the interior. Native
 gradients remain piecewise; ties can select different valid subgradients across
 backends. Selection uses the native array backend's partition or top-k kernel.
 
+## Numerical range and projection admission
+
+Native financial L2 norms use scaled sum-of-squares. Factor-space PCG normalizes
+each right-hand-side column and restores its scale after solving; implicit
+Torch/JAX derivatives continue to use the original linear operator.
+On Torch runtimes with `while_loop`, compiled numerical iterations retain a
+structured loop instead of expanding the iteration budget into the graph.
+A separate compiled implicit reverse boundary supports `torch.compile`; eager
+solves retain native JVPs and higher derivatives. Array operands stay native and
+Python scalar configuration is validated without NumPy host inspection. Older
+Torch runtimes retain the eager iteration path.
+
+The capped cost-aware proximal map selects a capacity-weighted score quantile
+`p`. For an interior budget, with `C=max(caps)` and `P=max(penalty)`, the equality
+multiplier lies in `[p-C-P,p+P]`. Scores relative to `p` can therefore be clipped
+to `[-C-2P,C+2P]` without changing the optimum. The resulting native sorted
+breakpoints retain small financing quantities even when input scores have very
+large common offsets. Work remains `O(N log N)` with linear temporary storage.
+For a zero reference portfolio, common linear fees are constant under the funding
+equality and are removed before score construction. A final conservation check
+rejects unresolved financing rather than returning weights outside the budget.
+
 ## Differentiable decision risk budgets
 
 `risk_budget_projection` takes a long-only proposal whose asset weights sum to

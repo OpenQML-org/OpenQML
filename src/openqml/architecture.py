@@ -1067,10 +1067,12 @@ class HybridArchitecture:
         return schedule_network(self, **options)
 
     def gradient_metrics(self, gradients, *, backend="jax"):
+        from ._norms import global_norm
+
         ops = _TensorOps(backend, gradients["stem_weight"])
         values = {"quantum_grad_norm": [], "classical_grad_norm": []}
         for descriptor in self.parameters:
             key = "quantum_grad_norm" if descriptor.role == "quantum" else "classical_grad_norm"
             value = gradients[descriptor.name]
-            values[key].append(ops.xp.sum(value**2))
-        return {key: ops.xp.sqrt(sum(rows)) for key, rows in values.items()}
+            values[key].append(value)
+        return {key: global_norm(rows, ops.xp, backend) for key, rows in values.items()}

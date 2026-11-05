@@ -2,10 +2,6 @@
 
 import numpy as np
 
-from ._array import Ops
-
-_TORCH_SOLVE = None
-
 
 def matmat(diagonal, factors, mass, value, ops):
     projected = ops.xp.einsum("...rn,...nc->...rc", factors, value)
@@ -47,6 +43,9 @@ def _solve(diagonal, factors, mass, rhs, iterations, tolerance, ops):
 
 def _pcg(diagonal, factors, mass, rhs, iterations, tolerance, ops):
     xp = ops.xp
+    rhs_scale = ops.stop(ops.max(xp.abs(rhs), axis=-2, keepdims=True))
+    rhs_scale = xp.where(rhs_scale > 0, rhs_scale, 1)
+    rhs = rhs / rhs_scale
     eps = np.finfo(np.float64 if "64" in str(rhs.dtype) else np.float32).eps
     tolerance = max(tolerance, 8 * eps)
     weighted = factors * xp.sqrt(xp.abs(mass))[..., :, None]
@@ -77,7 +76,22 @@ def _pcg(diagonal, factors, mass, rhs, iterations, tolerance, ops):
             index, state = carry
             return (index < iterations) & xp.any(ops.norm(state[1], axis=-2) > tolerance * scale)
 
-        return jax.lax.while_loop(condition, lambda c: (c[0] + 1, step(c[1])), (0, initial))[1][0]
+        result = jax.lax.while_loop(condition, lambda c: (c[0] + 1, step(c[1])), (0, initial))[1][0]
+        return result * rhs_scale
+    if (
+        ops.name == "torch"
+        and hasattr(xp, "while_loop")
+        and getattr(xp.compiler, "is_compiling", lambda: False)()
+    ):
+
+        def condition(index, x, residual, direction, product):
+            return (index < iterations) & xp.any(ops.norm(residual, axis=-2) > tolerance * scale)
+
+        def advance(index, x, residual, direction, product):
+            return (index + 1, *step((x, residual, direction, product)))
+
+        counter = xp.zeros((), dtype=xp.int64, device=rhs.device)
+        return xp.while_loop(condition, advance, (counter, *initial))[1] * rhs_scale
     state = initial
     for i in range(iterations):
         state = step(state)
@@ -86,76 +100,14 @@ def _pcg(diagonal, factors, mass, rhs, iterations, tolerance, ops):
         ):
             if bool(xp.all(ops.norm(state[1], axis=-2) <= tolerance * scale)):
                 break
-    return state[0]
-
-
-def _torch_class():
-    global _TORCH_SOLVE
-    if _TORCH_SOLVE is not None:
-        return _TORCH_SOLVE
-    import torch
-
-    class ImplicitFactorSolve(torch.autograd.Function):
-        @staticmethod
-        def forward(diagonal, factors, mass, rhs, iterations, tolerance):
-            return _solve(diagonal, factors, mass, rhs, iterations, tolerance, Ops(diagonal))
-
-        @staticmethod
-        def setup_context(ctx, inputs, output):
-            diagonal, factors, mass, _, ctx.iterations, ctx.tolerance = inputs
-            ctx.save_for_backward(diagonal, factors, mass, output)
-            ctx.save_for_forward(diagonal, factors, mass, output)
-
-        @staticmethod
-        def backward(ctx, gradient):
-            diagonal, factors, mass, solution = ctx.saved_tensors
-            ops = Ops(diagonal)
-            adjoint = linear_solve(
-                diagonal, factors, mass, gradient, ctx.iterations, ctx.tolerance, ops
-            )
-            left = torch.einsum("...rn,...nc->...rc", factors, adjoint)
-            right = torch.einsum("...rn,...nc->...rc", factors, solution)
-            grad_diagonal = -torch.sum(adjoint * solution, dim=-1)
-            grad_mass = -torch.sum(left * right, dim=-1)
-            grad_factors = -mass[..., :, None] * (
-                torch.einsum("...rc,...nc->...rn", left, solution)
-                + torch.einsum("...rc,...nc->...rn", right, adjoint)
-            )
-            return grad_diagonal, grad_factors, grad_mass, adjoint, None, None
-
-        @staticmethod
-        def jvp(ctx, d_diagonal, d_factors, d_mass, d_rhs, _iterations, _tolerance):
-            diagonal, factors, mass, solution = ctx.saved_tensors
-            d_diagonal = torch.zeros_like(diagonal) if d_diagonal is None else d_diagonal
-            d_factors = torch.zeros_like(factors) if d_factors is None else d_factors
-            d_mass = torch.zeros_like(mass) if d_mass is None else d_mass
-            d_rhs = torch.zeros_like(solution) if d_rhs is None else d_rhs
-            projected = torch.einsum("...rn,...nc->...rc", factors, solution)
-            tangent = d_diagonal[..., :, None] * solution
-            tangent += torch.einsum("...rn,...rc->...nc", d_factors, mass[..., :, None] * projected)
-            tangent += torch.einsum("...rn,...rc->...nc", factors, d_mass[..., :, None] * projected)
-            tangent += torch.einsum(
-                "...rn,...rc->...nc",
-                factors,
-                mass[..., :, None] * torch.einsum("...rn,...nc->...rc", d_factors, solution),
-            )
-            return linear_solve(
-                diagonal,
-                factors,
-                mass,
-                d_rhs - tangent,
-                ctx.iterations,
-                ctx.tolerance,
-                Ops(diagonal),
-            )
-
-    _TORCH_SOLVE = ImplicitFactorSolve
-    return _TORCH_SOLVE
+    return state[0] * rhs_scale
 
 
 def linear_solve(diagonal, factors, mass, rhs, iterations, tolerance, ops):
     if ops.name == "torch":
-        return _torch_class().apply(diagonal, factors, mass, rhs, iterations, tolerance)
+        from ._torch_linear import solve
+
+        return solve(diagonal, factors, mass, rhs, iterations, tolerance)
     if ops.name == "jax":
         import jax
 

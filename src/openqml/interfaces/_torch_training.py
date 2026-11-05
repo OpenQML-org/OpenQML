@@ -7,6 +7,7 @@ from pathlib import Path
 
 import torch
 
+from .._norms import global_norm
 from ..errors import ValidationError
 from ..ir import integer
 from ..parameters import real
@@ -159,9 +160,15 @@ class HybridTrainer:
                     "HybridTrainer requires at least one dense parameter gradient."
                 )
             diagnostics = self.gradient_diagnostics()
-            norm = torch.nn.utils.clip_grad_norm_(
-                self.parameters, float("inf") if self.max_grad_norm is None else self.max_grad_norm
-            )
+            with torch.no_grad():
+                norm = global_norm(gradients, torch, "torch")
+                if self.max_grad_norm is not None:
+                    factor = torch.clamp(self.max_grad_norm / torch.where(norm > 0, norm, 1), max=1)
+                    groups = {}
+                    for gradient in gradients:
+                        groups.setdefault(gradient.dtype, []).append(gradient)
+                    for group in groups.values():
+                        torch._foreach_mul_(group, factor.to(dtype=group[0].real.dtype))
             finite = torch.isfinite(total_loss) & torch.isfinite(norm)
             accepted = finite.to(torch.int32)
             if self.distributed:
