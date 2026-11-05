@@ -317,6 +317,21 @@ class AllocationPlan:
             return jax.lax.while_loop(
                 condition, lambda c: (c[0] + 1, advance(c[1])), (0, initial_state)
             )[1][0]
+        if (
+            ops.name == "torch"
+            and hasattr(xp, "while_loop")
+            and getattr(xp.compiler, "is_compiling", lambda: False)()
+        ):
+
+            def condition(index, old, accelerated, momentum, difference):
+                return (index < self.max_iterations) & xp.any(difference > threshold)
+
+            def body(index, old, accelerated, momentum, difference):
+                return (index + 1, *advance((old, accelerated, momentum, difference)))
+
+            counter = xp.zeros((), dtype=xp.int64, device=linear.device)
+            carried = (counter, initial_state[0], initial_state[1].clone(), *initial_state[2:])
+            return xp.while_loop(condition, body, carried)[1]
         state = initial_state
         for iteration in range(self.max_iterations):
             state = advance(state)

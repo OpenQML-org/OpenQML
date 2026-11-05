@@ -311,3 +311,70 @@ def test_native_jax_checkpoint_admission_precedes_tensor_loading(defect, tmp_pat
     error = oq.ValidationError if defect == "corrupt" else oq.ResourceError
     with pytest.raises(error):
         load_network(object(), path, max_bytes=16 if defect == "size" else 1 << 20)
+
+
+@pytest.mark.parametrize("rank", [3, 6])
+def test_compiled_factor_solves_retain_implicit_backward_and_eager_jvp(rank):
+    torch = pytest.importorskip("torch")
+    if not hasattr(torch, "while_loop"):
+        pytest.skip("Compiled implicit boundaries require structured Torch control flow.")
+    from openqml.finance._array import Ops
+    from openqml.finance._linear import linear_solve
+
+    generator = torch.Generator().manual_seed(31)
+    diagonal = torch.ones(16, requires_grad=True)
+    factors = (torch.randn(rank, 16, generator=generator) * 0.1).requires_grad_()
+    mass = torch.ones(rank, requires_grad=True)
+    rhs = torch.randn(16, 2, generator=generator, requires_grad=True)
+
+    def solve(d, f, p, b):
+        return linear_solve(d, f, p, b, 64, 1e-7, Ops(b))
+
+    compiled = torch.compile(solve, backend="aot_eager", fullgraph=True)
+    inputs = (diagonal, factors, mass, rhs)
+    result, reference = compiled(*inputs), solve(*inputs)
+    torch.testing.assert_close(result, reference, atol=2e-5, rtol=2e-5)
+    received = torch.autograd.grad(result.sum(), inputs)
+    expected = torch.autograd.grad(reference.sum(), inputs)
+    for actual, wanted in zip(received, expected, strict=True):
+        torch.testing.assert_close(actual, wanted, atol=2e-5, rtol=2e-5)
+    _, tangent = torch.func.jvp(
+        lambda b: solve(diagonal.detach(), factors.detach(), mass.detach(), b),
+        (rhs.detach(),),
+        (torch.ones_like(rhs),),
+    )
+    torch.testing.assert_close(
+        tangent,
+        solve(diagonal.detach(), factors.detach(), mass.detach(), torch.ones_like(rhs)),
+        atol=2e-5,
+        rtol=2e-5,
+    )
+
+
+@pytest.mark.parametrize("operation", ["allocation", "projection"])
+def test_compiled_portfolio_layers_accept_scalar_configuration_and_retain_gradients(operation):
+    torch = pytest.importorskip("torch")
+    if not hasattr(torch, "while_loop"):
+        pytest.skip("Compiled implicit boundaries require structured Torch control flow.")
+    from openqml.finance import AllocationPlan, FactorRisk, cost_aware_projection
+
+    plan = AllocationPlan(max_iterations=8, cg_iterations=8)
+    risk = FactorRisk(torch.zeros(4), torch.empty(0, 4), torch.empty(0), torch.full((4,), 0.1))
+
+    def evaluate(mean):
+        return (
+            plan.solve(mean, risk).weights
+            if operation == "allocation"
+            else cost_aware_projection(mean)
+        )
+
+    mean = torch.tensor([0.01, 0.02, 0.03, 0.04], requires_grad=True)
+    result = torch.compile(evaluate, backend="aot_eager", fullgraph=True)(mean)
+    reference = evaluate(mean)
+    torch.testing.assert_close(result, reference)
+    torch.testing.assert_close(
+        torch.autograd.grad(result.square().sum(), mean)[0],
+        torch.autograd.grad(reference.square().sum(), mean)[0],
+        atol=3e-6,
+        rtol=3e-6,
+    )

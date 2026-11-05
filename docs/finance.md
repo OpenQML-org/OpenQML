@@ -202,6 +202,12 @@ backends. Selection uses the native array backend's partition or top-k kernel.
 Native financial L2 norms use scaled sum-of-squares. Factor-space PCG normalizes
 each right-hand-side column and restores its scale after solving; implicit
 Torch/JAX derivatives continue to use the original linear operator.
+On Torch runtimes with `while_loop`, compiled numerical iterations retain a
+structured loop instead of expanding the iteration budget into the graph.
+A separate compiled implicit reverse boundary supports `torch.compile`; eager
+solves retain native JVPs and higher derivatives. Array operands stay native and
+Python scalar configuration is validated without NumPy host inspection. Older
+Torch runtimes retain the eager iteration path.
 
 The capped cost-aware proximal map selects a capacity-weighted score quantile
 `p`. For an interior budget, with `C=max(caps)` and `P=max(penalty)`, the equality

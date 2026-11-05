@@ -15,7 +15,12 @@ class Ops(_Ops):
         values = tuple(v for v in values if v is not None)
         if not values:
             raise ValidationError("Provide a financial array.")
-        native = [v for v in values if type(v).__module__.startswith(("torch", "jax", "jaxlib"))]
+        native = [
+            v
+            for v in values
+            if not isinstance(v, (bool, int, float, complex, list, tuple, np.ndarray, np.generic))
+            and type(v).__module__.startswith(("torch", "jax", "jaxlib"))
+        ]
         frameworks = {"torch" if type(v).__module__.startswith("torch") else "jax" for v in native}
         if len(frameworks) > 1:
             raise ValidationError("Financial tensors must use one framework; convert explicitly.")
@@ -58,12 +63,12 @@ class Ops(_Ops):
                 return self.xp.asarray(
                     value, dtype=bool if boolean else self.like.dtype, device=self.like.sharding
                 )
-        if (
-            self.name == "torch"
-            and isinstance(value, np.ndarray)
-            and (not value.flags.writeable or any(s < 0 for s in value.strides))
-        ):
-            value = value.copy()
+        if self.name == "torch" and isinstance(value, np.ndarray):
+            compiling = (
+                getattr(self.xp.compiler, "is_compiling", None) or self.xp._dynamo.is_compiling
+            )
+            if not compiling() and (not value.flags.writeable or any(s < 0 for s in value.strides)):
+                value = value.copy()
         return super().array(value, boolean=boolean)
 
     def sum(self, value, axis=-1, keepdims=False):
@@ -136,8 +141,10 @@ class Ops(_Ops):
         return self.xp.where(valid, value, float("nan"))
 
     def real(self, value, *, finite=True):
+        if isinstance(value, (bool, complex, str, bytes)):
+            raise ValidationError("Financial arrays must contain real numeric values.")
         dtype = getattr(value, "dtype", None)
-        if dtype is None:
+        if dtype is None and not isinstance(value, (int, float)):
             dtype = np.asarray(value).dtype
         if getattr(dtype, "kind", None) in {"b", "c", "O", "U", "S", "V"} or str(dtype).startswith(
             ("torch.bool", "torch.complex")
