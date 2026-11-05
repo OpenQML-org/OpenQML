@@ -17,14 +17,18 @@ def matmat(diagonal, factors, mass, value, ops):
 def _woodbury(diagonal, factors, mass, rhs, ops):
     """Solve in factor space with finite derivatives at zero scenario mass."""
     inverse = 1 / diagonal
-    scaled = factors * inverse[..., None, :]
-    core = (scaled @ factors.swapaxes(-1, -2)) * mass[..., None, :]
+    # Balance the numerical solve before forming a Gram matrix. Implicit
+    # derivatives still use the original operator with explicit scenario mass.
+    weighted = factors * ops.xp.sqrt(ops.xp.abs(mass))[..., :, None]
+    signs = ops.xp.sign(mass)
+    scaled = weighted * inverse[..., None, :]
+    core = (scaled @ weighted.swapaxes(-1, -2)) * signs[..., None, :]
     core = core + ops.array(np.eye(factors.shape[-2]))
 
     def apply(value):
         direct = inverse[..., :, None] * value
-        dual = ops.xp.linalg.solve(core, factors @ direct)
-        return direct - scaled.swapaxes(-1, -2) @ (mass[..., :, None] * dual)
+        dual = ops.xp.linalg.solve(core, weighted @ direct)
+        return direct - scaled.swapaxes(-1, -2) @ (signs[..., :, None] * dual)
 
     result = apply(rhs)
     # Reuse the small factor system for a residual correction after the
@@ -45,7 +49,10 @@ def _pcg(diagonal, factors, mass, rhs, iterations, tolerance, ops):
     xp = ops.xp
     eps = np.finfo(np.float64 if "64" in str(rhs.dtype) else np.float32).eps
     tolerance = max(tolerance, 8 * eps)
-    preconditioner = diagonal + ops.xp.einsum("...rn,...r->...n", factors * factors, mass)
+    weighted = factors * xp.sqrt(xp.abs(mass))[..., :, None]
+    preconditioner = diagonal + xp.einsum(
+        "...rn,...r->...n", weighted * weighted, xp.sign(mass)
+    )
     zero = xp.zeros_like(rhs)
     z = rhs / preconditioner[..., :, None]
     scale = ops.norm(rhs, axis=-2)

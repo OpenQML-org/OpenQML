@@ -181,7 +181,7 @@ def test_guard_width_and_depth_are_diagnosed_at_the_original_operation():
         decompose(deep, max_depth=0)
 
 
-@pytest.mark.parametrize("option", ["max_operations", "max_depth", "max_output_statements"])
+@pytest.mark.parametrize("option", ["max_operations", "max_depth", "max_output_statements", "max_output_bytes"])
 @pytest.mark.parametrize("value", [True, -1, 1.5])
 def test_invalid_conversion_budgets(option, value):
     with pytest.raises(ValidationError):

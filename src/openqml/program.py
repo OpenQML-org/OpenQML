@@ -175,6 +175,7 @@ class QuantumProgram:
         max_operations=100_000,
         max_depth=64,
         max_output_statements=100_000,
+        max_output_bytes=2_000_000,
     ):
         from .conversion import convert
 
@@ -188,6 +189,7 @@ class QuantumProgram:
             max_operations=max_operations,
             max_depth=max_depth,
             max_output_statements=max_output_statements,
+            max_output_bytes=max_output_bytes,
         )
 
     def run(self, *, shots=1024, seed=None, **options):

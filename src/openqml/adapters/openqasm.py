@@ -10,7 +10,7 @@ from dataclasses import replace
 from .._qasm import clean_source
 from ..errors import ConversionError, ValidationError, conversion_error
 from ..ir import GATES_V3, Circuit, ClassicalCondition, Operation, integer
-from ..parameters import Expression, Parameter, expression, parameter_name
+from ..parameters import Expression, Parameter, _postorder, expression, parameter_name
 from ._common import bound_for_export
 
 
@@ -493,16 +493,129 @@ def from_openqasm(
     return circuit
 
 
-def _format_angle(angle):
-    if angle.op is not None:
-        values = [_format_angle(v) for v in angle.args]
-        if angle.op in {"add", "mul", "div", "pow"}:
-            operator = {"add": "+", "mul": "*", "div": "/", "pow": "**"}[angle.op]
-            return f"({values[0]} {operator} {values[1]})"
-        return f"{angle.op}({values[0]})"
-    parts = [repr(angle.constant)] if angle.constant or not angle.terms else []
-    parts.extend(f"({coefficient!r}*{name})" for name, coefficient in angle.terms)
-    return " + ".join(parts)
+def _format_angle(angle, cache=None):
+    cache = {} if cache is None else cache
+    if id(angle) in cache:
+        return cache[id(angle)][0]
+    for value in _postorder((angle,), cache):
+        children = [cache[id(arg)] for arg in value.args]
+        count = 1 + len(value.terms) + sum(child[1] for child in children)
+        depth = 1 + max((child[2] for child in children), default=-1)
+        if count > 4096 or depth > 64:
+            raise conversion_error(
+                "EXPRESSION_LIMIT", "Angle exceeds the 4096-node/64-level budget."
+            )
+        if value.op is None:
+            parts = [repr(value.constant)] if value.constant or not value.terms else []
+            parts.extend(f"({coefficient!r}*{name})" for name, coefficient in value.terms)
+            text = " + ".join(parts)
+            if len(parts) > 1 or text.startswith("-"):
+                text = "(" + text + ")"
+        elif value.op in {"add", "mul", "div", "pow"}:
+            operator = {"add": "+", "mul": "*", "div": "/", "pow": "**"}[value.op]
+            text = f"({children[0][0]} {operator} {children[1][0]})"
+        else:
+            text = f"{value.op}({children[0][0]})"
+        if len(text) > 16_384:
+            raise conversion_error("EXPRESSION_LIMIT", "Angle expression is too long.")
+        cache[id(value)] = (text, count, depth)
+    result = cache[id(angle)][0]
+    try:
+        pending, nodes = [(ast.parse(result, mode="eval"), 0)], 0
+        while pending:
+            part, depth = pending.pop()
+            nodes += 1
+            if nodes > 4096 or depth > 64:
+                raise conversion_error(
+                    "EXPRESSION_LIMIT", "Angle exceeds the 4096-node/64-level budget."
+                )
+            pending.extend((child, depth + 1) for child in ast.iter_child_nodes(part))
+    except (SyntaxError, RecursionError) as exc:
+        raise conversion_error(
+            "EXPRESSION_LIMIT", "Angle exceeds parser serialization limits."
+        ) from exc
+    return result
+
+
+def _emit_qasm(
+    circuit, version, *, max_output_statements, max_output_bytes, collect=True
+):
+    """Use one bounded emitter for planning and artifact construction."""
+    lines, cache, count, size = [], {}, 0, 0
+
+    def write(line):
+        nonlocal count, size
+        count += 1
+        size += len(line.encode("utf-8")) + 1
+        if count > max_output_statements or size > max_output_bytes:
+            raise conversion_error(
+                "QASM_EXPORT_LIMIT",
+                "OpenQASM exceeds its output statement or byte budget.",
+            )
+        if collect:
+            lines.append(line)
+
+    write(f"OPENQASM {version}.0;")
+    write('include "qelib1.inc";' if version == 2 else 'include "stdgates.inc";')
+    if version == 3:
+        for name in circuit.parameters:
+            write(f"input float[64] {name};")
+    write(f"qreg q[{circuit.num_qubits}];" if version == 2 else f"qubit[{circuit.num_qubits}] q;")
+    if circuit.num_clbits:
+        write(
+            f"creg c[{circuit.num_clbits}];" if version == 2 else f"bit[{circuit.num_clbits}] c;"
+        )
+
+    def emit_body(body, indent=""):
+        if version == 3 and (body.global_phase.parameters or body.global_phase.constant):
+            write(indent + f"gphase({_format_angle(body.global_phase, cache)});")
+        for op in body.operations:
+            if op.name == "if_else":
+                if len(op.condition.bits) > 64:
+                    raise conversion_error(
+                        "QASM_EXPORT_LIMIT", "A conditional QASM guard is limited to 64 bits."
+                    )
+                bits, value = op.condition.bits, op.condition.value
+                if len(bits) == 1:
+                    guard = f"c[{bits[0]}] == {'true' if value else 'false'}"
+                elif len(bits) == circuit.num_clbits and all(
+                    bit == index for index, bit in enumerate(bits)
+                ):
+                    guard = f"c == {value}"
+                else:
+                    selector = "c[{" + ", ".join(str(bit) for bit in bits) + "}]"
+                    guard = f"{selector} == {value}"
+                # Each selector is evaluated once even if its body rewrites it.
+                write(indent + f"if ({guard}) {{")
+                emit_body(op.blocks[0], indent + "  ")
+                write(indent + "} else {")
+                emit_body(op.blocks[1], indent + "  ")
+                write(indent + "}")
+            elif op.name == "measure":
+                q, c = op.qubits[0], op.clbits[0]
+                write(
+                    indent
+                    + (
+                        f"measure q[{q}] -> c[{c}];"
+                        if version == 2
+                        else f"c[{c}] = measure q[{q}];"
+                    )
+                )
+            else:
+                name, params = op.name, op.params
+                if name == "p" and version == 2:
+                    name = "u1"
+                if name == "id":
+                    name, params = "rx", (expression(0),)
+                args = (
+                    "(" + ", ".join(_format_angle(p, cache) for p in params) + ")"
+                    if params
+                    else ""
+                )
+                write(indent + f"{name}{args} " + ", ".join(f"q[{q}]" for q in op.qubits) + ";")
+
+    emit_body(circuit)
+    return "\n".join(lines) + "\n" if collect else None
 
 
 def to_openqasm(
@@ -513,6 +626,7 @@ def to_openqasm(
     max_operations=100_000,
     max_depth=64,
     max_output_statements=100_000,
+    max_output_bytes=2_000_000,
 ) -> str:
     if type(version) is not int or version not in {2, 3}:
         raise conversion_error("QASM_VERSION", "Only versions 2 and 3 are supported.")
@@ -526,6 +640,7 @@ def to_openqasm(
         "max_operations": max_operations,
         "max_depth": max_depth,
         "max_output_statements": max_output_statements,
+        "max_output_bytes": max_output_bytes,
     }
     diagnostics = diagnose(circuit, f"openqasm{version}", **limits)
     if diagnostics:
@@ -549,73 +664,9 @@ def to_openqasm(
     diagnostics = diagnose(circuit, f"openqasm{version}", **limits)
     if diagnostics:
         raise ConversionError(diagnostics)
-    lines = [
-        f"OPENQASM {version}.0;",
-        'include "qelib1.inc";' if version == 2 else 'include "stdgates.inc";',
-    ]
-    if version == 3:
-        lines.extend(f"input float[64] {name};" for name in circuit.parameters)
-    lines.append(
-        f"qreg q[{circuit.num_qubits}];" if version == 2 else f"qubit[{circuit.num_qubits}] q;"
+    return _emit_qasm(
+        circuit,
+        version,
+        max_output_statements=max_output_statements,
+        max_output_bytes=max_output_bytes,
     )
-    if circuit.num_clbits:
-        lines.append(
-            f"creg c[{circuit.num_clbits}];" if version == 2 else f"bit[{circuit.num_clbits}] c;"
-        )
-
-    def emit_body(body, indent=""):
-        if version == 3 and (body.global_phase.parameters or body.global_phase.constant):
-            lines.append(indent + f"gphase({_format_angle(body.global_phase)});")
-        for op in body.operations:
-            if len(lines) >= max_output_statements:
-                raise conversion_error(
-                    "QASM_EXPORT_LIMIT", "Expanded conditional output exceeds the statement budget."
-                )
-            if op.name == "if_else":
-                if len(op.condition.bits) > 64:
-                    raise conversion_error(
-                        "QASM_EXPORT_LIMIT", "A conditional QASM guard is limited to 64 bits."
-                    )
-
-                # Evaluate the full condition once. Each selected body is
-                # emitted once even when it writes to its own selector bits.
-                bits, value = op.condition.bits, op.condition.value
-                if len(bits) == 1:
-                    guard = f"c[{bits[0]}] == {'true' if value else 'false'}"
-                elif bits == tuple(range(circuit.num_clbits)):
-                    guard = f"c == {value}"
-                else:
-                    selector = "c[{" + ", ".join(str(bit) for bit in bits) + "}]"
-                    guard = f"{selector} == {value}"
-                lines.append(indent + f"if ({guard}) {{")
-                emit_body(op.blocks[0], indent + "  ")
-                lines.append(indent + "} else {")
-                emit_body(op.blocks[1], indent + "  ")
-                lines.append(indent + "}")
-            elif op.name == "measure":
-                q, c = op.qubits[0], op.clbits[0]
-                lines.append(
-                    indent
-                    + (
-                        f"measure q[{q}] -> c[{c}];"
-                        if version == 2
-                        else f"c[{c}] = measure q[{q}];"
-                    )
-                )
-            else:
-                name, params = op.name, op.params
-                if name == "p" and version == 2:
-                    name = "u1"
-                if name == "id":
-                    name, params = "rx", (expression(0),)
-                args = "(" + ", ".join(_format_angle(p) for p in params) + ")" if params else ""
-                lines.append(
-                    indent + f"{name}{args} " + ", ".join(f"q[{q}]" for q in op.qubits) + ";"
-                )
-
-    emit_body(circuit)
-    if len(lines) > max_output_statements:
-        raise conversion_error(
-            "QASM_EXPORT_LIMIT", "Expanded OpenQASM exceeds max_output_statements."
-        )
-    return "\n".join(lines) + "\n"

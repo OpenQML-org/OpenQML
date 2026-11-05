@@ -161,10 +161,17 @@ class Ops(_Ops):
         return self.xp.where(squared > 0, self.xp.sqrt(self.xp.where(squared > 0, squared, 1)), 0)
 
     def probabilities(self, value, size):
+        if size < 1:
+            raise ValidationError("Probability distributions need a nonempty scenario axis.")
         p = self.real(np.ones(size) if value is None else value)
         if p.shape[-1:] != (size,):
             raise ValidationError("Probability width differs from the scenario count.")
         p = self.check(p, p >= 0, "Probabilities must be nonnegative.")
+        # A power-of-two scale is exact in binary floating point, including
+        # ordinary unit-mass inputs, and bounds the positive reduction by 2*S.
+        _, exponent = self.xp.frexp(self.max(p, keepdims=True))
+        scale = self.stop(self.xp.ldexp(self.xp.ones_like(p[..., :1]), exponent - 1))
+        p = p / scale
         total = self.sum(p, keepdims=True)
         total = self.check(total, total > 0, "Probability mass must be positive.")
         return p / total

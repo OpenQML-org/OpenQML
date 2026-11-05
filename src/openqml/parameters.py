@@ -91,6 +91,19 @@ def _postorder(roots, known=()):
             pending.extend((arg, False) for arg in reversed(value.args))
 
 
+def _tree_profile(value, profile=None):
+    """Bound expanded interchange trees while visiting each shared node once."""
+    profile = {} if profile is None else profile
+    for current in _postorder((value,), profile):
+        children = [profile[id(arg)] for arg in current.args]
+        count = 1 + len(current.terms) + sum(child[0] for child in children)
+        depth = 1 + max((child[1] for child in children), default=-1)
+        if count > 4096 or depth > 64:
+            raise ValidationError("Serialized expression exceeds its 4096-node/64-level budget.")
+        profile[id(current)] = (count, depth)
+    return profile[id(value)]
+
+
 def _leaf_value(value, bindings):
     result = value.constant
     for name, coefficient in value.terms:
@@ -345,19 +358,31 @@ class Expression:
         return _rewrite_expression(self, mapping, substitute=True)
 
     def to_dict(self):
-        if self.op is None:
-            return {"constant": self.constant, "terms": dict(self.terms)}
-        return {"op": self.op, "args": [arg.to_dict() for arg in self.args]}
+        _tree_profile(self)
+
+        def encode(value):
+            if value.op is None:
+                return {"constant": value.constant, "terms": dict(value.terms)}
+            return {"op": value.op, "args": [encode(arg) for arg in value.args]}
+
+        return encode(self)
 
     @classmethod
     def from_dict(cls, data):
-        if not isinstance(data, dict):
-            raise ValidationError("Expression must be an object.")
-        if set(data) == {"constant", "terms"} and isinstance(data["terms"], dict):
-            return cls(tuple(data["terms"].items()), data["constant"])
-        if set(data) == {"op", "args"} and isinstance(data["args"], list):
-            return node(data["op"], *(cls.from_dict(v) for v in data["args"]))
-        raise ValidationError("Invalid expression fields.")
+        from ._serialization import check_expression_payload
+
+        check_expression_payload(data)
+
+        def decode(value):
+            if not isinstance(value, dict):
+                raise ValidationError("Expression must be an object.")
+            if set(value) == {"constant", "terms"} and isinstance(value["terms"], dict):
+                return cls(tuple(value["terms"].items()), value["constant"])
+            if set(value) == {"op", "args"} and isinstance(value["args"], list):
+                return node(value["op"], *(decode(v) for v in value["args"]))
+            raise ValidationError("Invalid expression fields.")
+
+        return decode(data)
 
     def __add__(self, other):
         other = expression(other)

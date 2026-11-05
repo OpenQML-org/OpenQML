@@ -74,6 +74,14 @@ each chunk. Parameter shapes such as `[B,1]` and `[1,T]` are gathered directly
 from their source arrays; the full `[B,T]` parameter grid is never materialized.
 If no chunk size is given, the memory model chooses the admitted row count.
 
+NumPy source arrays stay on the host until each chunk is gathered; only the
+selected rows are converted to the native device. Mixed NumPy/Torch bindings
+derive dtype and device from native tensors. Reversed, read-only and memory-mapped
+host arrays can therefore feed the same streaming path without transferring the
+entire source. NumPy finite-value validation runs on the current chunk rather
+than allocating a full-grid mask. Earlier valid chunks can be yielded before a
+later invalid chunk raises a validation error.
+
 ```python
 import numpy as np
 import openqml as oq

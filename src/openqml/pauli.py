@@ -454,13 +454,24 @@ def _prepare_bindings(
         clean = {}
         for name, value in bindings.items():
             array = np.asarray(value)
-            if array.dtype.kind not in "iuf" or not np.isfinite(array).all():
+            if array.dtype.kind not in "iuf" or (numpy_copy and not np.isfinite(array).all()):
                 raise ValidationError("Pauli bindings must be finite real scalars or arrays.")
             clean[name] = array.astype(float, copy=True) if numpy_copy else array
         bindings = clean
-    if like is None and backend != "numpy":
-        like = next((v for v in bindings.values() if hasattr(v, "dtype")), None)
     ops = _TensorOps(backend, like)
+    if like is None and backend != "numpy":
+        native_type = ops.xp.Tensor if backend == "torch" else ops.xp.ndarray
+        prototype = next(
+            (
+                v
+                for v in bindings.values()
+                if isinstance(v, native_type)
+                or (backend == "jax" and type(v).__module__.startswith(("jax", "jaxlib")))
+            ),
+            None,
+        )
+        if prototype is not None:
+            ops = _TensorOps(backend, prototype)
     for value in bindings.values():
         dtype = getattr(value, "dtype", None)
         kind = getattr(dtype, "kind", None)
@@ -472,7 +483,7 @@ def _prepare_bindings(
         ):
             raise ValidationError("Pauli bindings must be real numeric values.")
     local = {
-        n: v if backend == "numpy" and not numpy_copy else ops.array(v, real_value=True)
+        n: v if not numpy_copy and isinstance(v, np.ndarray) else ops.array(v, real_value=True)
         for n, v in bindings.items()
     }
     try:

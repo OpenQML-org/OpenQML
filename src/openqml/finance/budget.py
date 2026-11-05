@@ -78,6 +78,11 @@ def risk_budget_projection(
     robust = base_cvar + radius * ops.norm(w) / (1 - confidence)
     safe_denominator = ops.xp.where(robust > target, robust, ops.array(1))
     scale = ops.xp.where(robust > target, target / safe_denominator, ops.array(1))
+    scale = ops.check(
+        scale,
+        ops.xp.isfinite(target) & ops.xp.isfinite(robust),
+        "Risk-budget inputs must define finite admissible risk and cash bounds.",
+    )
     projected = w * scale[..., None]
     return RiskBudgetResult(
         projected,

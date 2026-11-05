@@ -120,22 +120,39 @@ def expected_shortfall(losses, *, confidence=0.95, probabilities=None):
             tail = lax.top_k(losses, k)[0]
         else:
             tail = np.partition(losses, n - k, axis=-1)[..., -k:]
-        return (ops.sum(tail) - (k - mass) * ops.min(tail)) / mass
+        # Remove one selected boundary atom before summing the interior. This
+        # avoids cancellation between large losses at fractional tail boundaries.
+        index = (
+            ops.xp.argmin(tail, dim=-1)
+            if ops.name == "torch"
+            else ops.xp.argmin(tail, axis=-1)
+        )
+        boundary = ops.gather(tail, index[..., None])[..., 0]
+        positions = (
+            ops.xp.arange(k, device=ops.like.device)
+            if ops.name == "torch"
+            else ops.xp.arange(k)
+        )
+        interior = ops.xp.where(positions == index[..., None], 0, tail)
+        return (ops.sum(interior) + (mass - (k - 1)) * boundary) / mass
     p = ops.probabilities(probabilities, losses.shape[-1])
     shape = np.broadcast_shapes(losses.shape, p.shape)
     losses, p = ops.broadcast(losses, shape), ops.broadcast(p, shape)
+    if confidence == 0:
+        return ops.sum(p * losses)
     order = ops.argsort(losses)
     ordered, mass = ops.gather(losses, order), ops.gather(p, order)
-    count = ops.sum(
-        (ops.cumsum(mass) < confidence).to(ops.like.dtype)
-        if ops.name == "torch"
-        else (ops.cumsum(mass) < confidence).astype(ops.like.dtype)
+    if ops.name == "torch":
+        ordered, mass = (ops.xp.flip(v, dims=(-1,)) for v in (ordered, mass))
+    else:
+        ordered, mass = (ops.xp.flip(v, axis=-1) for v in (ordered, mass))
+    prefix = ops.cat(
+        (ops.xp.zeros_like(mass[..., :1]), ops.cumsum(mass)[..., :-1]), axis=-1
     )
-    index = ops.clip(count, 0, losses.shape[-1] - 1)
-    index = index.to(ops.xp.int64) if ops.name == "torch" else index.astype("int32")
-    threshold = ops.gather(ordered, index[..., None])[..., 0]
-    excess = ops.xp.maximum(losses - threshold[..., None], ops.array(0))
-    return threshold + ops.sum(p * excess) / (1 - confidence)
+    admitted = ops.xp.minimum(
+        mass, ops.xp.maximum((1 - confidence) - prefix, ops.array(0))
+    )
+    return ops.sum(admitted * ordered) / (1 - confidence)
 
 
 def wasserstein_cvar(weights, scenarios, *, confidence=0.95, probabilities=None, radius=0):

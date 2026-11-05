@@ -78,6 +78,9 @@ The archive includes the task, architecture, training state and history. Torch
 state is stored as a JSON tree plus NumPy tensors; JAX/Flax retain their native
 NPZ format. Loading uses no pickle object deserialization.
 `max_bytes` bounds the uncompressed archive size on load (256 MiB by default).
+Loading checks unique NPZ member names, bounded NPY headers, object-free dtypes
+and declared tensor sizes before constructing the model or allocating tensor
+payloads. JSON metadata rejects duplicate fields and oversized input.
 The training framework is retained; device and execution backend can be selected
 again. Runtime/provider objects and credentials are not serialized. Custom
 optimizers and distributed meshes should use their native checkpoint interfaces.
@@ -143,6 +146,14 @@ the original observation axis. `validation_size` reserves a training-tail
 validation set and purges its overlapping training labels. `fit_options` and
 `predict_options` configure native fitting and prediction. See
 [quantitative research](finance.md#rolling-hybrid-model-selection).
+
+## Serialization and conversion limits
+
+`Circuit.to_json(indent=2,max_bytes=2_000_000)` bounds the serialized UTF-8
+artifact. Expression expansion is checked before nested dictionaries are built.
+`plan_conversion(...,max_output_bytes=2_000_000)` applies the same output
+budget to JSON and OpenQASM targets, retaining it through bindings and sweeps.
+The CLI exposes this control as `--max-output-bytes`.
 
 ## Parameter-sweep conversion
 

@@ -31,6 +31,21 @@ equality conjunctions with nested grouping, combines consistent repeated bits
 and diagnoses contradictory terms. Conditions
 are evaluated before either body executes. `max_output_statements` admits the
 complete output before emission, including declarations, phases and braces.
+Sparse guards inspect only their selected bits, including circuits with large
+classical register declarations. Boolean Qiskit switch labels map to the
+corresponding integer guard values.
+
+`max_output_bytes` (default 2,000,000) bounds UTF-8 OpenQASM and JSON output.
+Planning, binding, sweeps and the CLI's `--max-output-bytes` retain the same
+limit. `Circuit.to_json(max_bytes=...)` also admits expanded expression trees
+before constructing dictionaries. Serialized expressions use a 4,096-node and
+64-level budget; QASM angles additionally fit the parser's 16,384-character
+and AST budgets. Native evaluation retains shared expression DAGs.
+
+Affine leaves and negative power bases keep their arithmetic grouping during
+QASM emission. Shared symbolic imports use a memoized iterative traversal.
+Affine sums use compensated aggregation, and nonlinear reductions use balanced
+trees; repeated subexpressions are converted once per call.
 
 Definition and expression caches live within one conversion call. They preserve
 symbolic parameter identity, global phase, wire mappings and operation budgets;

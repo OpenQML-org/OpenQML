@@ -39,41 +39,20 @@ def _format(value):
     return value
 
 
-def _qasm_statement_count(circuit, version, cap):
-    """Count compact atomic guard output before allocating its text."""
+def _qasm_output_diagnostics(circuit, target, max_output_statements, max_output_bytes):
+    if target.startswith("openqasm"):
+        from .adapters.openqasm import _emit_qasm
 
-    def count(body):
-        size = int(
-            version == 3 and bool(body.global_phase.parameters or body.global_phase.constant)
-        )
-        for op in body.operations:
-            if op.name == "if_else":
-                size += count(op.blocks[0]) + count(op.blocks[1]) + 3
-            else:
-                size += 1
-            if size > cap:
-                return cap + 1
-        return size
-
-    headers = 3 + int(bool(circuit.num_clbits))
-    if version == 3:
-        headers += len(circuit.parameters)
-    return min(headers + count(circuit), cap + 1)
-
-
-def _qasm_output_diagnostics(circuit, target, max_output_statements):
-    if (
-        target.startswith("openqasm")
-        and _qasm_statement_count(circuit, int(target[-1]), max_output_statements)
-        > max_output_statements
-    ):
-        return (
-            Diagnostic(
-                "QASM_EXPORT_LIMIT",
-                "Expanded OpenQASM exceeds max_output_statements.",
-                hint="Increase max_output_statements or simplify classical branches.",
-            ),
-        )
+        try:
+            _emit_qasm(
+                circuit,
+                int(target[-1]),
+                max_output_statements=max_output_statements,
+                max_output_bytes=max_output_bytes,
+                collect=False,
+            )
+        except ConversionError as exc:
+            return exc.diagnostics
     return ()
 
 
@@ -84,12 +63,14 @@ def diagnose(
     max_operations=100_000,
     max_depth=64,
     max_output_statements=100_000,
+    max_output_bytes=2_000_000,
 ) -> tuple[Diagnostic, ...]:
     """Check representability without importing any optional framework."""
     if not isinstance(circuit, Circuit):
         raise ValidationError("diagnose requires an OpenQML Circuit.")
     target = _format(target)
     integer(max_output_statements, "max_output_statements", 1)
+    integer(max_output_bytes, "max_output_bytes", 1)
     try:
         _check_circuit_limits(circuit, max_operations=max_operations, max_depth=max_depth)
     except ConversionError as exc:
@@ -101,6 +82,18 @@ def diagnose(
             raise ValidationError("Adapter diagnostics must contain Diagnostic objects.")
         return diagnostics
     diagnostics = []
+    if target == "json":
+        from ._serialization import bounded_circuit_json
+
+        try:
+            bounded_circuit_json(circuit, max_output_bytes, collect=False)
+        except ValidationError as exc:
+            diagnostics.append(
+                Diagnostic(
+                    "EXPRESSION_LIMIT" if "expression" in str(exc).lower() else "JSON_EXPORT_LIMIT",
+                    str(exc),
+                )
+            )
     if target == "openqasm2":
         if circuit.parameters:
             diagnostics.append(
@@ -221,7 +214,9 @@ def diagnose(
                 "Cirq cannot preserve unused trailing classical register bits.",
             )
         )
-    return tuple(diagnostics) + _qasm_output_diagnostics(circuit, target, max_output_statements)
+    return tuple(diagnostics) + _qasm_output_diagnostics(
+        circuit, target, max_output_statements, max_output_bytes
+    )
 
 
 @dataclass(frozen=True)
@@ -253,6 +248,7 @@ class ConversionPlan:
     max_operations: int = 100_000
     max_depth: int = 64
     max_output_statements: int = 100_000
+    max_output_bytes: int = 2_000_000
 
     @property
     def preparation_complete(self):
@@ -323,6 +319,7 @@ class ConversionPlan:
                 "max_operations": self.max_operations,
                 "max_depth": self.max_depth,
                 "max_output_statements": self.max_output_statements,
+                "max_output_bytes": self.max_output_bytes,
             },
             "diagnostics": [asdict(d) for d in self.diagnostics],
         }
@@ -414,6 +411,7 @@ class ConversionPlan:
                 max_operations=self.max_operations,
                 max_depth=self.max_depth,
                 max_output_statements=self.max_output_statements,
+                max_output_bytes=self.max_output_bytes,
             )
             return replace(plan, source_format=self.source_format, optimization=self.optimization)
         prepared = self.prepared_circuit if self.prepared_circuit is not None else self.circuit
@@ -427,6 +425,7 @@ class ConversionPlan:
             max_operations=self.max_operations,
             max_depth=self.max_depth,
             max_output_statements=self.max_output_statements,
+            max_output_bytes=self.max_output_bytes,
         )
         notes = tuple(d for d in self.diagnostics if d.severity == "info")
         return replace(
@@ -467,7 +466,7 @@ class ConversionPlan:
         if self.target_format == "ir":
             value = circuit
         elif self.target_format == "json":
-            value = circuit.to_json()
+            value = circuit.to_json(max_bytes=self.max_output_bytes)
         elif self.target_format.startswith("openqasm"):
             from .adapters.openqasm import to_openqasm
 
@@ -477,6 +476,7 @@ class ConversionPlan:
                 max_operations=self.max_operations,
                 max_depth=self.max_depth,
                 max_output_statements=self.max_output_statements,
+                max_output_bytes=self.max_output_bytes,
             )
         elif self.target_format in {"cirq", "pennylane"}:
             value = get_adapter(self.target_format).exporter(
@@ -507,6 +507,7 @@ def plan_conversion(
     max_operations=100_000,
     max_depth=64,
     max_output_statements=100_000,
+    max_output_bytes=2_000_000,
 ) -> ConversionPlan:
     """Import and prepare a conversion; report all known target incompatibilities."""
     from .program import QuantumProgram, detect_framework
@@ -514,6 +515,7 @@ def plan_conversion(
     max_operations = integer(max_operations, "max_operations", 1)
     max_depth = integer(max_depth, "max_depth")
     max_output_statements = integer(max_output_statements, "max_output_statements", 1)
+    max_output_bytes = integer(max_output_bytes, "max_output_bytes", 1)
     if type(optimize) is not bool:
         raise ValidationError("optimize must be a boolean.")
     try:
@@ -718,6 +720,7 @@ def plan_conversion(
         max_operations=max_operations,
         max_depth=max_depth,
         max_output_statements=max_output_statements,
+        max_output_bytes=max_output_bytes,
     )
     from .compiler import PORTABLE_BASIS, _qasm_basis, decompose
 
@@ -789,7 +792,9 @@ def plan_conversion(
                     ),
                 )
             if not any(d.code == "QASM_EXPORT_LIMIT" for d in diagnostics):
-                diagnostics += _qasm_output_diagnostics(circuit, target, max_output_statements)
+                diagnostics += _qasm_output_diagnostics(
+                    circuit, target, max_output_statements, max_output_bytes
+                )
     return ConversionPlan(
         original_circuit,
         source,
@@ -801,6 +806,7 @@ def plan_conversion(
         max_operations,
         max_depth,
         max_output_statements,
+        max_output_bytes,
     )
 
 
@@ -816,6 +822,7 @@ def convert(
     max_operations=100_000,
     max_depth=64,
     max_output_statements=100_000,
+    max_output_bytes=2_000_000,
 ) -> ConversionResult:
     """Import -> prepare -> export, rejecting unsupported semantics explicitly."""
     return plan_conversion(
@@ -829,4 +836,5 @@ def convert(
         max_operations=max_operations,
         max_depth=max_depth,
         max_output_statements=max_output_statements,
+        max_output_bytes=max_output_bytes,
     ).export()
