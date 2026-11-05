@@ -537,9 +537,7 @@ def _format_angle(angle, cache=None):
     return result
 
 
-def _emit_qasm(
-    circuit, version, *, max_output_statements, max_output_bytes, collect=True
-):
+def _emit_qasm(circuit, version, *, max_output_statements, max_output_bytes, collect=True):
     """Use one bounded emitter for planning and artifact construction."""
     lines, cache, count, size = [], {}, 0, 0
 
@@ -562,9 +560,7 @@ def _emit_qasm(
             write(f"input float[64] {name};")
     write(f"qreg q[{circuit.num_qubits}];" if version == 2 else f"qubit[{circuit.num_qubits}] q;")
     if circuit.num_clbits:
-        write(
-            f"creg c[{circuit.num_clbits}];" if version == 2 else f"bit[{circuit.num_clbits}] c;"
-        )
+        write(f"creg c[{circuit.num_clbits}];" if version == 2 else f"bit[{circuit.num_clbits}] c;")
 
     def emit_body(body, indent=""):
         if version == 3 and (body.global_phase.parameters or body.global_phase.constant):
@@ -608,9 +604,7 @@ def _emit_qasm(
                 if name == "id":
                     name, params = "rx", (expression(0),)
                 args = (
-                    "(" + ", ".join(_format_angle(p, cache) for p in params) + ")"
-                    if params
-                    else ""
+                    "(" + ", ".join(_format_angle(p, cache) for p in params) + ")" if params else ""
                 )
                 write(indent + f"{name}{args} " + ", ".join(f"q[{q}]" for q in op.qubits) + ";")
 

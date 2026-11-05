@@ -122,16 +122,10 @@ def expected_shortfall(losses, *, confidence=0.95, probabilities=None):
             tail = np.partition(losses, n - k, axis=-1)[..., -k:]
         # Remove one selected boundary atom before summing the interior. This
         # avoids cancellation between large losses at fractional tail boundaries.
-        index = (
-            ops.xp.argmin(tail, dim=-1)
-            if ops.name == "torch"
-            else ops.xp.argmin(tail, axis=-1)
-        )
+        index = ops.xp.argmin(tail, dim=-1) if ops.name == "torch" else ops.xp.argmin(tail, axis=-1)
         boundary = ops.gather(tail, index[..., None])[..., 0]
         positions = (
-            ops.xp.arange(k, device=ops.like.device)
-            if ops.name == "torch"
-            else ops.xp.arange(k)
+            ops.xp.arange(k, device=ops.like.device) if ops.name == "torch" else ops.xp.arange(k)
         )
         interior = ops.xp.where(positions == index[..., None], 0, tail)
         return (ops.sum(interior) + (mass - (k - 1)) * boundary) / mass
@@ -146,12 +140,8 @@ def expected_shortfall(losses, *, confidence=0.95, probabilities=None):
         ordered, mass = (ops.xp.flip(v, dims=(-1,)) for v in (ordered, mass))
     else:
         ordered, mass = (ops.xp.flip(v, axis=-1) for v in (ordered, mass))
-    prefix = ops.cat(
-        (ops.xp.zeros_like(mass[..., :1]), ops.cumsum(mass)[..., :-1]), axis=-1
-    )
-    admitted = ops.xp.minimum(
-        mass, ops.xp.maximum((1 - confidence) - prefix, ops.array(0))
-    )
+    prefix = ops.cat((ops.xp.zeros_like(mass[..., :1]), ops.cumsum(mass)[..., :-1]), axis=-1)
+    admitted = ops.xp.minimum(mass, ops.xp.maximum((1 - confidence) - prefix, ops.array(0)))
     return ops.sum(admitted * ordered) / (1 - confidence)
 
 

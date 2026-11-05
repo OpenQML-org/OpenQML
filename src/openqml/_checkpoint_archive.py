@@ -38,9 +38,7 @@ def check_npz_payload(payload, maximum):
                     if version == (1, 0)
                     else np.lib.format.read_array_header_2_0
                 )
-                shape, _, dtype = reader(
-                    io.BytesIO(encoded + header), max_header_size=16384
-                )
+                shape, _, dtype = reader(io.BytesIO(encoded + header), max_header_size=16384)
                 if dtype.hasobject:
                     raise ValidationError("Training tensors must be pickle-free numeric arrays.")
                 required = math.prod(shape) * dtype.itemsize

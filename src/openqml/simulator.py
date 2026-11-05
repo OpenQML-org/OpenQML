@@ -89,8 +89,7 @@ class _TensorOps:
         if self.backend == "torch":
             if isinstance(value, np.ndarray):
                 compiling = (
-                    getattr(self.xp.compiler, "is_compiling", None)
-                    or self.xp._dynamo.is_compiling
+                    getattr(self.xp.compiler, "is_compiling", None) or self.xp._dynamo.is_compiling
                 )
                 # Inspect host layouts during eager conversion; compiled native
                 # graphs already own their tensor inputs.

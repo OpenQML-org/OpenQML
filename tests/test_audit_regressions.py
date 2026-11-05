@@ -125,19 +125,22 @@ def test_qasm_output_byte_budget_survives_binding_sweeps_and_cli(tmp_path, capsy
         limited.export()
     path = tmp_path / "circuit.json"
     path.write_text(circuit.to_json())
-    assert main(
-        [
-            "convert",
-            str(path),
-            "--from",
-            "json",
-            "--to",
-            "openqasm3",
-            "--max-output-bytes",
-            "10",
-            "--check",
-        ]
-    ) == 2
+    assert (
+        main(
+            [
+                "convert",
+                str(path),
+                "--from",
+                "json",
+                "--to",
+                "openqasm3",
+                "--max-output-bytes",
+                "10",
+                "--check",
+            ]
+        )
+        == 2
+    )
     report = json.loads(capsys.readouterr().out)
     assert report["limits"]["max_output_bytes"] == 10 and not report["compatible"]
 
@@ -173,7 +176,7 @@ def _tail_oracle(losses, confidence, probabilities=None):
     total = sum(mass)
     tail = remaining = 1 - Fraction(confidence)
     result = Fraction(0)
-    for loss, weight in sorted(zip(losses, mass), reverse=True):
+    for loss, weight in sorted(zip(losses, mass, strict=True), reverse=True):
         admitted = min(weight / total, remaining)
         result += admitted * loss
         remaining -= admitted
@@ -205,9 +208,7 @@ def test_cvar_matches_exact_mass_arithmetic_at_cancellation_boundaries(backend, 
         "fractional": ([-1e11, -1e8, 1], 1 - 1.000001 / 3, None),
     }[case]
     losses = np.asarray(losses, dtype=np.float32)
-    probabilities = (
-        None if probabilities is None else np.asarray(probabilities, dtype=np.float32)
-    )
+    probabilities = None if probabilities is None else np.asarray(probabilities, dtype=np.float32)
     reference = _tail_oracle(losses, confidence, probabilities)
     actual = expected_shortfall(
         _native(losses, backend),
@@ -272,9 +273,7 @@ def test_zero_mass_large_factors_keep_low_rank_solves_finite(backend, rank):
     rhs = rng.normal(size=(16, 2)).astype(np.float32)
     active = factors[1:].astype(float)
     reference = np.linalg.solve(np.eye(16) + active.T @ active, rhs)
-    diagonal, factors, mass, rhs = (
-        _native(v, backend) for v in (np.ones(16), factors, mass, rhs)
-    )
+    diagonal, factors, mass, rhs = (_native(v, backend) for v in (np.ones(16), factors, mass, rhs))
     actual = linear_solve(diagonal, factors, mass, rhs, 100, 1e-6, Ops(diagonal))
     np.testing.assert_allclose(actual, reference, rtol=2e-5, atol=2e-5)
 
@@ -323,9 +322,7 @@ def test_native_streaming_converts_only_the_current_host_chunk(monkeypatch):
 def test_numpy_streaming_checks_finiteness_per_chunk_without_a_full_grid_mask(monkeypatch):
     source = np.linspace(-0.2, 0.3, 100001)
     source[21] = np.nan
-    plan = oq.TensorNetworkPlan(
-        oq.Circuit(1).ry(oq.Parameter("alpha"), 0), (oq.PauliString("Z"),)
-    )
+    plan = oq.TensorNetworkPlan(oq.Circuit(1).ry(oq.Parameter("alpha"), 0), (oq.PauliString("Z"),))
     original = np.isfinite
 
     def checked(value, *args, **kwargs):

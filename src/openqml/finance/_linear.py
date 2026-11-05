@@ -50,9 +50,7 @@ def _pcg(diagonal, factors, mass, rhs, iterations, tolerance, ops):
     eps = np.finfo(np.float64 if "64" in str(rhs.dtype) else np.float32).eps
     tolerance = max(tolerance, 8 * eps)
     weighted = factors * xp.sqrt(xp.abs(mass))[..., :, None]
-    preconditioner = diagonal + xp.einsum(
-        "...rn,...r->...n", weighted * weighted, xp.sign(mass)
-    )
+    preconditioner = diagonal + xp.einsum("...rn,...r->...n", weighted * weighted, xp.sign(mass))
     zero = xp.zeros_like(rhs)
     z = rhs / preconditioner[..., :, None]
     scale = ops.norm(rhs, axis=-2)

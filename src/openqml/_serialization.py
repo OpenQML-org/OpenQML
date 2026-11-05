@@ -36,6 +36,7 @@ def load_json(text, max_bytes, *, label="IR"):
     except (ValueError, RecursionError) as exc:
         raise ValidationError(f"Invalid {label} JSON.") from exc
 
+
 def check_expression_payload(value, location="expression"):
     pending, nodes = [(value, 0)], 0
     while pending:
@@ -57,7 +58,6 @@ def check_expression_payload(value, location="expression"):
         if nodes > 4096:
             raise ValidationError(f"IR exceeds expression node budget at {location}.")
         pending.extend((arg, depth + 1) for arg in args)
-
 
 
 def check_ir_payload(payload, *, max_operations, max_depth, max_matrix_qubits, max_matrix_entries):
