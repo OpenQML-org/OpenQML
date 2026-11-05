@@ -254,6 +254,8 @@ class HybridArchitecture:
             raise ValidationError("input_lift must be none or graph-pairs.")
         if self.readout_pooling == "pair-invariant" and self.input_lift != "graph-pairs":
             raise ValidationError("pair-invariant readout requires graph-pairs input lifting.")
+        if self.depth * (2 * self.hidden_features + 2) > self.max_parameters:
+            raise ResourceError("Architecture depth exceeds the parameter admission budget.")
         operators = (
             (self.operators,) * self.depth
             if isinstance(self.operators, OperatorSpec)
@@ -276,8 +278,6 @@ class HybridArchitecture:
             or any(o.kind not in {"pair-graph", "pointwise", "born"} for o in operators)
         ):
             raise ValidationError("graph-pairs uses pair-graph first, then pair/pointwise blocks.")
-        if self.depth * (2 * self.hidden_features + 2) > self.max_parameters:
-            raise ResourceError("Architecture depth exceeds the parameter admission budget.")
         configurations = (
             (self.quantum,) * self.depth
             if isinstance(self.quantum, QuantumCellSpec)

@@ -407,3 +407,67 @@ def test_sympy_bulk_affine_import_keeps_small_coefficients_after_cancellation():
     result = sympy_expression(value)
     assert result.terms == (("alpha", 2.0),)
     assert result.evaluate({"alpha": 0.3}) == 0.6
+
+
+def test_architecture_depth_is_admitted_before_expanding_operator_sequences():
+    class DeferredOperators:
+        def __iter__(self):
+            pytest.fail("Depth admission must precede operator sequence construction")
+
+    with pytest.raises(oq.ResourceError, match="depth"):
+        oq.HybridArchitecture(1, 1, depth=10**9, max_parameters=100, operators=DeferredOperators())
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "input_features",
+        "output_features",
+        "hidden_features",
+        "depth",
+        "num_qubits",
+        "quantum_depth",
+    ],
+)
+def test_forecast_checkpoint_configuration_is_checked_before_native_build(
+    field, tmp_path, monkeypatch
+):
+    from openqml.finance.models import MarketForecastPlan
+
+    specification = MarketForecastPlan(2, 1, hidden_features=4, depth=1).architecture()
+    config = {
+        "input_features": 2,
+        "output_features": 1,
+        "task": "forecast",
+        "framework": "torch",
+        "hidden_features": 4,
+        "depth": 1,
+        "num_qubits": 2,
+        "quantum_depth": 1,
+        "lr": 0.001,
+        "seed": 0,
+    }
+    config[field] = 10**9
+    metadata = {
+        "format": "openqml.model.v1",
+        "config": config,
+        "architecture": specification.to_dict(),
+        "microbatch_size": 2,
+        "history": [],
+        "shuffle_rng": np.random.default_rng(0).bit_generator.state,
+        "best_epoch": None,
+        "stopped_epoch": None,
+    }
+    tensors = io.BytesIO()
+    np.savez_compressed(tensors, array_0=np.zeros(1, dtype=np.float32))
+    path = tmp_path / "forecast.oqm"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("model.json", json.dumps(metadata))
+        archive.writestr("training", tensors.getvalue())
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Forecast configuration must be checked before native model construction")
+
+    monkeypatch.setattr(oq.Model, "_build", forbidden)
+    with pytest.raises(oq.ValidationError, match="Forecast configuration"):
+        oq.Model.load(path, max_bytes=1 << 20)
