@@ -128,7 +128,7 @@ def test_readme_uses_the_public_package_import():
     import ast
     import re
 
-    text = (Path(__file__).parents[1] / "README.md").read_text()
+    text = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
     blocks = re.findall(r"```python\n(.*?)```", text, re.S)
     assert blocks
     namespace = {}

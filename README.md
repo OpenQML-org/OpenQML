@@ -1,21 +1,32 @@
 # OpenQML
 
-[PyPI](https://pypi.org/project/openqml/) · [CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml) · [Documentation](https://github.com/OpenQML-org/OpenQML/tree/main/docs)
+[PyPI](https://pypi.org/project/openqml/) · [CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml) · [文档](https://github.com/OpenQML-org/OpenQML/tree/main/docs)
 
-Quantum–classical models, quantitative finance and circuit interoperability in one Python package.
+## 量子-经典混合AI：
 
-## Install
+用 PyTorch、JAX 或 Flax 构建和训练混合神经网络。提供统一的 `fit` / `predict` 接口，也可直接使用原生网络层、训练器和张量网络执行后端。
 
-Python 3.10 or later:
+## 量子-经典混合量化：
+
+支持收益分布建模、风险估计、约束资产配置、交易成本核算和衍生品定价。可微金融计算与混合网络共用原生张量；量子估计提供精度、噪声和调用预算控制。
+
+## 量子编程跨框架互操作：
+
+通过统一电路表示连接 Qiskit、Cirq、PennyLane 和 OpenQASM。转换、编译和执行使用同一套 API，具体支持范围见[文档](https://github.com/OpenQML-org/OpenQML/tree/main/docs)。
+
+## 安装
+
+需要 Python 3.10 或更高版本：
 
 ```bash
-python -m pip install --upgrade openqml
+python -m pip install -U openqml
 ```
 
-The core depends on NumPy, packaging and psutil. Frameworks and quantum SDKs are
-optional; importing OpenQML loads neither NumPy nor execution engines.
+核心依赖为 NumPy、packaging 和 psutil。训练框架、量子 SDK 和执行后端按需加载。
 
-## Allocate a portfolio
+## 快速开始
+
+从收益观测计算资产权重：
 
 ```python
 import openqml as oq
@@ -25,13 +36,11 @@ portfolio = oq.finance.allocate(returns, caps=0.7, fees=0.001)
 print(portfolio.weights)
 ```
 
-The allocator includes factor risk, position limits, funding and transaction
-costs. Supply your own return observations and previous holdings.
+训练模型前，安装 `openqml[torch]`、`openqml[jax]` 或 `openqml[flax]`。以下使用 PyTorch：
 
-## Train a model
-
-Install `openqml[torch]`, `openqml[jax]` or `openqml[flax]`, then use the same
-`fit`/`predict` interface:
+```bash
+python -m pip install -U "openqml[torch]"
+```
 
 ```python
 import openqml as oq
@@ -43,35 +52,12 @@ model.fit(x, y)
 print(model.predict(x[:2]))
 ```
 
-Set `framework="jax"` or `framework="flax"` to change the training integration.
-Tasks include `regression`, `classification` and `forecast`. The native network
-and trainer remain available as `model.module` and `model.trainer`.
+设置 `framework="jax"` 或 `framework="flax"` 切换训练框架。`backend` 选择电路执行后端，`device` 选择原生张量设备。量子比特数由计算资源和后端能力约束，没有固定的库级上限。
 
-## Interfaces
+量子查询优势依赖高效的相干 Oracle、噪声水平和完整执行成本，不代表已获得实机加速或投资超额收益。
 
-| Task | Entry point |
-| --- | --- |
-| Supervised hybrid models | `oq.Model` |
-| Custom convolution, attention, graph and generative networks | `oq.HybridArchitecture` |
-| Risk, allocation, accounting and pricing | `oq.finance` |
-| Native framework layers | `oq.torch`, `oq.jax`, `oq.flax` |
-| Circuits and conversion | `oq.Circuit`, `oq.convert`, `oq.compile_program` |
-| Tensor contraction and distribution | `oq.TensorNetworkPlan`, `oq.DistributedTensorPlan` |
-| Quantum reinforcement learning | Framework `QuantumActorCritic` and `PPOTrainer` |
-| Hardware and cost policies | `oq.configure_runtime`, `oq.CostAwareBackend` |
+[API](https://github.com/OpenQML-org/OpenQML/blob/main/docs/api.md) · [混合网络](https://github.com/OpenQML-org/OpenQML/blob/main/docs/models.md) · [量化](https://github.com/OpenQML-org/OpenQML/blob/main/docs/finance.md) · [训练](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md) · [张量网络](https://github.com/OpenQML-org/OpenQML/blob/main/docs/tensor-networks.md) · [运行时](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md)
 
-`framework` selects the training integration, `backend` selects circuit execution,
-and `device` selects native tensor placement. Modules, integrations and backends
-load when used. Existing low-level APIs remain available through `oq`.
+## 许可证
 
-Automatic pricing uses available exact calculations before amplified sampling.
-Quantum estimation accepts an error target, calibrated contrast and query limits.
-Quantum query advantages depend on coherent oracles, noise and total execution
-cost. Circuit capacity follows memory, work and backend limits; there is no fixed
-library-wide qubit ceiling.
-
-[API guide](https://github.com/OpenQML-org/OpenQML/blob/main/docs/api.md) · [Finance](https://github.com/OpenQML-org/OpenQML/blob/main/docs/finance.md) · [Models](https://github.com/OpenQML-org/OpenQML/blob/main/docs/models.md) · [Stateful models](https://github.com/OpenQML-org/OpenQML/blob/main/docs/frontier-models.md) · [Training](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md) · [Tensor networks](https://github.com/OpenQML-org/OpenQML/blob/main/docs/tensor-networks.md) · [Runtime](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md)
-
-## License
-
-[Apache-2.0](https://github.com/OpenQML-org/OpenQML/blob/main/LICENSE).
+[Apache-2.0](LICENSE)

@@ -1,6 +1,7 @@
 """Lazy financial API locations."""
 
 EXPORTS = {
+    "BarrierOption": (".barrier", "BarrierOption"),
     "AllocationPlan": (".allocation", "AllocationPlan"),
     "AllocationResult": (".allocation", "AllocationResult"),
     "MarketForecast": (".models", "MarketForecast"),
@@ -32,6 +33,7 @@ EXPORTS = {
 }
 
 PUBLIC = [
+    "BarrierOption",
     "price",
     "allocate",
     "AllocationPlan",
@@ -63,6 +65,7 @@ PUBLIC = [
 ]
 
 MODULES = {
+    "barrier": ".barrier",
     "quantum": ".quantum",
     "risk": ".risk",
     "allocation": ".allocation",

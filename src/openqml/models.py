@@ -138,7 +138,11 @@ class Model:
         if self.framework == "torch":
             torch = _require("torch", "torch")
             device = torch.device(self.device or ("cuda" if torch.cuda.is_available() else "cpu"))
-            devices = [device.index or 0] if device.type == "cuda" else []
+            devices = (
+                [torch.cuda.current_device() if device.index is None else device.index]
+                if device.type == "cuda"
+                else []
+            )
             with torch.random.fork_rng(devices=devices):
                 self.module = self.architecture.build(
                     "torch", device=device, backend=self.backend, dtype=torch.float32
@@ -334,3 +338,16 @@ class Model:
             raise ValidationError("predict_quantiles requires a forecast model.")
         raw = self._predict_raw(inputs, batch_size)
         return self._forecast.decode(raw).quantiles
+
+    def save(self, path):
+        """Atomically save configuration, training state, history and shuffle RNG."""
+        from ._model_checkpoint import save_model
+
+        return save_model(self, path)
+
+    @classmethod
+    def load(cls, path, *, device=None, backend="auto", max_bytes=256 * 2**20):
+        """Restore a fitted model, optionally selecting a new device/backend."""
+        from ._model_checkpoint import load_model
+
+        return load_model(cls, path, device=device, backend=backend, max_bytes=max_bytes)

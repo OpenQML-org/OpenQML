@@ -55,6 +55,17 @@ Repeated `fit` calls preserve the native parameter tree and optimizer state.
 `microbatch_size` option works across all frameworks; changing it invalidates
 only the relevant compiled update. Shuffling is off by default.
 
+`model.save("model.oqm")` writes one atomic archive. Restore it with
+`oq.Model.load("model.oqm",device="cpu",backend="auto")`; prediction works
+immediately, and subsequent `fit` resumes the optimizer and shuffle sequence.
+The archive includes the task, architecture, training state and history. Torch
+state is stored as a JSON tree plus NumPy tensors; JAX/Flax retain their native
+NPZ format. Loading uses no pickle object deserialization.
+`max_bytes` bounds the uncompressed archive size on load (256 MiB by default).
+The training framework is retained; device and execution backend can be selected
+again. Runtime/provider objects and credentials are not serialized. Custom
+optimizers and distributed meshes should use their native checkpoint interfaces.
+
 Supply `architecture=oq.HybridArchitecture(...)` for custom array-based
 regression/classification. `model.module` and `model.trainer` expose native
 forward calls, custom objectives, checkpointing and stateful execution. There
@@ -69,6 +80,11 @@ arrays `[...,S,N]` and returns the existing native `AllocationResult`. Common
 policy arguments are `risk_aversion`, `turnover`, `ridge` and `tolerance`;
 pass an `AllocationPlan` for full policy control. Use one configuration style
 per call. A supplied `FactorRisk` replaces return observations.
+
+Python/NumPy constants follow any supplied PyTorch or JAX tensor's device and
+dtype, so a Python probability list does not detach a differentiable return or
+payoff tensor. Integer probability arrays are promoted to floating point.
+PyTorch/JAX mixtures and mixed PyTorch devices require explicit conversion.
 
 `previous` contains economic holdings; `warm_start` is only an optimizer seed.
 The latter is projected, used to propose an active face, then checked against

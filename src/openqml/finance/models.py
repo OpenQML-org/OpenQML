@@ -220,7 +220,7 @@ class ScenarioPlan:
         return ops.probabilities(probabilities, self.num_scenarios)
 
     def energy_score(self, probabilities, observations):
-        ops = Ops(probabilities)
+        ops = Ops(probabilities, observations)
         p = ops.probabilities(probabilities, self.num_scenarios)
         target = ops.real(observations)
         if target.shape[-(self.scenarios.ndim - 1) :] != self.scenarios.shape[1:]:
@@ -257,7 +257,7 @@ class ScenarioPlan:
         )
 
     def expected_payoff(self, probabilities, payoffs, *, discount=1):
-        ops = Ops(probabilities)
+        ops = Ops(probabilities, payoffs)
         p = ops.probabilities(probabilities, self.num_scenarios)
         payoff = ops.real(payoffs)
         discount = real(discount)

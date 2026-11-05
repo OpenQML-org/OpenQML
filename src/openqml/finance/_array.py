@@ -10,11 +10,58 @@ from ..rl import _floating, _Ops
 
 
 class Ops(_Ops):
-    def __init__(self, like):
+    def __init__(self, *values):
+        values = tuple(v for v in values if v is not None)
+        if not values:
+            raise ValidationError("Provide a financial array.")
+        native = [v for v in values if type(v).__module__.startswith(("torch", "jax", "jaxlib"))]
+        frameworks = {"torch" if type(v).__module__.startswith("torch") else "jax" for v in native}
+        if len(frameworks) > 1:
+            raise ValidationError("Financial tensors must use one framework; convert explicitly.")
+        like = native[0] if native else np.asarray(values[0])
+        if "torch" in frameworks:
+            import torch
+
+            if len({v.device for v in native}) > 1:
+                raise ValidationError("Financial tensors must use one device; move explicitly.")
+            if any(v.dtype == torch.bool or v.is_complex() for v in native):
+                raise ValidationError("Financial arrays must contain real numeric values.")
+            dtype = like.dtype
+            for value in native[1:]:
+                dtype = torch.promote_types(dtype, value.dtype)
+            like = like.to(dtype=dtype if dtype.is_floating_point else torch.get_default_dtype())
+        elif "jax" in frameworks:
+            if any(v.dtype.kind not in "fiu" and str(v.dtype) != "bfloat16" for v in native):
+                raise ValidationError("Financial arrays must contain real numeric values.")
+            import jax.numpy as jnp
+
+            dtype = jnp.result_type(*(v.dtype for v in native))
+            if dtype.kind in "iu":
+                dtype = jnp.dtype("float32")
+            if like.dtype != dtype:
+                like = like.astype(dtype)
+        else:
+            if like.dtype.kind not in "fiu":
+                raise ValidationError("Financial arrays must contain real numeric values.")
+            if like.dtype.kind in "iu":
+                like = like.astype(float)
         super().__init__(_floating(like))
 
     def array(self, value, *, boolean=False):
-        if self.name == "torch" and isinstance(value, np.ndarray) and not value.flags.writeable:
+        if self.name == "jax":
+            import jax
+
+            if not isinstance(self.like, jax.core.Tracer) and isinstance(
+                getattr(self.like, "sharding", None), jax.sharding.SingleDeviceSharding
+            ):
+                return self.xp.asarray(
+                    value, dtype=bool if boolean else self.like.dtype, device=self.like.sharding
+                )
+        if (
+            self.name == "torch"
+            and isinstance(value, np.ndarray)
+            and (not value.flags.writeable or any(s < 0 for s in value.strides))
+        ):
             value = value.copy()
         return super().array(value, boolean=boolean)
 
@@ -81,8 +128,10 @@ class Ops(_Ops):
             import jax
 
             traced = isinstance(valid, jax.core.Tracer)
-        if not traced and not bool(self.xp.all(valid)):
-            raise (ResourceError if resource else ValidationError)(message)
+        if not traced:
+            if not bool(self.xp.all(valid)):
+                raise (ResourceError if resource else ValidationError)(message)
+            return value
         return self.xp.where(valid, value, float("nan"))
 
     def real(self, value, *, finite=True):

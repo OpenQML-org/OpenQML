@@ -1,5 +1,6 @@
 """Weighted factor risk, exact fractional-tail CVaR and proper scenario scores."""
 
+import math
 from typing import NamedTuple
 
 import numpy as np
@@ -24,7 +25,7 @@ def factor_risk(
     Return samples have shape [...,S,N]. No dense N-by-N covariance is built.
     Keeping probabilities separate avoids sqrt(p) derivatives at zero mass.
     """
-    ops = Ops(probabilities if probabilities is not None else returns)
+    ops = Ops(probabilities, returns)
     x = ops.real(returns)
     if x.ndim < 2 or min(x.shape[-2:]) < 1:
         raise ValidationError("Risk estimation needs returns[...,scenarios,assets].")
@@ -68,7 +69,7 @@ def prepare_risk(risk, ops, shape):
 
 
 def covariance_matvec(risk, vector):
-    ops = Ops(vector)
+    ops = Ops(vector, *(risk if isinstance(risk, FactorRisk) else ()))
     vector = ops.real(vector)
     risk = prepare_risk(risk, ops, vector.shape)
     projected = ops.xp.einsum("...rn,...n->...r", risk.factors, vector)
@@ -78,13 +79,13 @@ def covariance_matvec(risk, vector):
 
 
 def portfolio_variance(weights, risk):
-    ops = Ops(weights)
+    ops = Ops(weights, *(risk if isinstance(risk, FactorRisk) else ()))
     weights = ops.real(weights)
     return ops.sum(weights * covariance_matvec(risk, weights))
 
 
 def dense_covariance(risk, *, max_memory_mb=256):
-    ops = Ops(risk.mean)
+    ops = Ops(*risk)
     risk = prepare_risk(risk, ops, risk.mean.shape)
     n = risk.mean.shape[-1]
     admission(4 * rows(risk.mean.shape[:-1]) * (n * n + risk.factors.shape[-2] * n), max_memory_mb)
@@ -99,10 +100,27 @@ def expected_shortfall(losses, *, confidence=0.95, probabilities=None):
     confidence = real(confidence)
     if not 0 <= confidence < 1:
         raise ValidationError("confidence must lie in [0,1).")
-    ops = Ops(losses)
+    ops = Ops(losses, probabilities)
     losses = ops.real(losses)
     if losses.ndim < 1 or losses.shape[-1] < 1:
         raise ValidationError("Provide a nonempty scenario axis.")
+    if probabilities is None:
+        n = losses.shape[-1]
+        mass = (1 - confidence) * n
+        k = min(n, max(1, math.ceil(mass)))
+        if confidence == 0:
+            return ops.sum(losses) / n
+        if k == 1:
+            return ops.max(losses)
+        if ops.name == "torch":
+            tail = ops.xp.topk(losses, k, dim=-1, sorted=False).values
+        elif ops.name == "jax":
+            from jax import lax
+
+            tail = lax.top_k(losses, k)[0]
+        else:
+            tail = np.partition(losses, n - k, axis=-1)[..., -k:]
+        return (ops.sum(tail) - (k - mass) * ops.min(tail)) / mass
     p = ops.probabilities(probabilities, losses.shape[-1])
     shape = np.broadcast_shapes(losses.shape, p.shape)
     losses, p = ops.broadcast(losses, shape), ops.broadcast(p, shape)
@@ -130,7 +148,7 @@ def wasserstein_cvar(weights, scenarios, *, confidence=0.95, probabilities=None,
     confidence, radius = real(confidence), real(radius)
     if not 0 <= confidence < 1 or radius < 0:
         raise ValidationError("Invalid CVaR confidence or Wasserstein radius.")
-    ops = Ops(weights)
+    ops = Ops(weights, scenarios, probabilities)
     w, scenarios = ops.real(weights), ops.real(scenarios)
     if scenarios.ndim < 2 or scenarios.shape[-1] != w.shape[-1]:
         raise ValidationError("Scenario and portfolio asset dimensions must match.")
@@ -141,7 +159,7 @@ def wasserstein_cvar(weights, scenarios, *, confidence=0.95, probabilities=None,
 
 
 def quantile_loss(predictions, targets, quantiles, *, mask=None):
-    ops = Ops(predictions)
+    ops = Ops(predictions, targets)
     predictions, targets = ops.real(predictions), ops.real(targets, finite=False)
     levels = np.asarray(quantiles, dtype=float)
     if (
