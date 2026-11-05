@@ -72,8 +72,8 @@ densities are rejected rather than repaired.
 Each step appends a fresh pure environment, applies a shared SU(4)-based
 input-conditioned circuit, then traces out the environment. Optional gating
 uses an input-conditioned convex mixture with the identity channel. This
-CPTP construction supports learned writing and forgetting, without claiming
-an exact classical GRU. Ensemble readouts do not impose measurement backaction.
+CPTP construction supports learned writing and forgetting through a quantum
+channel. Ensemble readouts preserve the recurrent density carry.
 
 Use `scan="parallel"` on recurrent/language constructors, or `method="parallel"`
 on `QuantumChannelPlan.scan`, for associative channel composition. It preserves
@@ -81,7 +81,8 @@ values and gradients, including gates, padding and resets. JAX uses
 `lax.associative_scan`; Torch uses batched prefix products. Logarithmic
 composition depth costs extra work and `O(B*T*16**m)` map storage. `max_work`
 and `max_memory_mb` reject oversized maps before allocation. Sequential density
-evolution remains the default. GPU speedup has not been measured.
+evolution remains the default. Select a scan mode using the target device's
+sequence-length, memory and execution-time measurements.
 
 Streaming generation prefills once, then updates each stage once per new token.
 JAX uses an explicit key and compiled scan. Supported prefixes are memory,
@@ -102,8 +103,8 @@ basis using a fast Walsh transform. They allocate no unused classical output
 layer or residual feed-forward head. KAN evaluates a shared univariate quantum
 basis per input coordinate, rather than a circuit for every coordinate pair.
 Sharing restricts the independent-edge KAN family. Default single-qubit
-RX/RY/RZ activations are efficiently classically simulable; they provide an
-inductive bias, without a quantum advantage claim.
+RX/RY/RZ activations are efficiently classically simulable and provide a
+trainable periodic basis as an inductive bias.
 
 Quantum-state diffusion uses `ChannelLayer(QuantumChannelPlan(...))` as a
 shared time-conditioned denoiser. In Torch it implements
@@ -130,11 +131,12 @@ excluding autodiff tapes, allocator reserves and communication. Explicit
 carries do not support the distributed tensor mesh adapter. There is no fixed
 qubit ceiling; requested resources determine admission. Continuous-variable
 models, fault-tolerant constructions and fully coherent quantum attention
-require other execution primitives and are not claimed as implemented.
+require dedicated execution primitives beyond these discrete circuit families.
 
 - [Quantum Variational Activation Functions Empower Kolmogorov-Arnold Networks](https://arxiv.org/abs/2509.14026), 2025 preprint: trainable univariate activations.
 - [Trainable Quantum-Native Language Models](https://arxiv.org/abs/2610.12806), 2026 preprint: dissipative memory and direct POVM readout, with explicit capacity and classical-control limitations.
 - [Quantum Generative Diffusion Model](https://arxiv.org/abs/2401.07039): depolarizing trajectories and Stinespring reverse channels for mixed-state generation.
 
-These methods do not establish fastest implementation or superiority to
-classical alternatives. Adaptations and execution boundaries are stated above.
+Select model families using task-specific held-out metrics and the execution
+costs of the chosen representation. Each implementation's parameter ownership,
+state carry and resource controls are described above.

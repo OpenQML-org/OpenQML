@@ -138,8 +138,8 @@ single-device budget/deadline profiles are rejected for this mode.
 
 Exact circuit/mixed-state cost can still grow exponentially with entangled
 width. A shallow retained space or low MPO bond rank constrains expressivity.
-The architecture makes those choices explicit; it does not establish quantum
-advantage, large-cluster speedup or universal trainability.
+Choose retained width, bond rank and circuit depth together with the task's
+validation loss, gradient diagnostics and available execution budget.
 
 The gated identity initialization follows [ReZero](https://arxiv.org/abs/2003.04887).
 Quantum residual channels draw on [postselection-free quantum residual networks,

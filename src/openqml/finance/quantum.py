@@ -403,7 +403,7 @@ class CardinalityQAOAPlan:
             operations=len(self.spec.circuit.operations),
             parameters=len(self.spec.weight_parameters),
             initialization="feasible_basis_plus_XY; not_uniform_Dicke",
-            guarantee="ideal_unitary_cardinality; no_advantage_claim",
+            guarantee="ideal_unitary_cardinality",
         )
 
     def initial_parameters(self, *, dtype="float64"):

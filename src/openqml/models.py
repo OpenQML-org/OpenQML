@@ -1,5 +1,6 @@
 """Array-based supervised training over the existing native network trainers."""
 
+from copy import deepcopy
 from importlib import import_module
 
 import numpy as np
@@ -32,7 +33,7 @@ def _data(value, name):
     else:
         value = np.asarray(value)
         valid = value.dtype.kind in "fibu" and np.isfinite(value).all()
-    if not valid or value.ndim == 0 or not value.shape[0]:
+    if not valid or value.ndim == 0 or 0 in value.shape:
         raise ValidationError(f"{name} must be a nonempty finite real array.")
     return value
 
@@ -98,6 +99,7 @@ class Model:
         self.architecture = architecture
         self.module = self.trainer = self._forecast = None
         self.history = []
+        self.best_epoch = self.stopped_epoch = None
         self._rng = np.random.default_rng(self.seed)
 
     def _build(self, features, outputs, microbatch_size):
@@ -231,31 +233,161 @@ class Model:
             return value
         return value.mean(dim=axes) if self.framework == "torch" else value.mean(axis=axes)
 
-    def fit(self, inputs, targets, *, epochs=1, batch_size=32, microbatch_size=None, shuffle=False):
+    def _check_targets(self, x, y, outputs, *, features=None):
+        features = self.input_features if features is None else features
+        if (
+            x.ndim < 2
+            or len(x) != len(y)
+            or x.shape[-1] != features
+            or 0 in x.shape
+            or 0 in y.shape
+        ):
+            raise ValidationError("Inputs and targets must match the model's sample/feature axes.")
+        prefix = (
+            x.shape[:1]
+            if self.architecture is not None and self.architecture.readout_pooling != "none"
+            else x.shape[:-1]
+        )
+        if self.task == "classification":
+            if y.shape != prefix:
+                raise ValidationError("Classification labels must match the input sample axes.")
+            module = type(y).__module__.split(".")[0]
+            xp = (
+                _require("torch", "torch")
+                if module == "torch"
+                else _require("jax.numpy", self.framework)
+                if module in {"jax", "jaxlib"}
+                else np
+            )
+            integral = (
+                not xp.is_floating_point(y) or bool((y == y.floor()).all())
+                if module == "torch"
+                else bool((y == xp.floor(y)).all())
+            )
+            if not integral or int(y.min()) < 0 or int(y.max()) >= outputs:
+                raise ValidationError("Classification labels must be integers in the class range.")
+        elif y.shape != prefix + (outputs,) and not (
+            self.task == "regression" and outputs == 1 and y.shape == prefix
+        ):
+            raise ValidationError("Targets must match the model's sample and output axes.")
+
+    def _snapshot(self):
+        trainer = self.trainer
+        if self.framework == "torch":
+            state = deepcopy(trainer.state_dict())
+        else:
+            jax = _require("jax", self.framework)
+            state = (
+                jax.tree_util.tree_map(lambda x: x.copy(), trainer.parameters),
+                jax.tree_util.tree_map(lambda x: x.copy(), trainer.optimizer_state),
+                trainer.updates,
+                trainer.attempts,
+                trainer.model,
+            )
+        return state, deepcopy(self._rng.bit_generator.state)
+
+    def _restore(self, snapshot):
+        state, rng = snapshot
+        if self.framework == "torch":
+            self.trainer.load_state_dict(state)
+        else:
+            (
+                self.trainer.parameters,
+                self.trainer.optimizer_state,
+                self.trainer.updates,
+                self.trainer.attempts,
+                self.trainer.model,
+            ) = state
+            self.trainer._compiled = self.trainer._compiled_model = None
+        self._rng.bit_generator.state = rng
+
+    def evaluate(self, inputs, targets, *, batch_size=256):
+        """Mean task loss in bounded batches, with native evaluation semantics."""
+        if self.trainer is None:
+            raise ValidationError("Call fit before evaluate.")
+        x, y = _data(inputs, "inputs"), _data(targets, "targets")
+        self._check_targets(x, y, self.output_features)
+        size, total = integer(batch_size, "batch_size", 1), 0.0
+
+        def accumulate():
+            result = 0.0
+            for start in range(0, len(x), size):
+                batch = self._convert(x[start : start + size])
+                prediction = (
+                    self.module(batch)
+                    if self.framework == "torch"
+                    else self.trainer.model(self.trainer.parameters, batch)
+                )
+                target = self._convert(
+                    y[start : start + size], labels=self.task == "classification"
+                )
+                result += float(self._loss(prediction, target).mean()) * len(batch)
+            return result
+
+        if self.framework == "torch":
+            torch = _require("torch", "torch")
+            training = self.module.training
+            self.module.eval()
+            try:
+                with torch.no_grad():
+                    total = accumulate()
+            finally:
+                self.module.train(training)
+        else:
+            total = accumulate()
+        value = total / len(x)
+        if not np.isfinite(value):
+            raise ValidationError("Evaluation loss must be finite.")
+        return value
+
+    def fit(
+        self,
+        inputs,
+        targets,
+        *,
+        epochs=1,
+        batch_size=32,
+        microbatch_size=None,
+        shuffle=False,
+        validation_data=None,
+        patience=None,
+        min_delta=0,
+        restore_best=True,
+    ):
+        """Train with optional held-out loss monitoring and full-state early stopping.
+
+        patience counts epochs without a min_delta improvement. With patience
+        and restore_best=True, restore parameters, optimizer, counters and RNG
+        to the best validation epoch. History retains every attempted epoch.
+        """
         x, y = _data(inputs, "inputs"), _data(targets, "targets")
         epochs, size = integer(epochs, "epochs", 1), integer(batch_size, "batch_size", 1)
         micro = size if microbatch_size is None else integer(microbatch_size, "microbatch_size", 1)
+        minimum = real(min_delta)
+        if minimum < 0 or type(restore_best) is not bool:
+            raise ValidationError("min_delta must be nonnegative and restore_best boolean.")
+        if patience is not None:
+            patience = integer(patience, "patience", 1)
+            if validation_data is None:
+                raise ValidationError("Early stopping requires validation_data=(inputs, targets).")
+        validation = None
+        if validation_data is not None:
+            if not isinstance(validation_data, (tuple, list)) or len(validation_data) != 2:
+                raise ValidationError("validation_data must contain inputs and targets.")
+            validation = tuple(_data(v, "validation data") for v in validation_data)
         if x.ndim < 2 or x.shape[0] != y.shape[0] or type(shuffle) is not bool:
             raise ValidationError("Inputs need [...,features] and matching target sample counts.")
         features = self.input_features or x.shape[-1]
         if x.shape[-1] != features:
             raise ValidationError("Input feature width differs from the model.")
         if self.task == "classification":
-            module = type(y).__module__.split(".")[0]
-            if module == "torch":
-                torch = _require("torch", "torch")
-                integral = not torch.is_floating_point(y) or bool((y == y.floor()).all())
-            elif module in {"jax", "jaxlib"}:
-                integral = bool((_require("jax.numpy", self.framework).floor(y) == y).all())
-            else:
-                integral = np.equal(y, np.floor(y)).all()
-            if not integral or int(y.min()) < 0:
-                raise ValidationError("Classification labels must be nonnegative integers.")
             outputs = self.output_features or max(2, int(y.max()) + 1)
-            if int(y.max()) >= outputs:
-                raise ValidationError("Classification label exceeds output_features.")
         else:
             outputs = self.output_features or (1 if y.ndim == 1 else y.shape[-1])
+        # Check all labels before creating an optimizer or applying an update.
+        self._check_targets(x, y, outputs, features=features)
+        if validation is not None:
+            self._check_targets(*validation, outputs, features=features)
         if self.trainer is None:
             self._build(features, outputs, micro)
         elif self.framework == "torch":
@@ -263,6 +395,8 @@ class Model:
         elif self.trainer.options.get("microbatch_size") != micro:
             self.trainer.options["microbatch_size"] = micro
             self.trainer._compiled_model = None
+        best, stale, snapshot = float("inf"), 0, None
+        self.best_epoch = self.stopped_epoch = None
         for _ in range(epochs):
             order = self._rng.permutation(len(x)) if shuffle else None
             total, accepted = 0.0, 0
@@ -284,7 +418,23 @@ class Model:
                 count = len(batch[0])
                 total += float(metrics["loss"]) * count
                 accepted += int(not bool(metrics["skipped"]))
-            self.history.append({"loss": total / len(x), "updates": accepted})
+            row = {"loss": total / len(x), "updates": accepted}
+            if validation is not None:
+                row["val_loss"] = self.evaluate(*validation, batch_size=size)
+            self.history.append(row)
+            if validation is not None:
+                if row["val_loss"] < best - minimum:
+                    best, stale = row["val_loss"], 0
+                    self.best_epoch = len(self.history)
+                    if patience is not None and restore_best:
+                        snapshot = self._snapshot()
+                else:
+                    stale += 1
+                if patience is not None and stale >= patience:
+                    self.stopped_epoch = len(self.history)
+                    break
+        if snapshot is not None:
+            self._restore(snapshot)
         return self
 
     def _predict_raw(self, inputs, batch_size):

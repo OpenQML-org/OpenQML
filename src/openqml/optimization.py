@@ -140,7 +140,7 @@ class CertifiedOptimization:
 def optimize_verified(circuit, *, proof_options=None, **optimization_options):
     """Return an optimization only when its exact IR semantics are proved.
 
-    Unproved numeric angle identities and exhausted proof budgets are explicit.
+    Numeric identities require exact certificates within explicit proof budgets.
     This opt-in check does not change the ordinary optimization API or certify
     hardware-dependent gate/noise context.
     """

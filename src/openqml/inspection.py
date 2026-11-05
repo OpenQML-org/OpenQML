@@ -39,7 +39,7 @@ class PythonSourceReport:
             "scope": "static_source_inspection_only",
             "code_executed": False,
             "whole_program_conversion_supported": False,
-            "runtime_validity": "not_proven",
+            "runtime_validity": "requires_execution",
             **asdict(self),
         }
 
@@ -277,7 +277,7 @@ def inspect_python(
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             note(
                 "PYTHON_OPAQUE_DEFINITION",
-                "Function/class behavior is not proven by this syntactic scan.",
+                "Function/class definitions require separate runtime validation.",
                 node,
             )
         if isinstance(node, ast.ClassDef) and any(

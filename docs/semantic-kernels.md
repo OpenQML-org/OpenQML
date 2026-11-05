@@ -1,8 +1,8 @@
 # Exact hybrid conversion validation
 
-OpenQML now validates more conversions by comparing quantum instruments, rather
-than requiring measurement/control syntax to match. This is a bounded compiler
-component, not a universal translator of Python or a claim of a new theorem.
+OpenQML validates conversions by comparing quantum instruments across differing
+measurement/control syntax. The compiler uses explicit work, term and component
+width budgets for exact circuit-level reasoning.
 
 ## Semantics and algorithm
 
@@ -76,7 +76,7 @@ Primary sources and implemented scope:
 
 | Source | Idea used here | Scope of this implementation |
 | --- | --- | --- |
-| Ke, Li and Li, [Irene: Equivalence Checking of Hybrid Quantum Programs via Structure-Preserving Symbolic Reduction](https://arxiv.org/abs/2609.36065), September 2026 preprint | Stage structural reasoning before observable density-kernel comparison; compare coherent input/output maps and hidden histories | Exact sparse, component-factored kernels; no Irene HPS graph-isomorphism engine, SMT solver or Irene performance claims |
+| Ke, Li and Li, [Irene: Equivalence Checking of Hybrid Quantum Programs via Structure-Preserving Symbolic Reduction](https://arxiv.org/abs/2609.36065), September 2026 preprint | Stage structural reasoning before observable density-kernel comparison; compare coherent input/output maps and hidden histories | Exact sparse, component-factored kernels |
 | Ricciardi et al., [Quantum Circuit Equivalence Checking: A Tractable Bridge From Unitary to Hybrid Circuits](https://arxiv.org/abs/2511.22523), 2025 preprint | Explicit distinction between unitary, hybrid and discarded-output semantics | Direct instrument semantics; no general deferred-measurement lifting or SQbricks implementation |
-| Hong et al., [Equivalence Checking of Parameterised Quantum Circuits](https://arxiv.org/abs/2404.18456) | Symbolic parameters require an all-bindings guarantee, separate from testing at selected bindings | Conservative exponential-polynomial identities; no claim to implement the paper's full algorithm |
+| Hong et al., [Equivalence Checking of Parameterised Quantum Circuits](https://arxiv.org/abs/2404.18456) | Symbolic parameters require an all-bindings guarantee, separate from testing at selected bindings | Exact exponential-polynomial identities within the supported symbolic domain |
 | Vilmart, [Rewriting and Completeness of Sum-Over-Paths in Dyadic Fragments of Quantum Computing](https://lmcs.episciences.org/13200), Logical Methods in Computer Science 20(1:20), 2024 | Mathematical background for exact dyadic-phase reasoning rather than floating comparison | The present scalar field handles the Clifford+T fragment; this is not Vilmart's complete rewrite system for all dyadic fragments |

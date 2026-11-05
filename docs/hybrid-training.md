@@ -21,8 +21,8 @@ The architectural basis is [Wang et al., *Circuit hypernetworks for
 quantum-augmented diffusion language models*](https://arxiv.org/html/2609.24657v1),
 a September 2026 preprint. OpenQML independently implements its two-body IQP
 readout family and adapts the residual branch to general feature tensors.
-The implemented scope is the exact local readout family and native training
-interface; no task-level quantum advantage is established.
+The implementation combines exact local readouts, native automatic
+differentiation and trainable residual branches over general feature tensors.
 
 The prepared circuit is
 `C = H^n exp[-i/2 (sum(alpha_q Z_q) + sum(omega_e Z_i Z_j))] H^n`.
@@ -76,14 +76,15 @@ executed using convergence masks; JAX uses a static `lax.fori_loop` to avoid
 unrolling a separate trace per iteration. There is no per-iteration host/device
 synchronization or hidden dense inverse. The returned direction, convergence
 flag, logical iteration count, actual product count and recomputed residual are
-native tensors/arrays. Exhausting the budget never becomes a convergence claim.
+native tensors/arrays. The convergence flag reports whether the requested
+residual tolerance was reached within the iteration budget.
 Autodiff retention and parameter/coordinate buffers still consume memory.
 
 The state metric follows [Quantum Natural Gradient, Quantum 4, 269
-(2020)](https://arxiv.org/abs/1909.02108); the constant IQP covariance and native
-encoder pullback are the specialized implementation here, not an assertion
-that the HyperQ paper implements this optimizer. Loss convergence and superiority
-over Adam/SGD are not guaranteed.
+(2020)](https://arxiv.org/abs/1909.02108). OpenQML specializes it to constant IQP
+covariance and a native encoder pullback. Select damping and compare held-out
+loss under the same training budget when choosing between this optimizer and
+Adam or SGD.
 
 ## Initialization and general noisy layers
 
@@ -94,8 +95,8 @@ therefore starts at identity while encoding remains active. Local RY/RZ and
 trainable RZZ gates retain an entangling family after parameter updates.
 [Identity-Paired Progressive Depth Training](https://arxiv.org/html/2607.16800v1)
 (July 2026) identifies permanent expressivity saturation from canceling fixed
-CNOT rings. OpenQML avoids that construction; it does not claim to implement
-the paper's complete progressive training curriculum or eliminate all plateaus.
+CNOT rings. OpenQML uses independently trainable RZZ blocks and explicit depth
+schedules to retain active entanglers as training progresses.
 Initialization recipes are applied by the named constructors; checkpoints
 preserve actual learned values in the existing source-parameter order.
 
@@ -122,5 +123,28 @@ gradients/Hessians including zero cosine factors, large structured readouts
 without dense allocation, ordinary joint training, native metric products and
 damped solves, initialization identities, feedback derivatives, checkpoint
 topology, chunk equivalence, Torch compile/func transforms and JAX JIT/vmap/Optax.
-CUDA tests execute only when hardware is available. CPU tests do not establish
-GPU throughput or the source papers' downstream language-model results.
+CUDA tests execute when hardware is available. Measure throughput on the target
+device with the intended architecture, precision, batch size and execution path.
+
+## Validation and early stopping
+
+The high-level `Model` interface provides a held-out loss monitor for Torch,
+JAX and Flax:
+
+```python
+import openqml as oq
+
+x = [[0.0, 0.1], [0.1, 0.2], [0.2, 0.3], [0.3, 0.4], [0.4, 0.5], [0.5, 0.6]]
+y = [0.02, 0.03, 0.04, 0.05, 0.06, 0.07]
+model = oq.Model(hidden_features=8, depth=2)
+model.fit(x[:4], y[:4], validation_data=(x[4:], y[4:]), epochs=50, patience=5)
+print(model.best_epoch, model.evaluate(x[4:], y[4:]))
+```
+
+`min_delta` sets the required loss reduction. `restore_best=True` restores the
+complete selected training state when `patience` is set: parameters, optimizer,
+counters and random state. All attempted epochs remain in `history`; each
+validation entry includes `val_loss`. Checkpoints retain history and selection
+positions. Repeated `fit` calls resume the selected optimizer state and start a
+new monitoring window. Financial data can use the nested chronological
+validation in [`finance.walk_forward`](finance.md#rolling-hybrid-model-selection).

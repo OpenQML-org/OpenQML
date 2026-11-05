@@ -1,8 +1,8 @@
 """Exact product-state execution across quantum AND classical dependency factors.
 
 Factors are conservative: both arms of a conditional and every shared classical
-bit join the graph. This is a zero-state readout representation, not a claim
-that arbitrary entangled inputs factor, nor a replacement for full-state output.
+bit join the graph. This representation evaluates zero-state local readouts;
+entangled input states and full-state outputs use their dedicated executors.
 """
 
 from dataclasses import dataclass, field

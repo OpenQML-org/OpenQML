@@ -1,32 +1,32 @@
 # OpenQML
 
-[PyPI](https://pypi.org/project/openqml/) · [CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml) · [文档](https://github.com/OpenQML-org/OpenQML/tree/main/docs)
+[PyPI](https://pypi.org/project/openqml/) · [Documentation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/api.md) · [CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml)
 
-## 量子-经典混合AI：
+## Quantum–classical hybrid AI
 
-用 PyTorch、JAX 或 Flax 构建和训练混合神经网络。提供统一的 `fit` / `predict` 接口，也可直接使用原生网络层、训练器和张量网络执行后端。
+Build and train hybrid neural networks with PyTorch, JAX or Flax. Use `Model.fit` and `predict` for supervised tasks, or compose convolution, attention, graph, recurrent and generative architectures with native layers. Validation loss, early stopping and portable checkpoints keep model selection and continued training in the same workflow. [Explore hybrid AI](https://github.com/OpenQML-org/OpenQML/blob/main/docs/models.md).
 
-## 量子-经典混合量化：
+## Quantum–classical hybrid quantitative research
 
-支持收益分布建模、风险估计、约束资产配置、交易成本核算和衍生品定价。可微金融计算与混合网络共用原生张量；量子估计提供精度、噪声和调用预算控制。
+Model return distributions, estimate tail risk, allocate constrained portfolios and price bounded payoffs. Purged walk-forward refits produce aligned out-of-sample predictions; self-financing accounting applies execution delays, fees and market impact. Differentiable financial calculations share native tensors with hybrid networks. Coherent estimation exposes precision, confidence, noise and query budgets. [Explore quantitative research](https://github.com/OpenQML-org/OpenQML/blob/main/docs/finance.md).
 
-## 量子编程跨框架互操作：
+## Cross-framework quantum programming
 
-通过统一电路表示连接 Qiskit、Cirq、PennyLane 和 OpenQASM。转换、编译和执行使用同一套 API，具体支持范围见[文档](https://github.com/OpenQML-org/OpenQML/tree/main/docs)。
+Connect Qiskit, Cirq, PennyLane and OpenQASM through a shared circuit representation. Prepare conversions, inspect target compatibility and stream parameter sweeps from one imported source. Conversion plans preserve parameter ownership, explicit channels, classical control and global phase where the target supports them. [Explore interoperability](https://github.com/OpenQML-org/OpenQML/blob/main/docs/interoperability.md).
 
-## 安装
+## Install
 
-需要 Python 3.10 或更高版本：
+Python 3.10 or later:
 
 ```bash
 python -m pip install -U openqml
 ```
 
-核心依赖为 NumPy、packaging 和 psutil。训练框架、量子 SDK 和执行后端按需加载。
+The core depends on NumPy, packaging and psutil. Training frameworks, quantum SDKs and execution engines load on demand. Install the integrations you use, such as `openqml[torch]`, `openqml[jax]`, `openqml[flax]` or `openqml[qiskit,cirq]`.
 
-## 快速开始
+## Quick start
 
-从收益观测计算资产权重：
+Allocate from observed returns:
 
 ```python
 import openqml as oq
@@ -36,11 +36,7 @@ portfolio = oq.finance.allocate(returns, caps=0.7, fees=0.001)
 print(portfolio.weights)
 ```
 
-训练模型前，安装 `openqml[torch]`、`openqml[jax]` 或 `openqml[flax]`。以下使用 PyTorch：
-
-```bash
-python -m pip install -U "openqml[torch]"
-```
+Train a hybrid model after installing `openqml[torch]`:
 
 ```python
 import openqml as oq
@@ -48,16 +44,14 @@ import openqml as oq
 x = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]] * 8
 y = [0, 1, 1, 0] * 8
 model = oq.Model(task="classification", hidden_features=8, depth=2)
-model.fit(x, y)
+model.fit(x, y, epochs=10)
 print(model.predict(x[:2]))
 ```
 
-设置 `framework="jax"` 或 `framework="flax"` 切换训练框架。`backend` 选择电路执行后端，`device` 选择原生张量设备。量子比特数由计算资源和后端能力约束，没有固定的库级上限。
+Select `framework="jax"` or `framework="flax"` to change training frameworks. `backend` chooses circuit execution; `device` chooses native tensor placement. Qubit counts follow the selected backend's available resources.
 
-量子查询优势依赖高效的相干 Oracle、噪声水平和完整执行成本，不代表已获得实机加速或投资超额收益。
+[API](https://github.com/OpenQML-org/OpenQML/blob/main/docs/api.md) · [Training and validation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md) · [Quantitative research](https://github.com/OpenQML-org/OpenQML/blob/main/docs/finance.md) · [Interoperability](https://github.com/OpenQML-org/OpenQML/blob/main/docs/interoperability.md) · [Tensor networks](https://github.com/OpenQML-org/OpenQML/blob/main/docs/tensor-networks.md) · [Runtime](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md)
 
-[API](https://github.com/OpenQML-org/OpenQML/blob/main/docs/api.md) · [混合网络](https://github.com/OpenQML-org/OpenQML/blob/main/docs/models.md) · [量化](https://github.com/OpenQML-org/OpenQML/blob/main/docs/finance.md) · [训练](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md) · [张量网络](https://github.com/OpenQML-org/OpenQML/blob/main/docs/tensor-networks.md) · [运行时](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md)
-
-## 许可证
+## License
 
 [Apache-2.0](LICENSE)

@@ -4,11 +4,16 @@ import importlib
 import os
 import subprocess
 import sys
+from importlib.metadata import version
 from pathlib import Path
 
 import pytest
 
 import openqml as oq
+
+
+def test_package_version_matches_the_installed_distribution():
+    assert oq.__version__ == version("openqml")
 
 
 def test_core_import_and_discovery_do_not_eagerly_load_integrations():

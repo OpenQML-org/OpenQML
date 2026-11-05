@@ -3,7 +3,7 @@
 `DistributedTensorPlan` partitions intermediate circuit tensors across devices,
 then contracts them as distributed GEMMs. It preserves every quantum mode and
 every exact slice. This adds model parallelism alongside the existing DDP/JAX
-data-parallel trainers; it does not remove general contraction complexity.
+data-parallel trainers. Contraction structure determines the total work.
 
 Construct a plan from `circuit`, `observables`, `world_size`, calibrated
 `Interconnect` rates and `max_memory_mb` **per rank**. Supply path-search options
@@ -39,11 +39,10 @@ to enabled; every tensor rank must participate in backward and recomputation.
 Use a separate data-parallel group when combining this with DDP.
 
 `return_report=True` also returns the rank, device name, runtime version,
-measured forward wall time and CUDA process allocation high-water mark. These
-measurements describe that invocation, not an inferred speedup. Reports do not
-contain binding values. Tensor-rank timing and collective overhead are part of
-the execution; QPUs instead execute provider jobs through the runtime scheduler.
-Independent QPUs are not treated as an entangled distributed quantum computer.
+measured forward wall time and CUDA process allocation high-water mark. Reports
+describe that invocation and omit binding values. Tensor-rank timing and
+collective overhead are part of execution. QPUs execute independent provider
+jobs through the runtime scheduler.
 
 ## Hardware validation
 
@@ -54,12 +53,12 @@ least two CUDA devices. It verifies real device UUIDs, values and gradients and
 uploads per-device execution reports. Missing CUDA/NCCL causes failure in this
 hardware workflow, rather than a simulated-device pass.
 
-This is functional hardware acceptance. Large-scale throughput, strong scaling,
-memory efficiency and end-to-end training claims require measured workloads on
-the actual target cluster. The standard hosted CI cannot establish them.
+Record throughput, strong scaling, memory use and complete training time on the
+target cluster using the intended topology and workload. Keep these measurements
+alongside the workflow's device and runtime reports.
 
 The implementation adopts intermediate distribution and GEMM-oriented mode
 ordering from [Pan et al., 2026](https://arxiv.org/abs/2606.01852), using Torch
-DTensor and bounded search. It does not claim to implement that paper's entire
-cuTENSORMp planner or inherit its reported speedups. DTensor layout/gradient
+DTensor and bounded search. OpenQML's planner uses the declared interconnect,
+per-rank memory and candidate layouts. DTensor layout/gradient
 semantics follow the [PyTorch documentation](https://docs.pytorch.org/docs/stable/distributed.tensor.html).

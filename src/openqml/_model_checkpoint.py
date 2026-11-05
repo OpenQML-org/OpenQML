@@ -88,6 +88,8 @@ def save_model(model, path):
         "architecture": model.architecture.to_dict(),
         "microbatch_size": micro,
         "history": model.history,
+        "best_epoch": model.best_epoch,
+        "stopped_epoch": model.stopped_epoch,
         "shuffle_rng": model._rng.bit_generator.state,
     }
     path = Path(path)
@@ -139,8 +141,9 @@ def load_model(cls, path, *, device, backend, max_bytes):
             history = metadata["history"]
             if not isinstance(history, list) or any(
                 not isinstance(row, dict)
-                or set(row) != {"loss", "updates"}
+                or set(row) not in ({"loss", "updates"}, {"loss", "updates", "val_loss"})
                 or not np.isfinite(float(row["loss"]))
+                or ("val_loss" in row and not np.isfinite(float(row["val_loss"])))
                 or integer(row["updates"], "updates") < 0
                 for row in history
             ):
@@ -166,6 +169,11 @@ def load_model(cls, path, *, device, backend, max_bytes):
                 else:
                     model.trainer.load(payload)
             model._rng, model.history = rng, history
+            for name in ("best_epoch", "stopped_epoch"):
+                value = metadata.get(name)
+                if value is not None and integer(value, name, 1) > len(history):
+                    raise ValidationError("Model selection epoch exceeds the training history.")
+                setattr(model, name, value)
             return model
     except (zipfile.BadZipFile, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
         if isinstance(exc, (ValidationError, ResourceError)):

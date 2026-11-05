@@ -38,9 +38,8 @@ class PurgedWalkForward:
     def split(self, times, label_end):
         """Purge every training label touching a test decision timestamp.
 
-        gap is an additional pre-test gap in observations, not a claim that a
-        generic post-test embargo can remove non-stationarity or data snooping.
-        Features, atom selection and calibration must also be fit on train only.
+        gap adds a pre-test gap in observations. Fit features, atom selection
+        and calibration on training rows; assess distribution drift separately.
         """
         times, ends = np.asarray(times), np.asarray(label_end)
         if times.ndim != 1 or ends.shape != times.shape or not len(times):

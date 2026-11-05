@@ -43,7 +43,7 @@ service.run(backend="device", noise_model=model)
     assert all(d.location.startswith("program.py:") for d in report.diagnostics[1:])
     data = json.loads(report.to_json())
     assert data["code_executed"] is False and data["whole_program_conversion_supported"] is False
-    assert data["runtime_validity"] == "not_proven"
+    assert data["runtime_validity"] == "requires_execution"
     with pytest.raises(oq.ConversionError):
         oq.convert(source, source="python", target="ir")
     assert not marker.exists()

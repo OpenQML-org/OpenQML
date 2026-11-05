@@ -330,7 +330,7 @@ def compile_program(
     strategy='ir' requests the existing strict Circuit conversion/certification
     path. 'auto'/'native' use Qiskit's structured route for Qiskit/OpenQASM 3;
     other pairs use portable IR (or fail when native was explicitly required).
-    This never executes source strings or claims to translate arbitrary Python.
+    Source text uses bounded syntax frontends; host Python runs before capture.
     """
     from .conversion import _format, convert
     from .program import QuantumProgram, detect_framework
