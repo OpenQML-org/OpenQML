@@ -415,9 +415,7 @@ def test_architecture_depth_is_admitted_before_expanding_operator_sequences():
             pytest.fail("Depth admission must precede operator sequence construction")
 
     with pytest.raises(oq.ResourceError, match="depth"):
-        oq.HybridArchitecture(
-            1, 1, depth=10**9, max_parameters=100, operators=DeferredOperators()
-        )
+        oq.HybridArchitecture(1, 1, depth=10**9, max_parameters=100, operators=DeferredOperators())
 
 
 @pytest.mark.parametrize(
