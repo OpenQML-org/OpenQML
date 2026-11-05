@@ -501,7 +501,7 @@ def test_readme_quickstart_is_executable_and_completes_an_optimizer_step():
     import re
     from pathlib import Path
 
-    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
     blocks = re.findall(r"```python\n(.*?)```", readme, re.S)
     assert blocks
     namespace = {}
