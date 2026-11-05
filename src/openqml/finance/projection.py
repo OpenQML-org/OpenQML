@@ -14,6 +14,13 @@ def _prox(values, center, caps, penalty, budget, ops):
     and linear space; no iterative bisection or asset-by-asset active set.
     """
     xp = ops.xp
+    center = ops.clip(center, 0, caps)
+    zero_center = (ops.max(center) == 0)[..., None]
+    # With a zero reference, a common linear fee is constant on the funded
+    # simplex. Remove it before forming scores and eliminate the L1 kink.
+    linear_fee = penalty - ops.min(penalty, keepdims=True)
+    values = xp.where(zero_center, values - linear_fee, values)
+    penalty = xp.where(zero_center, 0, penalty)
     # A capacity-weighted quantile bounds the optimal multiplier around a
     # represented input score. Clip only scores guaranteed to saturate. This
     # preserves unit-scale breakpoints even with very large common offsets.
@@ -29,7 +36,6 @@ def _prox(values, center, caps, penalty, budget, ops):
     bound = ops.max(caps, keepdims=True) + 2 * ops.max(penalty, keepdims=True)
     half = values * 0.5 - pivot * 0.5
     values = xp.minimum(xp.maximum(half, -bound * 0.5), bound * 0.5) * 2
-    center = ops.clip(center, 0, caps)
     heights = ops.cat((center, caps - center), axis=-1)
     ends = ops.cat((values + penalty, values - penalty - center), axis=-1)
     starts = ends - heights
@@ -87,4 +93,21 @@ def cost_aware_projection(values, *, previous=None, caps=1, penalty=0, budget=1,
         (budget >= 0) & (budget <= capacity + 8 * eps * values.shape[-1]),
         "Portfolio budget exceeds available position capacity.",
     )
-    return _prox(values, previous, caps, penalty, ops.xp.minimum(budget, capacity), ops)
+    target = ops.xp.minimum(budget, capacity)
+    result = _prox(values, previous, caps, penalty, target, ops)
+    center = ops.clip(previous, 0, caps)
+    for _ in range(2):
+        free = (result > 0) & (result < caps) & ((penalty == 0) | (result != center))
+        free = free.to(result.dtype) if ops.name == "torch" else free.astype(result.dtype)
+        count = ops.sum(free)
+        correction = (ops.sum(result) - target) / ops.xp.where(count > 0, count, 1)
+        result = ops.clip(result - correction[..., None] * free, 0, caps)
+    valid = ops.xp.isfinite(ops.sum(result)) & (
+        ops.xp.abs(ops.sum(result) - target) <= 64 * eps * ops.xp.abs(target)
+    )
+    return ops.check(
+        result,
+        valid[..., None],
+        "Projection exceeded its funding tolerance; increase numeric precision.",
+        resource=True,
+    )

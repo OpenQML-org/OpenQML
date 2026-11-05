@@ -209,6 +209,9 @@ multiplier lies in `[p-C-P,p+P]`. Scores relative to `p` can therefore be clippe
 to `[-C-2P,C+2P]` without changing the optimum. The resulting native sorted
 breakpoints retain small financing quantities even when input scores have very
 large common offsets. Work remains `O(N log N)` with linear temporary storage.
+For a zero reference portfolio, common linear fees are constant under the funding
+equality and are removed before score construction. A final conservation check
+rejects unresolved financing rather than returning weights outside the budget.
 
 ## Differentiable decision risk budgets
 

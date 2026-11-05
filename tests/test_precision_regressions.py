@@ -180,6 +180,45 @@ def test_cost_aware_projection_matches_independent_multiplier_bisection():
         np.testing.assert_allclose(actual, weights, atol=1e-12, rtol=0)
 
 
+@pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
+def test_projection_removes_budget_constant_linear_fees(backend):
+    values = native([0.1, -0.2, 0.3], backend)
+    actual = oq.finance.cost_aware_projection(values, penalty=1e20)
+    np.testing.assert_allclose(actual, [11 / 30, 1 / 15, 17 / 30], atol=2e-6)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
+def test_projection_rejects_unresolved_funding_instead_of_returning_an_invalid_portfolio(backend):
+    values = native([0.1, -0.2, 0.3], backend)
+    with pytest.raises(oq.ResourceError, match="funding tolerance"):
+        oq.finance.cost_aware_projection(values, previous=[0.1, 0.2, 0.3], penalty=1e20)
+
+
+def test_compiled_projection_marks_unresolved_financing_with_nan():
+    jax = pytest.importorskip("jax")
+    jnp = pytest.importorskip("jax.numpy")
+    project = jax.jit(
+        lambda values: oq.finance.cost_aware_projection(
+            values, previous=[0.1, 0.2, 0.3], penalty=1e20
+        )
+    )
+    assert np.isnan(project(jnp.array([0.1, -0.2, 0.3]))).all()
+
+
+@pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
+def test_projection_preserves_a_small_representable_budget(backend):
+    result = oq.finance.cost_aware_projection(native([0, 0, 0], backend), budget=1e-9)
+    np.testing.assert_allclose(result / 1e-9, np.full(3, 1 / 3), rtol=2e-6)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
+def test_projection_refines_roundoff_on_the_selected_trading_face(backend):
+    result = oq.finance.cost_aware_projection(
+        native([0.1, -0.2, 0.3], backend), previous=[0.2, 0.3, 0.5], penalty=100
+    )
+    np.testing.assert_allclose(result, [0.2, 0.3, 0.5], atol=2e-7, rtol=0)
+
+
 @pytest.mark.parametrize("target", ["cirq", "qiskit", "pennylane", "openqasm3"])
 @pytest.mark.parametrize("location", ["gate", "phase"])
 def test_raw_constant_expression_nodes_preserve_sdk_semantics(target, location):
