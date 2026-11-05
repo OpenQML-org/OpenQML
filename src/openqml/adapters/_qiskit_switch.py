@@ -48,8 +48,7 @@ def lower_switch(
         numeric = tuple(v for v in labels if v is not CASE_DEFAULT)
         for value in numeric:
             if (
-                isinstance(value, bool)
-                or not isinstance(value, Integral)
+                not isinstance(value, Integral)
                 or not 0 <= value < (1 << len(bits))
                 or value in seen
             ):

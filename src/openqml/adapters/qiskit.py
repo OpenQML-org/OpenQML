@@ -461,7 +461,9 @@ def to_qiskit(circuit: Circuit, bindings=None, *, _symbols=None):
             bits = op.condition.bits
             if len(bits) == 1:
                 condition = (native.clbits[bits[0]], op.condition.value)
-            elif bits == tuple(range(native.num_clbits)):
+            elif len(bits) == native.num_clbits and all(
+                bit == index for index, bit in enumerate(bits)
+            ):
                 condition = (native.cregs[0], op.condition.value)
             else:
                 tests = [

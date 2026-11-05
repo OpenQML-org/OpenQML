@@ -151,8 +151,11 @@ The positive ridge gives a unique solution. A sorted exact cost-aware proximal
 projection identifies active bounds and no-trade facets. The final constrained
 solve uses a residual-refined Woodbury solve when the factor rank is at most
 64 and at most one quarter of the asset count. It solves a factor-sized system
-and keeps probability masses outside square roots, retaining finite derivatives
-at zero-mass atoms. Other factor shapes use preconditioned conjugate gradients
+with factors scaled by the square root of their absolute mass before forming
+the Gram matrix. This balancing prevents inactive large factors from overflowing
+during the numerical solve. Implicit derivatives use the original operator with
+explicit masses, retaining finite derivatives at zero-mass atoms. Other factor
+shapes use preconditioned conjugate gradients
 with factor matrix products. Both paths avoid an asset-sized KKT factorization
 and a stored optimizer-iteration tape.
 PyTorch implicit adjoints/JVPs and JAX `custom_linear_solve` differentiate the
@@ -185,7 +188,12 @@ out-of-sample coverage, shift estimation or block-bootstrap validation.
 When probabilities are omitted, CVaR uses exact partial selection instead of a
 full scenario sort: NumPy partition, PyTorch top-k or JAX top-k. Fractional
 boundary mass is retained, including when the tail contains less than one atom.
-The weighted case retains the probability-aware sorted implementation. Native
+The weighted case sorts losses and accumulates the admitted upper-tail mass
+directly, avoiding subtraction against an extreme lower-tail threshold.
+At zero confidence it returns the weighted mean. Probability normalization uses
+an exact power-of-two scale before summation so large finite weights remain
+representable. Fractional unweighted boundaries exclude one selected boundary
+atom before summing the interior. Native
 gradients remain piecewise; ties can select different valid subgradients across
 backends. Selection uses the native array backend's partition or top-k kernel.
 
@@ -220,7 +228,9 @@ can be native batched tensors. Gradients reach a scenario model and a learned
 radius head through the selected CVaR ordering and projection branch; ties and
 active-budget boundaries have piecewise derivatives. Fit/calibrate contextual
 radii within the training fold. The reported risk applies to the supplied
-scenario horizon and robust margin; price spreads, fees, impact and realized
+scenario horizon and robust margin. Eager invalid inputs raise a validation
+error; traced invalid radii, probabilities, scenarios or cash/budget bounds
+propagate NaNs into the projected weights. Price spreads, fees, impact and realized
 future returns are accounted for by the execution model.
 
 ## Execution timing and self-financing accounts

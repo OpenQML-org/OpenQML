@@ -1,9 +1,10 @@
 import importlib
+import math
 from numbers import Real
 
 from .._dependencies import install_hint
 from ..errors import MissingDependencyError, ValidationError, conversion_error
-from ..parameters import Expression, Parameter, expression, node, real
+from ..parameters import Expression, Parameter, _postorder, expression, node, real
 
 
 def dependency(module, extra):
@@ -37,20 +38,6 @@ def numeric(value, location="parameter"):
 def sympy_expression(value, location="parameter"):
     sympy = dependency("sympy", "symbolic")
     value = sympy.sympify(value)
-    if not value.free_symbols:
-        return Expression(constant=numeric(value, location))
-    if isinstance(value, sympy.Symbol):
-        return expression(Parameter(str(value)))
-    if value.func in {sympy.Add, sympy.Mul}:
-        values = [sympy_expression(v, location) for v in value.args]
-        result = expression(0 if value.func is sympy.Add else 1)
-        for part in values:
-            result = result + part if value.func is sympy.Add else result * part
-        return result
-    if value.func is sympy.Pow:
-        return sympy_expression(value.args[0], location) ** sympy_expression(
-            value.args[1], location
-        )
     functions = {
         sympy.sin: "sin",
         sympy.cos: "cos",
@@ -58,27 +45,90 @@ def sympy_expression(value, location="parameter"):
         sympy.exp: "exp",
         sympy.log: "log",
     }
-    if value.func in functions:
-        return node(functions[value.func], sympy_expression(value.args[0], location))
-    raise conversion_error(
-        "SYMBOLIC_OPERATION", f"Unsupported real symbolic function {value.func}.", location
-    )
+    values, active, pending = {}, {}, [(value, False)]
+    while pending:
+        current, ready = pending.pop()
+        key = id(current)
+        if key in values:
+            continue
+        if current.args and current.func not in {sympy.Add, sympy.Mul, sympy.Pow, *functions}:
+            if not current.free_symbols:
+                values[key] = Expression(constant=numeric(current, location))
+                active[key] = False
+                continue
+            raise conversion_error(
+                "SYMBOLIC_OPERATION",
+                f"Unsupported real symbolic function {current.func}.",
+                location,
+            )
+        if not ready and current.args:
+            pending.append((current, True))
+            pending.extend((arg, False) for arg in reversed(current.args))
+            continue
+        if isinstance(current, sympy.Symbol):
+            result, has_symbols = expression(Parameter(str(current))), True
+        else:
+            has_symbols = any(active[id(arg)] for arg in current.args)
+            if not has_symbols:
+                result = Expression(constant=numeric(current, location))
+            elif current.func in {sympy.Add, sympy.Mul}:
+                parts = [values[id(arg)] for arg in current.args]
+                if current.func is sympy.Add and all(part.is_affine for part in parts):
+                    coefficients = {}
+                    for part in parts:
+                        for name, coefficient in part.terms:
+                            coefficients.setdefault(name, []).append(coefficient)
+                    result = Expression(
+                        tuple((name, math.fsum(items)) for name, items in coefficients.items()),
+                        math.fsum(part.constant for part in parts),
+                    )
+                    values[key], active[key] = result, has_symbols
+                    continue
+                while len(parts) > 1:
+                    parts = [
+                        parts[i] + parts[i + 1]
+                        if current.func is sympy.Add
+                        else parts[i] * parts[i + 1]
+                        for i in range(0, len(parts) - 1, 2)
+                    ] + (parts[-1:] if len(parts) % 2 else [])
+                result = parts[0]
+            elif current.func is sympy.Pow:
+                result = values[id(current.args[0])] ** values[id(current.args[1])]
+            elif current.func in functions:
+                result = node(functions[current.func], values[id(current.args[0])])
+            else:
+                raise conversion_error(
+                    "SYMBOLIC_OPERATION",
+                    f"Unsupported real symbolic function {current.func}.",
+                    location,
+                )
+        values[key], active[key] = result, has_symbols
+    return values[id(value)]
 
 
 def to_sympy(expr):
     sympy = dependency("sympy", "symbolic")
-    if expr.op is None:
-        return expr.constant + sum(c * sympy.Symbol(name, real=True) for name, c in expr.terms)
-    values = [to_sympy(v) for v in expr.args]
-    if expr.op == "add":
-        return values[0] + values[1]
-    if expr.op == "mul":
-        return values[0] * values[1]
-    if expr.op == "div":
-        return values[0] / values[1]
-    if expr.op == "pow":
-        return values[0] ** values[1]
-    return getattr(sympy, expr.op)(values[0])
+    values = {}
+    for current in _postorder((expr,)):
+        if current.op is None:
+            result = sympy.Add(
+                current.constant,
+                *(c * sympy.Symbol(name, real=True) for name, c in current.terms),
+            )
+        else:
+            args = [values[id(arg)] for arg in current.args]
+            if current.op == "add":
+                result = args[0] + args[1]
+            elif current.op == "mul":
+                result = args[0] * args[1]
+            elif current.op == "div":
+                result = args[0] / args[1]
+            elif current.op == "pow":
+                result = args[0] ** args[1]
+            else:
+                result = getattr(sympy, current.op)(args[0])
+        values[id(current)] = result
+    return values[id(expr)]
 
 
 def reverse_local_basis(matrix):

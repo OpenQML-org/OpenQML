@@ -79,6 +79,7 @@ def main(argv=None):
     command.add_argument("--max-operations", type=int, default=100_000)
     command.add_argument("--max-depth", type=int, default=64)
     command.add_argument("--max-output-statements", type=int, default=100_000)
+    command.add_argument("--max-output-bytes", type=int, default=2_000_000)
     inspection = commands.add_parser(
         "inspect", help="Report circuit width, dependencies and gate counts"
     )
@@ -183,6 +184,7 @@ def main(argv=None):
                     max_operations=args.max_operations,
                     max_depth=args.max_depth,
                     max_output_statements=args.max_output_statements,
+                    max_output_bytes=args.max_output_bytes,
                 )
                 print(plan.to_json())
                 return 0 if plan.compatible else 2
@@ -232,6 +234,7 @@ def main(argv=None):
                     max_operations=args.max_operations,
                     max_depth=args.max_depth,
                     max_output_statements=args.max_output_statements,
+                    max_output_bytes=args.max_output_bytes,
                 )
             if args.diagnostics:
                 print(

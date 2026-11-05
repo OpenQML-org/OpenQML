@@ -37,6 +37,29 @@ def load_json(text, max_bytes, *, label="IR"):
         raise ValidationError(f"Invalid {label} JSON.") from exc
 
 
+def check_expression_payload(value, location="expression"):
+    pending, nodes = [(value, 0)], 0
+    while pending:
+        node, depth = pending.pop()
+        nodes += 1
+        if depth > 64 or nodes > 4096:
+            raise ValidationError(f"IR exceeds expression depth or node budget at {location}.")
+        if not isinstance(node, dict):
+            raise ValidationError(f"Invalid expression at {location}.")
+        args = node.get("args", [])
+        if not isinstance(args, list):
+            raise ValidationError(f"Expression arguments must be a JSON array at {location}.")
+        if len(args) > 2:
+            raise ValidationError(f"Invalid expression arity at {location}.")
+        terms = node.get("terms", {})
+        if not isinstance(terms, dict):
+            raise ValidationError(f"Expression terms must be a JSON object at {location}.")
+        nodes += len(terms)
+        if nodes > 4096:
+            raise ValidationError(f"IR exceeds expression node budget at {location}.")
+        pending.extend((arg, depth + 1) for arg in args)
+
+
 def check_ir_payload(payload, *, max_operations, max_depth, max_matrix_qubits, max_matrix_entries):
     from .ir import integer
 
@@ -48,28 +71,6 @@ def check_ir_payload(payload, *, max_operations, max_depth, max_matrix_qubits, m
     def fail(limit, location):
         raise ValidationError(f"IR exceeds {limit} at {location}.")
 
-    def check_expression(value, location):
-        pending, nodes = [(value, 0)], 0
-        while pending:
-            node, depth = pending.pop()
-            nodes += 1
-            if depth > 64 or nodes > 4096:
-                fail("expression depth or node budget", location)
-            if not isinstance(node, dict):
-                raise ValidationError(f"Invalid expression at {location}.")
-            args = node.get("args", [])
-            if not isinstance(args, list):
-                raise ValidationError(f"Expression arguments must be a JSON array at {location}.")
-            if len(args) > 2:
-                raise ValidationError(f"Invalid expression arity at {location}.")
-            terms = node.get("terms", {})
-            if not isinstance(terms, dict):
-                raise ValidationError(f"Expression terms must be a JSON object at {location}.")
-            nodes += len(terms)
-            if nodes > 4096:
-                fail("expression node budget", location)
-            pending.extend((arg, depth + 1) for arg in args)
-
     pending, count, matrix_entries = [(payload, 0, "")], 0, 0
     while pending:
         body, depth, prefix = pending.pop()
@@ -77,7 +78,7 @@ def check_ir_payload(payload, *, max_operations, max_depth, max_matrix_qubits, m
             fail("max_depth", prefix or "circuit")
         if not isinstance(body, dict) or not isinstance(body.get("operations"), list):
             raise ValidationError("Operations must be a JSON array.")
-        check_expression(body.get("global_phase"), prefix + "global_phase")
+        check_expression_payload(body.get("global_phase"), prefix + "global_phase")
         for index, op in enumerate(body["operations"]):
             location = f"{prefix}operations[{index}]"
             count += 1
@@ -88,7 +89,7 @@ def check_ir_payload(payload, *, max_operations, max_depth, max_matrix_qubits, m
             if any(not isinstance(op.get(key), list) for key in ("qubits", "clbits", "params")):
                 raise ValidationError("Operation operands and parameters must be JSON arrays.")
             for i, value in enumerate(op["params"]):
-                check_expression(value, f"{location}.params[{i}]")
+                check_expression_payload(value, f"{location}.params[{i}]")
             matrices = []
             if op.get("matrix") is not None:
                 matrices.append(op["matrix"])
@@ -122,3 +123,52 @@ def check_ir_payload(payload, *, max_operations, max_depth, max_matrix_qubits, m
             pending.extend(
                 (block, depth + 1, f"{location}.blocks[{i}].") for i, block in enumerate(blocks)
             )
+
+
+def bounded_circuit_json(circuit, maximum, *, indent=2, collect=True):
+    """Admit expanded IR output before constructing nested dictionaries."""
+    from .ir import integer
+    from .parameters import _postorder, _tree_profile
+
+    maximum = integer(maximum, "max_bytes", 1)
+    pending, profile, checked_names, lower = [(circuit, 0)], {}, set(), 0
+    while pending:
+        body, depth = pending.pop()
+        if depth > 128:
+            raise ValidationError("Serialized IR exceeds its control-depth budget.")
+        lower += 64
+        roots = [body.global_phase]
+        for operation in body.operations:
+            lower += 64 + len(operation.qubits) + len(operation.clbits)
+            if operation.condition is not None:
+                lower += len(operation.condition.bits)
+            if operation.matrix is not None:
+                lower += 9 * len(operation.matrix) ** 2
+            if operation.kraus is not None:
+                lower += 9 * sum(len(matrix) ** 2 for matrix in operation.kraus)
+            roots.extend(operation.params)
+            pending.extend((block, depth + 1) for block in operation.blocks)
+            if lower > maximum:
+                raise ValidationError("IR JSON exceeds max_bytes.")
+        for root in roots:
+            lower += 6 * _tree_profile(root, profile)[0]
+            if lower > maximum:
+                raise ValidationError("IR JSON exceeds max_bytes.")
+            for value in _postorder((root,), checked_names):
+                checked_names.add(id(value))
+                if any(len(name) > maximum for name, _ in value.terms):
+                    raise ValidationError("IR JSON exceeds max_bytes.")
+    pieces, size = [], 0
+    try:
+        encoder = json.JSONEncoder(indent=indent, allow_nan=False)
+        for piece in encoder.iterencode(circuit.to_dict()):
+            size += len(piece.encode("utf-8"))
+            if size > maximum:
+                raise ValidationError("IR JSON exceeds max_bytes.")
+            if collect:
+                pieces.append(piece)
+    except (ValueError, RecursionError) as exc:
+        if isinstance(exc, ValidationError):
+            raise
+        raise ValidationError("IR JSON exceeds its serialization limits.") from exc
+    return "".join(pieces) if collect else None

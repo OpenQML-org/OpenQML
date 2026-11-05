@@ -87,6 +87,16 @@ class _TensorOps:
     def array(self, value, *, real_value=False):
         dtype = self.real_dtype if real_value else self.dtype
         if self.backend == "torch":
+            if isinstance(value, np.ndarray):
+                compiling = (
+                    getattr(self.xp.compiler, "is_compiling", None) or self.xp._dynamo.is_compiling
+                )
+                # Inspect host layouts during eager conversion; compiled native
+                # graphs already own their tensor inputs.
+                if not compiling() and (
+                    not value.flags.writeable or any(s < 0 for s in value.strides)
+                ):
+                    value = value.copy()
             return self.xp.as_tensor(value, dtype=dtype, device=self.device)
         return self.xp.asarray(value, dtype=dtype)
 

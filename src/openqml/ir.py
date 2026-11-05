@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from numbers import Integral
@@ -597,8 +596,10 @@ class Circuit(_CircuitGates):
             ],
         }
 
-    def to_json(self, *, indent: int | None = 2) -> str:
-        return json.dumps(self.to_dict(), indent=indent, allow_nan=False)
+    def to_json(self, *, indent: int | None = 2, max_bytes: int = 2_000_000) -> str:
+        from ._serialization import bounded_circuit_json
+
+        return bounded_circuit_json(self, max_bytes, indent=indent)
 
     @classmethod
     def from_dict(

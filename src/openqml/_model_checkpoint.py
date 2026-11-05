@@ -8,6 +8,8 @@ from pathlib import Path
 
 import numpy as np
 
+from ._checkpoint_archive import check_npz_payload
+from ._serialization import load_json
 from .architecture import HybridArchitecture
 from .errors import ResourceError, ValidationError
 from .ir import integer
@@ -123,9 +125,15 @@ def load_model(cls, path, *, device, backend, max_bytes):
                 raise ValidationError("Model checkpoint must contain metadata and training state.")
             if sum(v.file_size for v in info) > maximum:
                 raise ResourceError("Model checkpoint exceeds max_bytes.")
-            metadata = json.loads(archive.read("model.json"))
+            metadata = load_json(
+                archive.read("model.json").decode("utf-8"),
+                maximum,
+                label="Model checkpoint",
+            )
             if not isinstance(metadata, dict) or metadata.get("format") != "openqml.model.v1":
                 raise ValidationError("Unsupported model checkpoint format.")
+            training = archive.read("training")
+            check_npz_payload(training, maximum)
             config = metadata["config"]
             if not isinstance(config, dict) or set(config) != set(_CONFIG):
                 raise ValidationError("Malformed model checkpoint configuration.")
@@ -158,10 +166,7 @@ def load_model(cls, path, *, device, backend, max_bytes):
             # Read members by name; never extract arbitrary paths from an archive.
             with tempfile.TemporaryDirectory(prefix="openqml-load-") as folder:
                 payload = Path(folder) / "training"
-                payload.write_bytes(archive.read("training"))
-                with zipfile.ZipFile(payload) as inner:
-                    if sum(v.file_size for v in inner.infolist()) > maximum:
-                        raise ResourceError("Expanded training tensors exceed max_bytes.")
+                payload.write_bytes(training)
                 if model.framework == "torch":
                     with np.load(payload, allow_pickle=False) as arrays:
                         state = _restore_tree(metadata["state_tree"], arrays)
@@ -175,7 +180,15 @@ def load_model(cls, path, *, device, backend, max_bytes):
                     raise ValidationError("Model selection epoch exceeds the training history.")
                 setattr(model, name, value)
             return model
-    except (zipfile.BadZipFile, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+    except (
+        zipfile.BadZipFile,
+        json.JSONDecodeError,
+        KeyError,
+        TypeError,
+        ValueError,
+        EOFError,
+        RecursionError,
+    ) as exc:
         if isinstance(exc, (ValidationError, ResourceError)):
             raise
         raise ValidationError("Malformed model checkpoint.") from exc
