@@ -28,7 +28,7 @@ class Ops(RealOps):
 
             if len({v.device for v in native}) > 1:
                 raise ValidationError("Financial tensors must use one device; move explicitly.")
-            if any(v.dtype == torch.bool or v.is_complex() for v in native):
+            if any(v.dtype == torch.bool or v.dtype.is_complex for v in native):
                 raise ValidationError("Financial arrays must contain real numeric values.")
             dtype = like.dtype
             for value in native[1:]:

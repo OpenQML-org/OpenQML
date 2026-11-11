@@ -22,6 +22,11 @@ from ._cache import SingleFlightCache
 from .errors import NumericalError, ResourceError, ValidationError
 
 
+def _torch_compiling():
+    torch = sys.modules.get("torch")
+    return torch is not None and torch._dynamo.is_compiling()
+
+
 def _positive(value, name, *, zero=False):
     if isinstance(value, bool) or not isinstance(value, Real):
         raise ValidationError(f"{name} must be a finite real number.")
@@ -94,7 +99,7 @@ def _einsum_shape(equation, shapes):
     if len(terms) != len(shapes):
         raise ValidationError("Contraction operands do not match the equation.")
     ellipses = []
-    sizes, counts = {}, Counter(source.replace("...", "").replace(",", ""))
+    sizes = {}
     for term, shape in zip(terms, shapes, strict=True):
         before, ellipsis, after = term.partition("...")
         labels = before + after
@@ -113,7 +118,7 @@ def _einsum_shape(equation, shapes):
             sizes[label] = extent if sizes.get(label, 1) == 1 else sizes[label]
     batch = _broadcast_shape(ellipses)
     if not arrow:
-        return batch + tuple(sizes[label] for label in sorted(sizes) if counts[label] == 1)
+        return batch + tuple(sizes[label] for label in sorted(sizes) if source.count(label) == 1)
     before, ellipsis, after = output.partition("...")
     if any(label not in sizes for label in before + after):
         raise ValidationError("Contraction output references an unknown axis.")
@@ -225,6 +230,7 @@ class ComputeKernel:
     """One compute service for simulation, tensor networks, AI and finance."""
 
     def __init__(self, policy=None):
+        self._source_id = id(self)
         self._policy = ComputePolicy() if policy is None else policy
         if not isinstance(self.policy, ComputePolicy):
             raise ValidationError("policy must be ComputePolicy.")
@@ -256,11 +262,11 @@ class ComputeKernel:
             raise ValidationError("max_work must be a nonnegative integer.")
         budget = self.memory_budget(max_memory_mb)
         torch = sys.modules.get("torch")
-        if torch is not None and getattr(torch.compiler, "is_compiling", lambda: False)():
+        if _torch_compiling():
             valid = elements * itemsize <= budget * 2**20
             if max_work is not None:
                 valid = valid & (work <= max_work)
-            torch._check(valid, lambda: "[OpenQML:ResourceError] Compute budget exceeded.")
+            torch._assert(valid, "[OpenQML:ResourceError] Compute budget exceeded.")
             return budget
         numerator, denominator = budget.as_integer_ratio()
         if elements * itemsize > (numerator << 20) // denominator or (
@@ -291,34 +297,36 @@ class ComputeKernel:
         """Intern immutable structural metadata; bound values stay in each forward."""
         return self._plans.get((namespace, key), build)
 
-    def _workspace(self, values, output_shape, *, buffers=1):
+    def _workspace(self, values, output_shape, *, buffers=1, scratch_shapes=()):
         cap = self.policy.max_memory_mb
         if cap is not None:
-            sizes = tuple(
-                v.element_size() if hasattr(v, "element_size") else v.dtype.itemsize for v in values
-            )
+            sizes = tuple(v.dtype.itemsize for v in values)
             itemsize = max(sizes)
             # Mixed real/complex promotion can double the largest input item.
             dtypes = tuple(str(v.dtype) for v in values)
             if len(set(dtypes)) > 1 and any("complex" in dtype for dtype in dtypes):
                 itemsize *= 2
-            elements = sum(math.prod(v.shape) for v in values) + buffers * math.prod(output_shape)
+            elements = (
+                sum(math.prod(v.shape) for v in values)
+                + sum(math.prod(shape) for shape in scratch_shapes)
+                + buffers * math.prod(output_shape)
+            )
             required = elements * itemsize
             torch = sys.modules.get("torch")
-            if torch is not None and getattr(torch.compiler, "is_compiling", lambda: False)():
-                torch._check(
+            if _torch_compiling():
+                torch._assert(
                     required <= self._memory_bytes,
-                    lambda: "[OpenQML:ResourceError] Compute workspace exceeds the budget.",
+                    "[OpenQML:ResourceError] Compute workspace exceeds the budget.",
                 )
             elif required > self._memory_bytes:
                 raise ResourceError("Compute workspace exceeds the budget.")
 
-    def asarray(self, value, *, xp=np, backend="numpy", dtype=None, like=None, device=None):
+    def asarray(self, value, *, xp=None, backend="numpy", dtype=None, like=None, device=None):
         """Convert once, preserving native device placement and differentiation."""
+        xp = np if xp is None else xp
         if backend == "torch":
             if isinstance(value, np.ndarray):
-                compiling = getattr(xp.compiler, "is_compiling", None) or xp._dynamo.is_compiling
-                if not compiling() and (
+                if not _torch_compiling() and (
                     not value.flags.writeable or any(s < 0 for s in value.strides)
                 ):
                     value = value.copy()
@@ -340,7 +348,8 @@ class ComputeKernel:
                 return xp.asarray(value, dtype=dtype, device=like.sharding)
         return xp.asarray(value, dtype=dtype)
 
-    def matmul(self, left, right, *, xp=np, out=None):
+    def matmul(self, left, right, *, xp=None, out=None):
+        xp = np if xp is None else xp
         if xp is np:
             left, right = np.asarray(left), np.asarray(right)
         if self.policy.max_memory_mb is not None and left.ndim and right.ndim:
@@ -353,7 +362,8 @@ class ComputeKernel:
             self._workspace((left, right), shape)
         return xp.matmul(left, right) if out is None else xp.matmul(left, right, out=out)
 
-    def einsum(self, equation, *operands, xp=np, backend="numpy"):
+    def einsum(self, equation, *operands, xp=None, backend="numpy"):
+        xp = np if xp is None else xp
         if backend == "numpy":
             operands = tuple(np.asarray(v) for v in operands)
         if self.policy.max_memory_mb is not None:
@@ -387,16 +397,27 @@ class ComputeKernel:
         path = self.plan("einsum", (equation, shapes, limit), build)
         if isinstance(path, _BinaryGEMM):
             if self.policy.max_memory_mb is not None:
-                # Include potential transpose/reshape copies before allocating them.
-                self._workspace(operands + operands, path.output_shape)
+                # Broadcasting can expand contracted axes before reshape makes
+                # copies. Admit those expanded shapes before entering GEMM.
+                try:
+                    self._workspace(
+                        operands,
+                        path.output_shape,
+                        scratch_shapes=(path.left_expand, path.right_expand),
+                    )
+                except ResourceError:
+                    # The inputs/output were already admitted. Direct einsum
+                    # traverses broadcast strides without expanded copies.
+                    return np.einsum(equation, *operands)
             return path.apply(*operands)
         return np.einsum(equation, *operands, optimize=list(path))
 
-    def check(self, value, valid, message, *, xp=np, backend="numpy", error=ValidationError):
+    def check(self, value, valid, message, *, xp=None, backend="numpy", error=ValidationError):
         """Raise eagerly; compiled invalid lanes remain visibly non-finite."""
+        xp = np if xp is None else xp
         traced = False
         if backend == "torch":
-            traced = getattr(xp.compiler, "is_compiling", lambda: False)()
+            traced = _torch_compiling()
         elif backend == "jax":
             import jax
 
@@ -409,12 +430,14 @@ class ComputeKernel:
         if backend == "torch":
             xp._assert_async(xp.all(valid), label)
         else:
-            from jax.experimental import checkify
+            if _CHECKED_JAX_CONTEXT.get():
+                from jax.experimental import checkify
 
-            checkify.debug_check(xp.all(valid), label)
+                checkify.debug_check(xp.all(valid), label)
         return xp.where(valid, value, float("nan"))
 
-    def finite(self, value, *, xp=np, backend="numpy", error=NumericalError):
+    def finite(self, value, *, xp=None, backend="numpy", error=NumericalError):
+        xp = np if xp is None else xp
         return self.check(
             value,
             xp.isfinite(value),
@@ -424,7 +447,8 @@ class ComputeKernel:
             error=error,
         )
 
-    def solve(self, matrix, rhs, *, xp=np, backend="numpy"):
+    def solve(self, matrix, rhs, *, xp=None, backend="numpy"):
+        xp = np if xp is None else xp
         if backend == "numpy":
             matrix, rhs = np.asarray(matrix), np.asarray(rhs)
         self._workspace((matrix, rhs), tuple(rhs.shape), buffers=2)
@@ -440,7 +464,8 @@ class ComputeKernel:
             raise NumericalError("Linear system is singular or its factorization failed.") from exc
         return self.finite(result, xp=xp, backend=backend)
 
-    def svd(self, matrix, *, xp=np, backend="numpy", full_matrices=False):
+    def svd(self, matrix, *, xp=None, backend="numpy", full_matrices=False):
+        xp = np if xp is None else xp
         if backend == "numpy":
             matrix = np.asarray(matrix)
         rows, columns = matrix.shape[-2:]
@@ -460,20 +485,35 @@ class ComputeKernel:
             raise NumericalError("Singular-value decomposition did not converge.") from exc
         return tuple(self.finite(v, xp=xp, backend=backend) for v in values)
 
-    def norm(self, value, *, xp=np, backend="numpy", axis=None, keepdims=False):
+    def norm(self, value, *, xp=None, backend="numpy", axis=None, keepdims=False):
         from ._norms import vector_norm
 
+        xp = np if xp is None else xp
         return vector_norm(value, xp, backend, axis=axis, keepdims=keepdims)
 
 
 _KERNEL = ComputeKernel()
 _COMPUTE_CONTEXT = ContextVar("openqml_compute_kernel", default=None)
+_CHECKED_JAX_CONTEXT = ContextVar("openqml_checked_jax", default=False)
 _CONFIG_LOCK = RLock()
 
 
 def get_compute_kernel():
     """Return the shared process-local kernel without discovering devices."""
+    if _torch_compiling():
+        from ._torch_compute import captured_kernel
+
+        return captured_kernel()
     return _COMPUTE_CONTEXT.get() or _KERNEL
+
+
+@contextmanager
+def _checked_jax_context():
+    token = _CHECKED_JAX_CONTEXT.set(True)
+    try:
+        yield
+    finally:
+        _CHECKED_JAX_CONTEXT.reset(token)
 
 
 def configure_compute(*, policy=None):
@@ -510,10 +550,9 @@ def compute_operation(function):
 
     @wraps(function)
     def call(*args, **kwargs):
-        torch = sys.modules.get("torch")
-        if _COMPUTE_CONTEXT.get() is not None or (
-            torch is not None and getattr(torch.compiler, "is_compiling", lambda: False)()
-        ):
+        if _torch_compiling():
+            return function(*args, **kwargs)
+        if _COMPUTE_CONTEXT.get() is not None:
             return function(*args, **kwargs)
         with compute_context():
             return function(*args, **kwargs)

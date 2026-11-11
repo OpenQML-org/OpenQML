@@ -11,7 +11,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from ..compute import compute_operation
+from ..compute import _torch_compiling, compute_operation
 from ..errors import ValidationError
 from ..ir import integer
 from ..parameters import real
@@ -153,7 +153,7 @@ class AllocationPlan:
                 eps,
             )
 
-        compiling = ops.name == "torch" and getattr(xp.compiler, "is_compiling", lambda: False)()
+        compiling = ops.name == "torch" and _torch_compiling()
         if warm_start is None or compiling:
             candidate, residual, converged = cold()
         else:
@@ -319,11 +319,7 @@ class AllocationPlan:
             return jax.lax.while_loop(
                 condition, lambda c: (c[0] + 1, advance(c[1])), (0, initial_state)
             )[1][0]
-        if (
-            ops.name == "torch"
-            and hasattr(xp, "while_loop")
-            and getattr(xp.compiler, "is_compiling", lambda: False)()
-        ):
+        if ops.name == "torch" and hasattr(xp, "while_loop") and _torch_compiling():
 
             def condition(index, old, accelerated, momentum, difference):
                 return (index < self.max_iterations) & xp.any(difference > threshold)
@@ -337,9 +333,7 @@ class AllocationPlan:
         state = initial_state
         for iteration in range(self.max_iterations):
             state = advance(state)
-            if iteration % 16 == 15 and not (
-                ops.name == "torch" and getattr(xp.compiler, "is_compiling", lambda: False)()
-            ):
+            if iteration % 16 == 15 and not (ops.name == "torch" and _torch_compiling()):
                 if bool(xp.all(state[3] <= threshold)):
                     break
         return state[0]

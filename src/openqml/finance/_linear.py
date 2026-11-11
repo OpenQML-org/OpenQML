@@ -2,6 +2,7 @@
 
 import numpy as np
 
+from ..compute import _torch_compiling
 from ..errors import ConvergenceError
 
 
@@ -97,7 +98,7 @@ def _pcg(diagonal, factors, mass, rhs, iterations, tolerance, ops):
                 lambda: rhs - matmat(diagonal, factors, mass, x, ops),
                 lambda: residual,
             )
-        elif ops.name != "torch" or not getattr(xp.compiler, "is_compiling", lambda: False)():
+        elif ops.name != "torch" or not _torch_compiling():
             if (index + 1) % 8 == 0:
                 residual = rhs - matmat(diagonal, factors, mass, x, ops)
         z = residual / preconditioner[..., :, None]
@@ -118,11 +119,7 @@ def _pcg(diagonal, factors, mass, rhs, iterations, tolerance, ops):
             condition, lambda c: (c[0] + 1, step(c[1], c[0])), (0, initial)
         )[1][0]
         return result * rhs_scale
-    if (
-        ops.name == "torch"
-        and hasattr(xp, "while_loop")
-        and getattr(xp.compiler, "is_compiling", lambda: False)()
-    ):
+    if ops.name == "torch" and hasattr(xp, "while_loop") and _torch_compiling():
 
         def condition(index, x, residual, direction, product, healthy):
             return (index < iterations) & xp.any(
@@ -137,9 +134,7 @@ def _pcg(diagonal, factors, mass, rhs, iterations, tolerance, ops):
     state = initial
     for i in range(iterations):
         state = step(state, i)
-        if i % 8 == 7 and not (
-            ops.name == "torch" and getattr(xp.compiler, "is_compiling", lambda: False)()
-        ):
+        if i % 8 == 7 and not (ops.name == "torch" and _torch_compiling()):
             if bool(xp.all(ops.norm(state[1], axis=-2) <= tolerance * scale)):
                 break
     return state[0] * rhs_scale

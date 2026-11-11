@@ -10,7 +10,13 @@ from typing import Any
 
 import numpy as np
 
-from .compute import KernelOps, compute_operation, get_compute_kernel, memory_budget
+from .compute import (
+    KernelOps,
+    _torch_compiling,
+    compute_operation,
+    get_compute_kernel,
+    memory_budget,
+)
 from .errors import (
     BackendError,
     MissingDependencyError,
@@ -293,7 +299,7 @@ def _evolve_unitary(state, operations, bindings, num_qubits, ops, checkpoint_int
 
             # PyTorch's checkpoint input saver has no forward-AD rule. Keep
             # directional derivatives on the ordinary native tensor graph.
-            compiling = getattr(torch.compiler, "is_compiling", lambda: False)()
+            compiling = _torch_compiling()
             dual = not compiling and any(
                 isinstance(v, torch.Tensor)
                 and torch.autograd.forward_ad.unpack_dual(v).tangent is not None

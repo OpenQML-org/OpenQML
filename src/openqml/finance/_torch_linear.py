@@ -2,6 +2,7 @@
 
 import torch
 
+from ..compute import _torch_compiling
 from ._array import Ops
 from ._linear import _solve, linear_solve
 
@@ -64,6 +65,5 @@ class _ForwardFactorSolve(_ImplicitFactorSolve):
 
 
 def solve(diagonal, factors, mass, rhs, iterations, tolerance):
-    compiling = getattr(torch.compiler, "is_compiling", None) or torch._dynamo.is_compiling
-    boundary = _ImplicitFactorSolve if compiling() else _ForwardFactorSolve
+    boundary = _ImplicitFactorSolve if _torch_compiling() else _ForwardFactorSolve
     return boundary.apply(diagonal, factors, mass, rhs, iterations, tolerance)

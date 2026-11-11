@@ -50,6 +50,8 @@ the compiled graph and raises their typed errors at the host call boundary.
 and batching transforms inside `function`. Each compiled callable pins its
 kernel; `.graph` exposes lower-level execution (JAX returns error status and
 values). Raw third-party JIT calls follow their native compiler error semantics.
+Internal JAX checkpoints carry error status as data before rematerialization;
+Torch traces immutable policy snapshots without reading task contexts in graphs.
 
 `max_memory_mb=None`, the default, preserves callers' operation-specific
 budgets. A configured ceiling is combined with each requested budget using the
@@ -88,6 +90,8 @@ Python metadata. NumPy einsum paths are keyed by equation, shapes and memory
 policy. Shape-specialized tensor contraction descriptors are interned across
 plans. Binary NumPy contractions lower to prepared batched GEMMs; local tensor
 programs execute preallocated slots without rebuilding node dictionaries.
+Expanded broadcast/reshape copies are admitted before GEMM. If those copies
+exceed the budget, a direct contraction traverses the original broadcast strides.
 A per-key future prevents duplicate compilation while unrelated keys build
 concurrently. Cache publication is locked; clearing a cache invalidates pending
 publication from its previous generation. Oversized entries bypass retention; either zero cache limit

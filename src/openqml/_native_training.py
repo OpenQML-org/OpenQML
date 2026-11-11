@@ -3,6 +3,7 @@
 from typing import NamedTuple
 
 from ._norms import global_norm, stop
+from .compute import _torch_compiling
 from .errors import ConvergenceError, ValidationError
 from .ir import integer
 from .parameters import real
@@ -89,9 +90,7 @@ def solve_metric(
         )
         products = (state[-1] + 1).astype(ops.xp.int32)
     else:
-        compiling = (
-            ops.backend == "torch" and getattr(ops.xp.compiler, "is_compiling", lambda: False)()
-        )
+        compiling = ops.backend == "torch" and _torch_compiling()
         products = 1
         for i in range(max_iterations):
             if not compiling and not bool(state[4]):

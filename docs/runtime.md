@@ -153,6 +153,8 @@ job. Qiskit V2 adapters keep the original handle, job ID and PUB row layout;
 they do not re-submit on transient retrieval failures. Native result timeouts
 are passed to SDKs that support them; SDK networking controls the blocking call
 when that interface exposes no timeout. Retry attempts and backoff are bounded.
+Qiskit/IBM Runtime wait timeouts are transient; terminal job errors and execution
+time-limit failures are not retried automatically.
 
 `BackendJobError.resume()` retries that retained job. A single-job error exposes
 `error.pending.to_dict()`; `recover_job(receipt, loader)` retrieves it by ID and
