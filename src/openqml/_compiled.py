@@ -4,7 +4,7 @@ from functools import wraps
 
 import numpy as np
 
-from .compute import compute_context, get_compute_kernel
+from .compute import _checked_jax_context, compute_context, get_compute_kernel
 from .errors import ConvergenceError, NumericalError, ResourceError, ValidationError
 
 _ERRORS = {
@@ -45,7 +45,11 @@ def compile_compute(
         import jax
         from jax.experimental import checkify
 
-        graph = jax.jit(checkify.checkify(function, errors=checkify.user_checks), **options)
+        def checked(*args, **kwargs):
+            with _checked_jax_context():
+                return function(*args, **kwargs)
+
+        graph = jax.jit(checkify.checkify(checked, errors=checkify.user_checks), **options)
 
         @wraps(function)
         def call(*args, **kwargs):
@@ -62,14 +66,21 @@ def compile_compute(
     elif backend == "torch":
         import torch
 
-        graph = torch.compile(function, backend=compiler or "inductor", **options)
+        def evaluate(*args, **kwargs):
+            # Guard the captured kernel identity as well as the user's function. Separate
+            # checked callables must not reuse a graph with another policy.
+            if get_compute_kernel()._source_id != kernel._source_id:
+                raise ValidationError("Compiled execution changed its kernel snapshot.")
+            return function(*args, **kwargs)
+
+        graph = torch.compile(evaluate, backend=compiler or "inductor", **options)
 
         @wraps(function)
         def call(*args, **kwargs):
             with compute_context(kernel=kernel):
                 try:
                     result = graph(*args, **kwargs)
-                except RuntimeError as exc:
+                except (RuntimeError, AssertionError) as exc:
                     if "[OpenQML:" not in str(exc):
                         raise
                     _raise(str(exc))

@@ -22,17 +22,7 @@ from .simulator import _apply_matrix, _gate_matrix, _TensorOps
 
 
 def _checked(value, valid, ops, message):
-    if ops.backend == "numpy":
-        eager = True
-    elif ops.backend == "torch":
-        eager = not getattr(ops.xp.compiler, "is_compiling", lambda: False)()
-    else:
-        import jax
-
-        eager = not isinstance(valid, jax.core.Tracer)
-    if eager and not bool(ops.xp.all(valid)):
-        raise ValidationError(message)
-    return ops.xp.where(valid, value, float("nan"))
+    return ops.check(value, valid, message)
 
 
 def _real_tensor(value, ops, *, finite=True):

@@ -9,11 +9,25 @@ import jax.numpy as jnp
 from ..architecture import HybridArchitecture
 from ..architecture_runtime import reserve_native_cost
 from ..backends import get_backend
+from ..compute import _CHECKED_JAX_CONTEXT
 from ..errors import ValidationError
 from ..network_training import DepthSchedule, StagewiseOptimizer, _batch_rows, select_network_input
 from ..runtime import CostAwareBackend, PriorityBackend
 from ._jax_backend import JAXNativeBackend
 from ._jax_training import make_train_step
+
+
+def _checkpoint(function, *args):
+    if not _CHECKED_JAX_CONTEXT.get():
+        return jax.checkpoint(function)(*args)
+    from jax.experimental import checkify
+
+    # Older JAX cannot partially evaluate check effects inside remat. Make its
+    # status an explicit output before checkpointing, then re-emit outside.
+    checked = checkify.checkify(function, errors=checkify.user_checks)
+    error, result = jax.checkpoint(checked)(*args)
+    checkify.check_error(error)
+    return result
 
 
 class HybridNetwork:
@@ -148,7 +162,7 @@ class HybridNetwork:
                 )
 
             return (
-                jax.checkpoint(block)(local, x)
+                _checkpoint(block, local, x)
                 if self.architecture.rematerialize and layer.execution_backend == "jax"
                 else block(local, x)
             )

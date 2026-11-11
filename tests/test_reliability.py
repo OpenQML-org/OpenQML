@@ -270,6 +270,10 @@ def test_chunk_recovery_retains_completed_work_and_unknown_submissions_are_not_r
 
 def test_recorded_qiskit_jobs_resume_by_identity_and_precision_views_share_compilation():
     pytest.importorskip("qiskit")
+    from qiskit.providers.exceptions import JobError, JobTimeoutError
+
+    assert oq.RecoveryPolicy().transient(JobTimeoutError("still waiting"))
+    assert not oq.RecoveryPolicy().transient(JobError("terminal job failure"))
 
     class Job:
         attempts = 0
@@ -280,7 +284,7 @@ def test_recorded_qiskit_jobs_resume_by_identity_and_precision_views_share_compi
         def result(self):
             self.attempts += 1
             if self.attempts < 3:
-                raise TimeoutError("retrieval timeout")
+                raise JobTimeoutError("retrieval timeout")
             return [SimpleNamespace(data=SimpleNamespace(evs=np.array([[0.25]])))]
 
     job = Job()
@@ -360,6 +364,20 @@ def test_prepared_binary_gemms_match_einstein_contractions(equation, shapes):
     np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=2e-12)
 
 
+def test_broadcast_contraction_avoids_unadmitted_reshape_copies(monkeypatch):
+    from openqml.compute import _BinaryGEMM
+
+    left, right = np.arange(2048.0)[:, None], np.arange(2048.0)[None, :]
+    kernel = oq.ComputeKernel(oq.ComputePolicy(max_memory_mb=1))
+
+    def forbidden(*args):
+        pytest.fail("Entered GEMM with unadmitted expanded operands")
+
+    monkeypatch.setattr(_BinaryGEMM, "apply", forbidden)
+    actual = kernel.einsum("ij,ij->", left, right)
+    np.testing.assert_allclose(actual, left.sum() * right.sum(), rtol=1e-12)
+
+
 def test_streaming_keeps_its_snapshot_without_leaking_it_to_the_consumer():
     p = oq.Parameter("angle")
     plan = oq.TensorNetworkPlan(oq.Circuit(1).ry(p, 0), (oq.PauliString("Z"),))
@@ -387,10 +405,46 @@ def test_dynamic_compiled_shapes_respect_resource_admission():
         fn(torch.ones((80, 4)))
 
     def budgeted(x):
-        kernel.admit(x.numel(), 0.001, itemsize=x.element_size())
+        kernel.admit(x.numel(), 0.001, itemsize=x.dtype.itemsize)
         return x * 2
 
     fn = kernel.compile(budgeted, backend="torch", compiler="eager", dynamic=True, fullgraph=True)
     assert fn(torch.ones(4)).shape == (4,)
     with pytest.raises(oq.ResourceError):
         fn(torch.ones(1000))
+
+
+def test_checked_torch_callables_do_not_reuse_another_kernel_policy():
+    torch = pytest.importorskip("torch")
+
+    def function(x):
+        return Ops(x).matmul(x, x.T)
+
+    def compile_one(budget):
+        return oq.ComputeKernel(oq.ComputePolicy(max_memory_mb=budget)).compile(
+            function, backend="torch", compiler="eager", fullgraph=True
+        )
+
+    small, large = compile_one(0.01), compile_one(1)
+    x = torch.ones((80, 4))
+    assert large(x).shape == (80, 80)
+    with pytest.raises(oq.ResourceError):
+        small(x)
+    assert large(x).shape == (80, 80)
+
+
+def test_checked_jax_checkpoint_preserves_gradient_and_error_status():
+    jax = pytest.importorskip("jax")
+    from openqml.interfaces._jax_network import _checkpoint
+
+    def function(x):
+        x = Ops(x).check(x, x > 0, "Checkpoint requires positive inputs.")
+        return (x * x).sum()
+
+    gradient = jax.value_and_grad(lambda x: _checkpoint(function, x))
+    checked = oq.compile_compute(gradient, backend="jax")
+    value, derivative = checked(jax.numpy.array([2.0, 3.0]))
+    np.testing.assert_allclose(value, 13)
+    np.testing.assert_allclose(derivative, [4, 6])
+    with pytest.raises(oq.ValidationError, match="Checkpoint"):
+        checked(jax.numpy.array([-2.0, 3.0]))

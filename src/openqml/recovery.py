@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from inspect import signature
+from sys import modules
 from threading import RLock
 
 from .compute import compute_context, get_compute_kernel
@@ -56,7 +57,17 @@ class RecoveryPolicy:
             status = getattr(error, "status_code", None)
             if status is None:
                 status = getattr(getattr(error, "response", None), "status_code", None)
-            if isinstance(error, self.retry_exceptions) or status in {429, 500, 502, 503, 504}:
+            # Qiskit/IBM Runtime wait timeouts inherit JobTimeoutError, not
+            # Python's TimeoutError. Read the already loaded optional SDK;
+            # terminal JobError/RuntimeJobMaxTimeoutError remain non-transient.
+            qiskit_timeout = getattr(
+                modules.get("qiskit.providers.exceptions"), "JobTimeoutError", ()
+            )
+            if (
+                isinstance(error, self.retry_exceptions)
+                or isinstance(error, qiskit_timeout)
+                or status in {429, 500, 502, 503, 504}
+            ):
                 return True
             error = error.__cause__ or error.__context__
         return False
