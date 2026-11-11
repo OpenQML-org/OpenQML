@@ -115,6 +115,15 @@ admission and batch sizes, not process RSS, framework allocator reservations or
 autodiff tape retention. Large idle/factored registers do not force a full-state
 allocation. Full-state outputs and general entanglement retain exponential cost.
 
+There is no fixed 24-qubit ceiling. A complex128 pure-state vector alone needs
+`16 * 2**n` bytes; the dense execution admission model reserves four such
+buffers (`64 * 2**n` bytes per batch row). Thus 24 qubits require a 1 GiB
+working budget, 25 require 2 GiB and 30 require 64 GiB, before framework reserves
+and autodiff tapes. `ExecutionOptions.for_statevector(budget)` derives a width
+cap from that policy. A general density matrix instead has `4**n` complex
+entries. Large factored or stabilizer-compatible expectation queries can avoid
+dense allocation; their width does not establish arbitrary-circuit capacity.
+
 Compiled topology caches are bounded and instance-local. They retain fixed
 instructions/channel settings, without measurement results or binding arrays.
 Qiskit adapters expose `cache_size` and
@@ -140,6 +149,78 @@ The joint scheduling design draws on [Qonductor](https://arxiv.org/abs/2408.0431
 and [Qurator](https://arxiv.org/abs/2604.05505). OpenQML enumerates its finite
 candidate Pareto set directly and uses augmented Chebyshev preferences with
 configured cost, latency, noise and queue profiles.
+
+## Physical noise and error mitigation
+
+Circuit IR supports `amplitude_damping(p,q)`, `phase_damping(p,q)`,
+`depolarizing(p,q)`, `bit_flip(p,q)`, `phase_flip(p,q)` and
+`channel(kraus,*qubits)`, as well as reset and classical feedback. Density
+execution propagates these channels; it is not a binomial shot-noise model.
+Custom Kraus operators must define a trace-preserving completely positive
+channel. Channel parameters and local dimensions remain subject to admission
+and differentiability contracts. Aer/Cirq integrations also accept their
+provider-native noise models.
+
+`ReadoutMitigation(assignment)` accepts `(n,2,2)` matrices in
+`A[wire,measured,prepared]` order. Alternatively,
+`ReadoutMitigation.from_counts(prepared_zero,prepared_one)` estimates marginal
+assignment probabilities from all-zero/all-one preparations. Bit strings follow
+OpenQML's q0-first convention. `.estimate(counts,observables)` corrects I/Z
+Pauli strings and Hamiltonians directly, with no `2**n` distribution or inverse
+assignment matrix. Rotate other measurement bases before collecting counts.
+
+Calibration assumes independent readout and trusted preparation. Two global
+preparations cannot identify correlated errors or distinguish readout from
+preparation bias. Standard errors include covariance between Hamiltonian terms
+measured in the same shots, conditioned on the calibration. They exclude
+calibration uncertainty and drift. Singular/ill-conditioned calibrations,
+excessive single-shot score amplification and workspace/work overruns fail
+explicitly. `sampling_overhead` bounds squared scores relative to the
+observable's coefficient L1 bound; it is not a measured device speedup.
+
+`zero_noise_extrapolate(scales,values,order=1,standard_errors=None,covariance=None)`
+fits a scaled Chebyshev polynomial and evaluates it at zero noise. `values`
+has shape `(scales,...)`; independent errors match the scales or values shape.
+Alternatively, pass a shared positive-definite `(scales,scales)` covariance
+matrix. SVD conditioning, weight amplification, workspace and work budgets
+limit unstable extrapolation. The result includes weights, residuals, condition
+numbers and propagated statistical errors; errors are `None` when none were
+supplied. `sampling_overhead` is the squared L1 norm of the extrapolation
+weights, a unit-variance amplification bound rather than measured shot cost.
+It does not infer model bias from fit residuals. Callers supply
+physically scaled observations: this function neither folds gates nor submits
+extra jobs. Higher polynomial order can amplify variance and model bias.
+Neither mitigation method clips estimates to spectral bounds or guarantees an
+accuracy improvement. The extrapolation approach follows
+[Temme, Bravyi and Gambetta](https://arxiv.org/abs/1612.02058).
+
+For IBM hardware, initialize an SDK primitive and its ISA pass manager before
+passing them to OpenQML. Install `openqml[qiskit]` and `qiskit-ibm-runtime`
+separately; credentials and backend access belong to your IBM account:
+
+```python
+from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
+from qiskit_ibm_runtime import EstimatorV2, QiskitRuntimeService
+import openqml as oq
+
+service = QiskitRuntimeService()  # Uses your saved account configuration.
+hardware = service.backend("YOUR_BACKEND_NAME")
+primitive = EstimatorV2(mode=hardware, options={"resilience_level": 2})
+backend = oq.QiskitEstimatorBackend(
+    primitive,
+    pass_manager=generate_preset_pass_manager(backend=hardware, optimization_level=1),
+    mitigated=True,
+)
+# Submit deliberately with backend=backend in expectations/expectations_batch.
+```
+
+IBM's [noise-management documentation](https://quantum.cloud.ibm.com/docs/en/guides/estimator-noise-management)
+describes resilience level 2 as TREX plus ZNE and gate twirling, with additional
+sampling cost. `mitigated=True` explicitly allows finite statistical estimates
+outside physical spectral bounds while retaining dtype and shape validation;
+the default remains bounded. Job receipts preserve that contract during
+recovery. This SDK integration is covered with local primitive/job tests,
+not a claim of completed live-hardware or multi-QPU validation.
 
 ## Scoped configuration and job recovery
 

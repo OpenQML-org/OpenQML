@@ -1,6 +1,10 @@
 """Public APIs for hybrid AI, quantitative research and circuit conversion."""
 
 EXPORTS = {
+    "ReadoutMitigation": (".mitigation", "ReadoutMitigation"),
+    "MitigatedEstimate": (".mitigation", "MitigatedEstimate"),
+    "ExtrapolationResult": (".mitigation", "ExtrapolationResult"),
+    "zero_noise_extrapolate": (".mitigation", "zero_noise_extrapolate"),
     "compile_compute": ("._compiled", "compile_compute"),
     "compute_context": (".compute", "compute_context"),
     "ConvergenceError": (".errors", "ConvergenceError"),
@@ -185,6 +189,7 @@ EXPORTS = {
 }
 
 MODULES = {
+    "mitigation": ".mitigation",
     "recovery": ".recovery",
     "compute": ".compute",
     "finance": ".finance",
@@ -257,6 +262,10 @@ MODULES = {
 }
 
 PUBLIC = [
+    "ReadoutMitigation",
+    "MitigatedEstimate",
+    "ExtrapolationResult",
+    "zero_noise_extrapolate",
     "compile_compute",
     "compute_context",
     "ConvergenceError",

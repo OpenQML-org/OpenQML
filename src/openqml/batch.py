@@ -309,7 +309,12 @@ def expectations_batch(
                         ]
                     )
             output = np.asarray(rows)
-    return validate_expectations(output, len(values), observables)
+    return validate_expectations(
+        output,
+        len(values),
+        observables,
+        bounded=tensor or device.capabilities.bounded_expectations,
+    )
 
 
 @compute_operation

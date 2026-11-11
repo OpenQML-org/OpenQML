@@ -36,8 +36,11 @@ def _estimator_result(results, metadata):
         output[list(indices)] = data.T
     bounds = np.asarray(metadata["bounds"])
     policy = get_compute_kernel().policy
-    if not np.isfinite(output).all() or np.any(
-        np.abs(output) > bounds + policy.validation_atol + policy.validation_rtol * bounds
+    if not np.isfinite(output).all() or (
+        metadata.get("bounded_expectations", True)
+        and np.any(
+            np.abs(output) > bounds + policy.validation_atol + policy.validation_rtol * bounds
+        )
     ):
         raise BackendError("Estimator returned non-finite or out-of-range expectations.")
     return output
@@ -84,6 +87,8 @@ def recover_job(receipt, loader, *, recovery=None):
     try:
         rows, columns, _ = _layout(metadata)
         if metadata["kind"] == "estimator-v2":
+            if type(metadata.get("bounded_expectations", True)) is not bool:
+                raise ValueError("Invalid estimator bounds contract.")
             bounds = np.asarray(metadata["bounds"])
             if bounds.shape != (columns,) or np.any(np.isnan(bounds) | (bounds < 0)):
                 raise ValueError("Invalid observable bounds.")
@@ -129,6 +134,8 @@ class QiskitEstimatorBackend:
     pass_manager, when supplied, must expose run(circuit). Each public V2 result
     contains one expectation per requested observable. Provider job management,
     precision, credentials and hardware access remain with the supplied object.
+    Set mitigated=True when it returns error-mitigated statistical estimates:
+    these may lie outside spectral bounds and are never silently clipped.
     """
 
     estimator: object
@@ -142,8 +149,15 @@ class QiskitEstimatorBackend:
     capabilities: BackendCapabilities = field(
         default_factory=lambda: BackendCapabilities(native_expectations=True)
     )
+    mitigated: bool = False
 
     def __post_init__(self):
+        if type(self.mitigated) is not bool:
+            raise ValidationError("mitigated must be a boolean.")
+        if self.mitigated:
+            object.__setattr__(
+                self, "capabilities", replace(self.capabilities, bounded_expectations=False)
+            )
         object.__setattr__(self, "_cache", CircuitCache(self.cache_size))
         object.__setattr__(self, "_transpiler_lock", RLock())
         if self.recovery is not None and not isinstance(self.recovery, RecoveryPolicy):
@@ -218,6 +232,7 @@ class QiskitEstimatorBackend:
             "shape": (len(circuits), len(observables)),
             "layouts": layouts,
             "max_memory_mb": options.max_memory_mb,
+            "bounded_expectations": self.capabilities.bounded_expectations,
             "bounds": [
                 sum(abs(t.coefficient) for t in o.terms)
                 if isinstance(o, Hamiltonian)

@@ -5,6 +5,30 @@ trees and Flax Linen modules. Classical encoders, emitted quantum coordinates,
 measurement axes and residual projections remain in one native computation
 graph. No pretrained model, dataset or demonstration program is bundled.
 
+## External data and bounded prediction
+
+`Model.fit` and `evaluate` accept NumPy arrays and disk-backed `np.memmap`
+views. Finite-value and floating classification-label checks use bounded
+temporary buffers (at most 8 MiB, reduced by the shared compute ceiling).
+They still scan all observations. `shuffle=False` keeps contiguous batch
+slices; `shuffle=True` allocates a sample permutation and gathers each batch.
+The model, optimizer, framework allocator and activations have separate costs.
+This interface does not make a dense input representation sparse.
+
+`model.iter_predict(inputs,batch_size=256)` yields NumPy batches so callers can
+write or reduce predictions incrementally. Use `output="probabilities"` for
+classification or `output="quantiles"` for forecasts. A one-dimensional input
+keeps a length-one batch axis. Each batch is validated when consumed, so a
+later invalid batch can raise after earlier results have been used. Kernel
+scopes, Torch training mode and gradient mode are restored before yielding.
+Inputs and weights must remain stable while the iterator is active; concurrent
+training on the same model is not supported by this interface.
+
+No dataset catalogue, synthetic chemistry substitute or industrial throughput
+claim accompanies these APIs. Supply real observations with known provenance,
+units and preprocessing. Chronological splits, coverage, dimensionality and
+accuracy must be assessed on the intended workload.
+
 | API | Training contract |
 | --- | --- |
 | `oq.torch.IQPQuantumLayer` / `oq.jax.IQPQuantumLayer` | Trainable local quantum readouts, with leading input/weight dimensions broadcast |

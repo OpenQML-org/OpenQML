@@ -37,6 +37,7 @@ from . import iqp as iqp
 from . import ir as ir
 from . import layers as layers
 from . import measurement as measurement
+from . import mitigation as mitigation
 from . import models as models
 from . import multiscale as multiscale
 from . import observables as observables
@@ -338,6 +339,10 @@ from .measurement import (
 from .measurement import (
     measurement_plan as measurement_plan,
 )
+from .mitigation import ExtrapolationResult as ExtrapolationResult
+from .mitigation import MitigatedEstimate as MitigatedEstimate
+from .mitigation import ReadoutMitigation as ReadoutMitigation
+from .mitigation import zero_noise_extrapolate as zero_noise_extrapolate
 from .models import Model as Model
 from .multiscale import MultiscalePlan as MultiscalePlan
 from .observables import (

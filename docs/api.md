@@ -51,6 +51,10 @@ longer supported. The optional contraction-search extra is `openqml[compute]`.
 returning the same object. `predict(x)` returns NumPy results. Dimensions can be
 inferred on first fit or supplied as `input_features` and `output_features`.
 Pass Python lists, NumPy arrays, or tensors belonging to the selected framework.
+NumPy memory-mapped inputs are validated in bounded chunks. Use
+`iter_predict(x,batch_size=256,output="prediction")` to consume NumPy prediction
+batches without collecting a complete output array. Classification also accepts
+`output="probabilities"`; forecasting accepts `output="quantiles"`.
 
 | Task | Targets | Prediction |
 | --- | --- | --- |
@@ -62,6 +66,11 @@ Specify `output_features=1` for scalar sequence regression with targets `[B,T]`.
 Forecast medians describe the 0.5 quantile. Construct financial features and
 labels causally, fit preprocessing on training observations and supply a
 chronologically separate validation set when selecting a model.
+
+Supply observations and Hamiltonians from sources appropriate to the task;
+datasets and molecular operators are external to the package. Large-workload
+coverage and accuracy require validation on that workload. See
+[external data](hybrid-training.md#external-data-and-bounded-prediction).
 
 `num_qubits` and `quantum_depth` set each quantum cell's width and depth. A
 forecast cell reserves one environment qubit and uses the remaining qubits as

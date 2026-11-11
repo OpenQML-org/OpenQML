@@ -6,6 +6,7 @@ from importlib import import_module
 import numpy as np
 
 from .architecture import HybridArchitecture, QuantumCellSpec
+from .compute import compute_context, get_compute_kernel
 from .errors import MissingDependencyError, ValidationError
 from .ir import integer
 from .parameters import real
@@ -20,19 +21,36 @@ def _require(name, extra):
         ) from exc
 
 
-def _data(value, name):
+def _numpy_chunks(value):
+    """Bound validation temporaries for memmaps and noncontiguous array views."""
+    kernel = get_compute_kernel()
+    per_element = 2 * value.dtype.itemsize + 2
+    budget = kernel.admit(1, 8, itemsize=per_element)
+    size = max(1, int(budget * 2**20) // per_element)
+    return np.nditer(
+        value,
+        flags=["external_loop", "buffered", "zerosize_ok"],
+        op_flags=["readonly"],
+        order="K",
+        buffersize=size,
+    )
+
+
+def _data(value, name, *, check_finite=True):
     module = type(value).__module__.split(".")[0]
     if module == "torch":
         xp = _require("torch", "torch")
-        valid = not value.is_complex() and bool(xp.isfinite(value).all())
+        valid = not value.is_complex() and (not check_finite or bool(xp.isfinite(value).all()))
     elif module in {"jax", "jaxlib"}:
         xp = _require("jax.numpy", "jax")
-        valid = not np.issubdtype(value.dtype, np.complexfloating) and bool(
-            xp.isfinite(value).all()
+        valid = not np.issubdtype(value.dtype, np.complexfloating) and (
+            not check_finite or bool(xp.isfinite(value).all())
         )
     else:
         value = np.asarray(value)
-        valid = value.dtype.kind in "fibu" and np.isfinite(value).all()
+        valid = value.dtype.kind in "fibu" and (
+            not check_finite or all(np.isfinite(chunk).all() for chunk in _numpy_chunks(value))
+        )
     if not valid or value.ndim == 0 or 0 in value.shape:
         raise ValidationError(f"{name} must be a nonempty finite real array.")
     return value
@@ -259,11 +277,14 @@ class Model:
                 if module in {"jax", "jaxlib"}
                 else np
             )
-            integral = (
-                not xp.is_floating_point(y) or bool((y == y.floor()).all())
-                if module == "torch"
-                else bool((y == xp.floor(y)).all())
-            )
+            if module == "torch":
+                integral = not xp.is_floating_point(y) or bool((y == y.floor()).all())
+            elif xp is np:
+                integral = y.dtype.kind in "ibu" or all(
+                    (chunk == np.floor(chunk)).all() for chunk in _numpy_chunks(y)
+                )
+            else:
+                integral = bool((y == xp.floor(y)).all())
             if not integral or int(y.min()) < 0 or int(y.max()) >= outputs:
                 raise ValidationError("Classification labels must be integers in the class range.")
         elif y.shape != prefix + (outputs,) and not (
@@ -437,57 +458,86 @@ class Model:
             self._restore(snapshot)
         return self
 
-    def _predict_raw(self, inputs, batch_size):
+    def _iter_predict_raw(self, inputs, batch_size, *, output=None):
         if self.trainer is None:
             raise ValidationError("Call fit before predict.")
-        x = _data(inputs, "inputs")
-        single = x.ndim == 1
-        if single:
+        x = _data(inputs, "inputs", check_finite=False)
+        if x.ndim == 1:
             x = x[None, :]
         if x.shape[-1] != self.input_features:
             raise ValidationError("Input feature width differs from the fitted model.")
         size = integer(batch_size, "batch_size", 1)
-        output = []
-        if self.framework == "torch":
-            torch = _require("torch", "torch")
-            training = self.module.training
-            self.module.eval()
-            try:
-                with torch.no_grad():
-                    for start in range(0, len(x), size):
-                        value = self.module(self._convert(x[start : start + size]))
-                        output.append(value.detach().cpu().numpy())
-            finally:
-                self.module.train(training)
-        else:
-            for start in range(0, len(x), size):
-                value = self.trainer.model(
-                    self.trainer.parameters, self._convert(x[start : start + size])
-                )
-                output.append(np.asarray(value))
-        result = np.concatenate(output)
+        kernel = get_compute_kernel()
+        for start in range(0, len(x), size):
+            # Never retain a context override or eval/no_grad mode across yield.
+            with compute_context(kernel=kernel):
+                batch = _data(x[start : start + size], "inputs")
+                if self.framework == "torch":
+                    torch = _require("torch", "torch")
+                    training = self.module.training
+                    self.module.eval()
+                    try:
+                        with torch.no_grad():
+                            value = self.module(self._convert(batch))
+                            result = value.detach().cpu().numpy()
+                    finally:
+                        self.module.train(training)
+                else:
+                    value = self.trainer.model(self.trainer.parameters, self._convert(batch))
+                    result = np.asarray(value)
+                kernel.finite(result)
+                if output is not None:
+                    result = self._decode_prediction(result, output)
+            yield result
+
+    def _predict_raw(self, inputs, batch_size):
+        # Eager calls validate all inputs before producing a result. The iterator
+        # instead validates each batch as it is consumed.
+        x = _data(inputs, "inputs")
+        single = x.ndim == 1
+        result = np.concatenate(list(self._iter_predict_raw(x, batch_size)))
         return result[0] if single else result
 
-    def predict(self, inputs, *, batch_size=256):
-        raw = self._predict_raw(inputs, batch_size)
+    def _decode_prediction(self, raw, output):
+        if output == "probabilities":
+            p = np.exp(raw - np.max(raw, axis=-1, keepdims=True))
+            return p / p.sum(axis=-1, keepdims=True)
+        if output == "quantiles":
+            return self._forecast.decode(raw).quantiles
         if self.task == "classification":
             return np.argmax(raw, axis=-1)
         if self.task == "forecast":
             return self._forecast.decode(raw).median
         return raw[..., 0] if self.output_features == 1 else raw
 
+    def iter_predict(self, inputs, *, batch_size=256, output="prediction"):
+        """Yield NumPy prediction batches without retaining the complete output.
+
+        output is 'prediction', 'probabilities' (classification), or 'quantiles'
+        (forecast). A single input retains a length-one batch axis. Validation
+        is lazy: a later invalid batch can fail after earlier batches were used.
+        The caller must keep inputs and model weights stable while iterating.
+        """
+        if (
+            output not in {"prediction", "probabilities", "quantiles"}
+            or (output == "probabilities" and self.task != "classification")
+            or (output == "quantiles" and self.task != "forecast")
+        ):
+            raise ValidationError("Select an output supported by the model task.")
+        yield from self._iter_predict_raw(inputs, batch_size, output=output)
+
+    def predict(self, inputs, *, batch_size=256):
+        return self._decode_prediction(self._predict_raw(inputs, batch_size), "prediction")
+
     def predict_proba(self, inputs, *, batch_size=256):
         if self.task != "classification":
             raise ValidationError("predict_proba requires a classification model.")
-        raw = self._predict_raw(inputs, batch_size)
-        p = np.exp(raw - np.max(raw, axis=-1, keepdims=True))
-        return p / p.sum(axis=-1, keepdims=True)
+        return self._decode_prediction(self._predict_raw(inputs, batch_size), "probabilities")
 
     def predict_quantiles(self, inputs, *, batch_size=256):
         if self.task != "forecast":
             raise ValidationError("predict_quantiles requires a forecast model.")
-        raw = self._predict_raw(inputs, batch_size)
-        return self._forecast.decode(raw).quantiles
+        return self._decode_prediction(self._predict_raw(inputs, batch_size), "quantiles")
 
     def save(self, path):
         """Atomically save configuration, training state, history and shuffle RNG."""
