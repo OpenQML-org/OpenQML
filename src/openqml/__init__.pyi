@@ -8,7 +8,6 @@ import qiskit_aer as qiskit_aer
 import sympy as sympy
 
 from . import adaptive as adaptive
-from . import adaptive_mps as adaptive_mps
 from . import adjoint as adjoint
 from . import aer as aer
 from . import amplitude as amplitude
@@ -26,7 +25,6 @@ from . import conversion as conversion
 from . import costs as costs
 from . import deep as deep
 from . import density as density
-from . import distributed_tensor as distributed_tensor
 from . import environment as environment
 from . import errors as errors
 from . import execution as execution
@@ -40,12 +38,7 @@ from . import ir as ir
 from . import layers as layers
 from . import measurement as measurement
 from . import models as models
-from . import mps as mps
 from . import multiscale as multiscale
-from . import network_attention as network_attention
-from . import network_graph as network_graph
-from . import network_operators as network_operators
-from . import network_training as network_training
 from . import observables as observables
 from . import optimization as optimization
 from . import parameters as parameters
@@ -61,21 +54,33 @@ from . import quantum_cells as quantum_cells
 from . import quantum_channels as quantum_channels
 from . import quantum_generative as quantum_generative
 from . import quantum_measurement as quantum_measurement
-from . import quantum_tree as quantum_tree
 from . import readout as readout
 from . import resources as resources
-from . import rl as rl
-from . import rl_training as rl_training
 from . import runtime as runtime
 from . import semantics as semantics
 from . import shadows as shadows
 from . import simulator as simulator
 from . import sparse_pauli as sparse_pauli
 from . import templates as templates
-from . import tensor_contraction as tensor_contraction
-from . import tensor_train as tensor_train
-from . import truncated_mps as truncated_mps
 from . import verification as verification
+from ._hybrid_operators import (
+    NetworkOperator as NetworkOperator,
+)
+from ._hybrid_operators import (
+    OperatorSpec as OperatorSpec,
+)
+from ._hybrid_operators import (
+    list_network_operators as list_network_operators,
+)
+from ._hybrid_operators import (
+    register_network_operator as register_network_operator,
+)
+from ._hybrid_training import (
+    DepthSchedule as DepthSchedule,
+)
+from ._hybrid_training import (
+    StagewiseOptimizer as StagewiseOptimizer,
+)
 from ._native_training import NativeNaturalGradientResult as NativeNaturalGradientResult
 from ._scheduling import ExecutionBatch as ExecutionBatch
 from ._scheduling import ReadoutRoute as ReadoutRoute
@@ -93,12 +98,6 @@ from .adaptive_amplitude import (
 )
 from .adaptive_amplitude import (
     AdaptiveAmplitudeEstimationPlan as AdaptiveAmplitudeEstimationPlan,
-)
-from .adaptive_mps import (
-    AdaptiveMPSBackend as AdaptiveMPSBackend,
-)
-from .adaptive_mps import (
-    AdaptiveMPSResult as AdaptiveMPSResult,
 )
 from .adjoint import (
     AdjointPlan as AdjointPlan,
@@ -231,12 +230,6 @@ from .costs import (
 )
 from .deep import DeepQuantumPlan as DeepQuantumPlan
 from .density import density_matrix as density_matrix
-from .distributed_tensor import (
-    DistributedTensorPlan as DistributedTensorPlan,
-)
-from .distributed_tensor import (
-    Interconnect as Interconnect,
-)
 from .environment import environment_report as environment_report
 from .errors import (
     BackendError as BackendError,
@@ -346,26 +339,7 @@ from .measurement import (
     measurement_plan as measurement_plan,
 )
 from .models import Model as Model
-from .mps import MPSBackend as MPSBackend
 from .multiscale import MultiscalePlan as MultiscalePlan
-from .network_operators import (
-    NetworkOperator as NetworkOperator,
-)
-from .network_operators import (
-    OperatorSpec as OperatorSpec,
-)
-from .network_operators import (
-    list_network_operators as list_network_operators,
-)
-from .network_operators import (
-    register_network_operator as register_network_operator,
-)
-from .network_training import (
-    DepthSchedule as DepthSchedule,
-)
-from .network_training import (
-    StagewiseOptimizer as StagewiseOptimizer,
-)
 from .observables import (
     Hamiltonian as Hamiltonian,
 )
@@ -441,7 +415,6 @@ from .quantum_generative import (
     shifted_tokens as shifted_tokens,
 )
 from .quantum_measurement import QuantumPOVMPlan as QuantumPOVMPlan
-from .quantum_tree import QuantumTreePlan as QuantumTreePlan
 from .readout import ReadoutPlan as ReadoutPlan
 from .readout import plan_readout as plan_readout
 from .resources import (
@@ -450,49 +423,6 @@ from .resources import (
 from .resources import (
     estimate_resources as estimate_resources,
 )
-from .rl import (
-    ActorCriticOutput as ActorCriticOutput,
-)
-from .rl import (
-    AdvantageTargets as AdvantageTargets,
-)
-from .rl import (
-    CategoricalStatistics as CategoricalStatistics,
-)
-from .rl import (
-    PPOLoss as PPOLoss,
-)
-from .rl import (
-    SACLoss as SACLoss,
-)
-from .rl import (
-    VTraceTargets as VTraceTargets,
-)
-from .rl import (
-    categorical_statistics as categorical_statistics,
-)
-from .rl import (
-    generalized_advantages as generalized_advantages,
-)
-from .rl import (
-    ppo_loss as ppo_loss,
-)
-from .rl import (
-    sac_loss as sac_loss,
-)
-from .rl import (
-    squashed_gaussian as squashed_gaussian,
-)
-from .rl import (
-    squashed_gaussian_log_probability as squashed_gaussian_log_probability,
-)
-from .rl import (
-    surrogate_fit_loss as surrogate_fit_loss,
-)
-from .rl import (
-    vtrace_targets as vtrace_targets,
-)
-from .rl_training import PPOConfig as PPOConfig
 from .runtime import (
     CostAwareBackend as CostAwareBackend,
 )
@@ -562,15 +492,6 @@ from .templates import (
 )
 from .templates import (
     identity_block_ansatz as identity_block_ansatz,
-)
-from .tensor_contraction import TensorNetworkPlan as TensorNetworkPlan
-from .tensor_train import TensorTrainMatrix as TensorTrainMatrix
-from .tensor_train import TensorTrainPlan as TensorTrainPlan
-from .truncated_mps import (
-    MPSApproximation as MPSApproximation,
-)
-from .truncated_mps import (
-    TruncatedMPSBackend as TruncatedMPSBackend,
 )
 from .verification import ConversionCheck as ConversionCheck
 

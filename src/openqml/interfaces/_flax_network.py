@@ -4,8 +4,8 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
+from .._hybrid_training import StagewiseOptimizer
 from ..architecture import HybridArchitecture
-from ..network_training import StagewiseOptimizer
 from ._jax_network import HybridNetwork as FunctionalNetwork
 from ._jax_training import make_train_step
 

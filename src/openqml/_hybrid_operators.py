@@ -319,7 +319,7 @@ class _Attention(NetworkOperator):
             projection(f"attention_{role}", readouts, c["heads"] * c["key_features"])
 
     def apply(self, ctx):
-        from .network_attention import quantum_attention
+        from ._hybrid_attention import quantum_attention
 
         return quantum_attention(ctx)
 
@@ -346,7 +346,7 @@ class _Graph(NetworkOperator):
         return tuple(min(c["chunk_size"], n - i) for i in range(0, n, c["chunk_size"]))
 
     def apply(self, ctx):
-        from .network_graph import quantum_messages
+        from ._hybrid_graph import quantum_messages
 
         return quantum_messages(ctx)
 
@@ -364,7 +364,7 @@ class _StateAttention(NetworkOperator):
             raise ValidationError("depolarization must lie strictly between zero and one.")
 
     def validate_cell(self, spec, c):
-        from .network_attention import reduced_state_groups
+        from ._hybrid_attention import reduced_state_groups
 
         reduced_state_groups(spec)
 
@@ -380,7 +380,7 @@ class _StateAttention(NetworkOperator):
         return _Convolution().row_chunks(metadata, c)
 
     def apply(self, ctx):
-        from .network_attention import state_attention
+        from ._hybrid_attention import state_attention
 
         return state_attention(ctx)
 
@@ -406,7 +406,7 @@ class _PairGraph(NetworkOperator):
         return _Convolution().row_chunks(metadata, c)
 
     def apply(self, ctx):
-        from .network_graph import quantum_pairs
+        from ._hybrid_graph import quantum_pairs
 
         return quantum_pairs(ctx)
 

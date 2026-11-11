@@ -328,7 +328,7 @@ def prepare_execution(
             max_branches=limits.get("max_branches", 256),
         )
     if method == "tensor-network":
-        from ..tensor_contraction import TensorNetworkPlan
+        from .._tensor_contraction import TensorNetworkPlan
 
         settings = {} if tensor_options is None else dict(tensor_options)
         if set(settings) - {
@@ -422,7 +422,7 @@ def admit_native_execution(circuit, observables, plan, *, backend, method, limit
                 limits["max_qubits"] is not None and circuit.num_qubits > limits["max_qubits"]
             ):
                 raise
-            from ..tensor_contraction import TensorNetworkPlan
+            from .._tensor_contraction import TensorNetworkPlan
 
             return TensorNetworkPlan(circuit, observables, max_memory_mb=limits["max_memory_mb"])
     return None

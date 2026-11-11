@@ -303,7 +303,7 @@ def get_backend(backend: str | StatevectorBackend) -> StatevectorBackend:
         return _validate_backend(backend)
     with _LOCK:
         if backend not in _REGISTRY and backend == "mps":
-            from .mps import MPSBackend
+            from ._mps import MPSBackend
 
             _REGISTRY[backend] = MPSBackend()
         elif backend not in _REGISTRY and backend == "auto":

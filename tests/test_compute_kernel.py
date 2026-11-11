@@ -8,9 +8,11 @@ import pytest
 import openqml as oq
 from openqml import compute
 from openqml._contraction_program import ContractionKernel
+from openqml._tensor_contraction import TensorNetworkPlan
+from openqml._tensor_train import TensorTrainPlan
 from openqml._validation import validate_expectations, validate_state
+from openqml.compute import RealOps as _Ops
 from openqml.finance._array import Ops, admission
-from openqml.rl import _Ops
 from openqml.simulator import _TensorOps
 
 
@@ -39,7 +41,7 @@ def test_invalid_policies_fail_before_execution(options):
         oq.ComputePolicy(**options)
 
 
-def test_quantum_rl_and_finance_share_one_kernel_and_primitive_dispatch(monkeypatch):
+def test_quantum_models_and_finance_share_one_kernel_and_primitive_dispatch(monkeypatch):
     kernel = oq.get_compute_kernel()
     assert _TensorOps().kernel is _Ops(np.ones(2)).kernel is Ops(np.ones(2)).kernel is kernel
     calls = []
@@ -55,7 +57,7 @@ def test_quantum_rl_and_finance_share_one_kernel_and_primitive_dispatch(monkeypa
     )
     assert calls
     first = len(calls)
-    plan = oq.TensorNetworkPlan(oq.Circuit(2).h(0).cx(0, 1), (oq.PauliString("ZZ"),))
+    plan = TensorNetworkPlan(oq.Circuit(2).h(0).cx(0, 1), (oq.PauliString("ZZ"),))
     np.testing.assert_allclose(plan.evaluate(), [1], atol=1e-12)
     assert len(calls) > first
     np.testing.assert_allclose(Ops(np.eye(2)).matmul(np.eye(2), np.ones((2, 1))), 1)
@@ -70,7 +72,7 @@ def test_shared_ceiling_applies_to_direct_execution_plans_and_financial_work():
     with pytest.raises(oq.ResourceError):
         oq.density_matrix(oq.Circuit(7).h(0), max_memory_mb=100)
     with pytest.raises(oq.ResourceError):
-        oq.TensorNetworkPlan(oq.Circuit(4).h(0).cx(0, 1), (oq.PauliString("ZZII"),))
+        TensorNetworkPlan(oq.Circuit(4).h(0).cx(0, 1), (oq.PauliString("ZZII"),))
     with pytest.raises(oq.ResourceError):
         admission(10_000, max_memory_mb=100)
     # An explicit lower caller budget remains binding.
@@ -79,7 +81,7 @@ def test_shared_ceiling_applies_to_direct_execution_plans_and_financial_work():
 
 
 def test_existing_plan_obeys_a_new_ceiling_before_tensor_allocation():
-    plan = oq.TensorTrainPlan.from_features(16, 16, bond_dimension=2)
+    plan = TensorTrainPlan.from_features(16, 16, bond_dimension=2)
     cores = tuple(np.ones(s) for s in plan.core_shapes)
     oq.configure_compute(policy=oq.ComputePolicy(max_memory_mb=0.001))
     with pytest.raises(oq.ResourceError):

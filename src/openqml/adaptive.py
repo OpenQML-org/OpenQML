@@ -365,7 +365,7 @@ def plan_execution(
         if selected is None and deferred_stabilizer:
             selected = "stabilizer"
         if selected is None and method in {"auto", "mps"}:
-            from .mps import _layout
+            from ._mps import _layout
 
             mps_profile, reason = (
                 _layout(circuit, max_bond_dimension, max_work)
@@ -423,7 +423,7 @@ def plan_execution(
             except ResourceError as error:
                 candidates.append(ExecutionCandidate("components", False, str(error)))
         if selected is None and method in {"auto", "tensor-network"} and unitary:
-            from .tensor_contraction import TensorNetworkPlan
+            from ._tensor_contraction import TensorNetworkPlan
 
             try:
                 tensor = TensorNetworkPlan(
@@ -506,7 +506,7 @@ def plan_execution(
                 mps_truncation_threshold=0.0,
             )
         elif selected == "mps":
-            from .mps import MPSBackend
+            from ._mps import MPSBackend
 
             runner = MPSBackend(
                 max_bond_dimension=max_bond_dimension,

@@ -1,14 +1,13 @@
-"""Matrix-product operators with native contractions and certified TT-SVD import."""
+"""Private matrix-product projections for hybrid model feature maps."""
 
 import math
 from dataclasses import dataclass, field
 
 import numpy as np
 
-from .compute import compute_operation, get_compute_kernel, memory_budget
+from .compute import compute_operation, memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import integer
-from .parameters import real
 from .simulator import _TensorOps
 
 
@@ -200,148 +199,3 @@ class TensorTrainPlan:
                 result, tuple(range(batch)) + tuple(range(batch + len(outs) - 1, batch - 1, -1))
             )
         return result.reshape(shape + (math.prod(self.output_modes),))[..., : self.out_features]
-
-
-@dataclass(frozen=True, eq=False)
-class TensorTrainMatrix:
-    plan: TensorTrainPlan
-    cores: tuple
-    error_bound: float = 0.0
-    source_norm: float = 0.0
-
-    def __post_init__(self):
-        if not isinstance(self.plan, TensorTrainPlan):
-            raise ValidationError("Provide a TensorTrainPlan.")
-        raw = tuple(np.asarray(c) for c in self.cores)
-        if any(c.dtype.kind not in "fiu" for c in raw):
-            raise ValidationError("Classical MPO cores must be real numeric arrays.")
-        cores = tuple(np.array(c, dtype=float, copy=True) for c in raw)
-        if len(cores) != len(self.plan.core_shapes) or any(
-            c.shape != s or not np.isfinite(c).all()
-            for c, s in zip(cores, self.plan.core_shapes, strict=True)
-        ):
-            raise ValidationError("MPO cores must be finite real arrays matching the plan.")
-        for c in cores:
-            c.setflags(write=False)
-        object.__setattr__(self, "cores", cores)
-        if real(self.error_bound) < 0 or real(self.source_norm) < 0:
-            raise ValidationError("Compression norms/bounds must be nonnegative.")
-
-    @classmethod
-    def from_dense(
-        cls,
-        weight,
-        *,
-        input_modes=None,
-        output_modes=None,
-        max_bond_dimension=None,
-        relative_error=None,
-        max_memory_mb=256,
-        max_work=2_000_000,
-    ):
-        value = np.asarray(weight)
-        if (
-            value.ndim != 2
-            or value.dtype.kind not in "fiu"
-            or not np.isfinite(value).all()
-            or min(value.shape) < 1
-        ):
-            raise ValidationError(
-                "Dense weights must be a finite real (out_features,in_features) matrix."
-            )
-        out_features, in_features = value.shape
-        if (input_modes is None) != (output_modes is None):
-            raise ValidationError("Specify both input_modes and output_modes.")
-        if input_modes is None:
-            template = TensorTrainPlan.from_features(
-                in_features,
-                out_features,
-                bond_dimension=1,
-                max_memory_mb=max_memory_mb,
-                max_work=max_work,
-            )
-            ins, outs = template.input_modes, template.output_modes
-        else:
-            ins, outs = _modes(input_modes, "input_modes"), _modes(output_modes, "output_modes")
-            if (
-                len(ins) != len(outs)
-                or math.prod(ins) < in_features
-                or math.prod(outs) < out_features
-            ):
-                raise ValidationError("Dense import modes do not fit the source matrix.")
-        budget = memory_budget(max_memory_mb)
-        if budget <= 0 or 64 * math.prod(ins) * math.prod(outs) > budget * 2**20:
-            raise ResourceError("TT-SVD dense import/workspace exceeds max_memory_mb.")
-        cap = (
-            None
-            if max_bond_dimension is None
-            else integer(max_bond_dimension, "max_bond_dimension", 1)
-        )
-        tolerance = None if relative_error is None else real(relative_error)
-        if tolerance is not None and not 0 <= tolerance <= 1:
-            raise ValidationError("relative_error must be in [0,1].")
-        from ._norms import vector_norm
-
-        value = value.astype(float)
-        scale = float(np.max(np.abs(value))) or 1.0
-        value = value / scale
-        unit_norm = float(vector_norm(value, np, "numpy"))
-        norm = unit_norm * scale
-        matrix = np.zeros((math.prod(outs), math.prod(ins)))
-        matrix[:out_features, :in_features] = value
-        d = len(ins)
-        axes = tuple(j for i in range(d) for j in (d + i, i))
-        tail = matrix.reshape(outs + ins).transpose(axes)
-        cores, ranks, error_squared, rank = [], [], 0.0, 1
-        allowance = 0.0 if tolerance is None else (tolerance * unit_norm) ** 2 / max(1, d - 1)
-        for k, (i, o) in enumerate(zip(ins[:-1], outs[:-1], strict=True)):
-            remaining = math.prod(ins[k + 1 :]) * math.prod(outs[k + 1 :])
-            u, s, vh = get_compute_kernel().svd(
-                tail.reshape(rank * i * o, remaining), full_matrices=False
-            )
-            selected = len(s)
-            tails = np.concatenate((np.cumsum((s[::-1] ** 2))[::-1], [0.0]))
-            if tolerance is not None:
-                selected = next((r for r in range(1, len(s) + 1) if tails[r] <= allowance), len(s))
-            if cap is not None:
-                selected = min(selected, cap)
-            error_squared += float(tails[selected])
-            cores.append(u[:, :selected].reshape(rank, i, o, selected))
-            tail = s[:selected, None] * vh[:selected]
-            ranks.append(selected)
-            rank = selected
-        cores.append(tail.reshape(rank, ins[-1], outs[-1], 1) * scale)
-        unit_bound = math.sqrt(error_squared)
-        bound = unit_bound * scale
-        if tolerance is not None and unit_bound > tolerance * unit_norm:
-            raise ResourceError("The rank cap cannot satisfy the requested relative_error.")
-        plan = TensorTrainPlan(ins, outs, tuple(ranks), in_features, out_features, budget, max_work)
-        return cls(plan, tuple(cores), bound, norm)
-
-    def __call__(self, inputs):
-        return self.plan.apply(self.cores, np.asarray(inputs), backend="numpy")
-
-    @compute_operation
-    def to_dense(self, *, max_memory_mb=None):
-        budget = self.plan.max_memory_mb if max_memory_mb is None else memory_budget(max_memory_mb)
-        a, b = self.plan.in_features, self.plan.out_features
-        if budget <= 0 or 24 * a * b > budget * 2**20:
-            raise ResourceError("Dense MPO export exceeds max_memory_mb.")
-        result = np.empty((b, a))
-        chunk = min(
-            self.plan.batch_capacity, max(1, int(budget * 2**20 - 8 * a * b) // max(8 * a, 1))
-        )
-        for start in range(0, a, chunk):
-            size = min(chunk, a - start)
-            basis = np.zeros((size, a))
-            basis[np.arange(size), start + np.arange(size)] = 1
-            result[:, start : start + size] = self(basis).T
-        return result
-
-    def to_dict(self):
-        return {
-            **self.plan.to_dict(),
-            "frobenius_error_bound": self.error_bound,
-            "source_frobenius_norm": self.source_norm,
-            "bound_scope": "TT-SVD truncation only; excludes floating_point_roundoff",
-        }

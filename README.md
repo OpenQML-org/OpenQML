@@ -50,7 +50,21 @@ print(model.predict(x[:2]))
 
 Select `framework="jax"` or `framework="flax"` to change training frameworks. `backend` chooses circuit execution; `device` chooses native tensor placement. Qubit counts follow the selected backend's available resources.
 
-Simulation, tensor networks, hybrid models and financial operators share a
+Convert a circuit with the core installation:
+
+```python
+import openqml as oq
+
+circuit = oq.Circuit(2).h(0).cx(0, 1)
+result = oq.convert(circuit, target="openqasm3")
+print(result.value)
+```
+
+`convert` imports, checks and exports in one call. Native SDK targets require
+their corresponding integration. Use `plan_conversion` when repeatedly binding
+or exporting the same source.
+
+Hybrid models, financial operators and circuit execution share a
 native compute kernel. It centralizes array placement, matrix products,
 contraction planning, numerical checks and memory admission. Configure a common
 workspace ceiling for an isolated execution scope:
@@ -68,12 +82,7 @@ remain available. Shared caches hold bounded,
 immutable planning metadata; trainable tensors stay in each forward pass.
 [Compute policies and numerical contracts](https://github.com/OpenQML-org/OpenQML/blob/main/docs/compute.md).
 
-`TensorNetworkPlan` compiles native batched GEMMs, searches bounded contraction
-portfolios and shares compatible intermediate tensors. `iter_evaluate` streams
-broadcast parameter grids within the configured working-memory budget while
-retaining PyTorch/JAX gradients. [Tensor-network execution](https://github.com/OpenQML-org/OpenQML/blob/main/docs/tensor-networks.md).
-
-[API](https://github.com/OpenQML-org/OpenQML/blob/main/docs/api.md) · [Training and validation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md) · [Quantitative research](https://github.com/OpenQML-org/OpenQML/blob/main/docs/finance.md) · [Interoperability](https://github.com/OpenQML-org/OpenQML/blob/main/docs/interoperability.md) · [Tensor networks](https://github.com/OpenQML-org/OpenQML/blob/main/docs/tensor-networks.md) · [Runtime](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md)
+[API](https://github.com/OpenQML-org/OpenQML/blob/main/docs/api.md) · [Training and validation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md) · [Quantitative research](https://github.com/OpenQML-org/OpenQML/blob/main/docs/finance.md) · [Interoperability](https://github.com/OpenQML-org/OpenQML/blob/main/docs/interoperability.md) · [Runtime](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md)
 
 ## License
 

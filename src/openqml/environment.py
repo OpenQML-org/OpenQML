@@ -93,7 +93,7 @@ def environment_report(*, check_imports=False, include_sizes=False, import_timeo
         "pennylane",
         "cirq",
         "symbolic",
-        "tensor",
+        "compute",
         "dev",
     }
     if any(not isinstance(e, str) or e not in allowed for e in extras):

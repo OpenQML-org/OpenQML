@@ -21,12 +21,6 @@ from ._jax_hybrid import HyperQuantumAdapter as HyperQuantumAdapter
 from ._jax_hybrid import IQPQuantumLayer as IQPQuantumLayer
 from ._jax_network import HybridNetwork as HybridNetwork
 from ._jax_network import NetworkTrainer as NetworkTrainer
-from ._jax_ppo import PPOTrainer as PPOTrainer
-from ._jax_rl import QuantumActorCritic as QuantumActorCritic
-from ._jax_rl import QuantumSurrogate as QuantumSurrogate
-from ._jax_tensor import TensorNetworkAdapter as TensorNetworkAdapter
-from ._jax_tensor import TensorTrainLinear as TensorTrainLinear
-from ._jax_tensor import TreeQuantumLayer as TreeQuantumLayer
 from ._jax_training import accumulate_gradients as accumulate_gradients
 from ._jax_training import make_train_step as make_train_step
 from ._spec import (

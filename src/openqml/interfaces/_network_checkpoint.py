@@ -9,10 +9,10 @@ import jax
 import numpy as np
 
 from .._checkpoint_archive import check_npz_payload
+from .._hybrid_training import DepthSchedule
 from .._serialization import load_json
 from ..errors import ValidationError
 from ..ir import integer
-from ..network_training import DepthSchedule
 
 
 def _layout(tree):

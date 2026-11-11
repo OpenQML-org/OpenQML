@@ -146,17 +146,6 @@ def test_shift_engine_pins_qpu_for_primal_and_all_shift_points(hardware, monkeyp
     assert sum(n for n, task in hardware.calls) == 4
 
 
-def test_quantum_rl_policy_default_routes_forward_and_backward_to_qpu(hardware, monkeypatch):
-    torch = pytest.importorskip("torch")
-    monkeypatch.setitem(backends._REGISTRY, "gpu", Device("gpu", kind="GPU", available=False))
-    model = oq.torch.QuantumActorCritic(2, 2, num_qubits=2, depth=1, device="cpu")
-    x = torch.randn(3, 2, requires_grad=True)
-    output = model(x)
-    (output.policy.square().sum() + output.value.square().sum()).backward()
-    assert len(hardware.calls) >= 2 and all(task == "expectations" for _, task in hardware.calls)
-    assert x.grad is not None and model.quantum.weights.grad is not None
-
-
 def test_general_torch_layer_defaults_to_configured_qpu_and_preserves_explicit_native_pin(hardware):
     torch = pytest.importorskip("torch")
     layer = oq.torch.QuantumLayer.hardware_efficient(2, 1, device="cpu")

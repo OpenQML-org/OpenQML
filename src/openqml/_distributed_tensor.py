@@ -11,11 +11,11 @@ import math
 import time
 from dataclasses import dataclass, field
 
+from ._tensor_contraction import TensorNetworkPlan
 from .compute import memory_budget
 from .errors import MissingDependencyError, ResourceError, ValidationError
 from .ir import integer
 from .parameters import real
-from .tensor_contraction import TensorNetworkPlan
 
 
 @dataclass(frozen=True)

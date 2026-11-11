@@ -1,7 +1,6 @@
 # Python API
 
-Use `import openqml as oq`. Public symbols retain their original identities and
-serialization paths. The root and financial namespaces resolve symbols on first
+Use `import openqml as oq`. The root and financial namespaces resolve symbols on first
 access and cache them. `dir(oq)` lists available names without importing their
 implementations. Type stubs describe the same exports for editors. Frameworks
 and SDKs are never installed at runtime.
@@ -19,6 +18,31 @@ and SDKs are never installed at runtime.
 A QPU executes compatible circuits. Classical projections, portfolio solvers
 and optimizer state remain native tensor calculations. Recurrent density carries
 require native execution; see the stateful-model guide for exporting unrolls.
+
+## Circuit conversion
+
+```python
+import openqml as oq
+
+result = oq.convert(oq.Circuit(2).h(0).cx(0, 1), target="openqasm3")
+print(result.value)
+```
+
+`convert(value,target=...,bindings=None)` returns a `ConversionResult`; `.value`
+contains the target object or text. Core targets are `ir`, `json`, `openqasm2`
+and `openqasm3`. Install the matching extra for SDK targets. Source detection,
+compatibility checks and output budgets use the same conversion pipeline.
+Use `plan_conversion` for repeated exports or partial binding; see
+[interoperability](interoperability.md).
+
+## Scope in 0.21
+
+The public package covers hybrid AI, quantitative research and circuit
+interoperability. RL/PPO and standalone tensor-network layers, compression and
+plan APIs have been removed. Tensor contraction, compressed projections and MPS
+execution remain private implementations of the shared compute service.
+Imports and checkpoints belonging to the removed standalone models are no
+longer supported. The optional contraction-search extra is `openqml[compute]`.
 
 ## Supervised models
 
@@ -162,25 +186,6 @@ The CLI exposes this control as `--max-output-bytes`.
 `plan.iter_exports(rows,max_bindings=1024)` streams checked artifacts;
 `plan.export_many(rows,...)` returns a tuple. Compatible symbolic targets reuse
 prepared topology. See [interoperability](interoperability.md).
-
-## Tensor-network execution
-
-`TensorNetworkPlan(...,optimizer="portfolio",reuse_intermediates=True)` selects
-a deterministic, memory-admitted tree and reuses compatible subtrees across
-readouts and exact slices. `search_trials`, `max_work`, `max_slices` and
-`max_flops` bound planning and execution. The default `optimizer="greedy"`
-provides the lower-planning-cost path.
-
-`plan.evaluate(bindings,backend="numpy"|"torch"|"jax",return_report=True)`
-returns values plus forward contraction, cache and slice counters. Native
-tensor-network architecture models enable portfolio planning and subtree reuse
-automatically. See [tensor networks](tensor-networks.md) for memory accounting,
-compiled kernels and rematerialization.
-
-`plan.iter_evaluate(bindings,batch_chunk_size=None,...)` streams flattened
-row-major chunks from broadcast parameter grids. `evaluate(...,batch_chunk_size=N)`
-collects admitted chunks and restores the broadcast output shape. Both retain
-native gradients; collection additionally admits retained output storage.
 
 ## Risk-budget projection
 
