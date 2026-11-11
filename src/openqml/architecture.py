@@ -571,9 +571,9 @@ class HybridArchitecture:
             )
 
     def _linear(self, name, parameters, inputs, backend):
-        ops = _TensorOps(backend, inputs)
         plan = self.projections[name]
         if plan is None:
+            ops = _TensorOps(backend, parameters[f"{name}_weight"])
             return ops.matmul(inputs, parameters[f"{name}_weight"]) + parameters[f"{name}_bias"]
         cores = tuple(parameters[f"{name}_core_{i}"] for i in range(len(plan.core_shapes)))
         shape = inputs.shape[:-1]
@@ -697,7 +697,7 @@ class HybridArchitecture:
         next_states = dict(state)
         inputs, context, metadata = input_metadata(inputs, self.input_features)
         inputs = self._masked(inputs, context, backend)
-        ops = _TensorOps(backend, inputs)
+        ops = _TensorOps(backend, parameters["stem_weight"])
         if self.input_lift == "graph-pairs":
             from .network_graph import lift_graph_pairs
 

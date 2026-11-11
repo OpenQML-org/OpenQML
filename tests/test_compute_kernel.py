@@ -168,6 +168,11 @@ def test_cache_can_be_disabled():
     assert kernel.cache_info()["entries"] == 0
 
 
+def test_large_finite_budgets_do_not_overflow_contraction_planning():
+    kernel = oq.ComputeKernel(oq.ComputePolicy(max_memory_mb=1e308))
+    np.testing.assert_array_equal(kernel.einsum("ij,jk->ik", np.eye(64), np.eye(64)), np.eye(64))
+
+
 def test_numeric_failures_are_typed_and_scaled_norms_do_not_overflow():
     kernel = oq.get_compute_kernel()
     assert np.isfinite(kernel.norm(np.array([1e300, 1e300])))
@@ -239,3 +244,35 @@ def test_jax_vmap_with_closed_over_device_values_preserves_transforms():
     value = jnp.ones((2, 3))
     np.testing.assert_allclose(jax.vmap(function)(value), [3, 3])
     np.testing.assert_allclose(jax.grad(lambda x: jax.vmap(function)(x).sum())(value), 1)
+
+
+def test_hybrid_classical_projections_preserve_torch_autocast():
+    torch = pytest.importorskip("torch")
+    plan = oq.HybridArchitecture(
+        2,
+        1,
+        hidden_features=4,
+        depth=1,
+        quantum=oq.QuantumCellSpec(num_qubits=2),
+        projection_policy="dense",
+        rematerialize=False,
+    )
+    model = plan.build("torch", backend="torch", device="cpu", dtype=torch.float32)
+    value = torch.ones((3, 2))
+    reference = model(value).detach()
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        result = model(value)
+    torch.testing.assert_close(result.float(), reference, atol=0.03, rtol=0.03)
+    result.square().sum().backward()
+    assert all(bool(torch.isfinite(p.grad).all()) for p in model.parameters() if p.grad is not None)
+
+
+def test_hybrid_projections_accept_jax_mixed_precision_inputs():
+    pytest.importorskip("jax")
+    jnp = pytest.importorskip("jax.numpy")
+    plan = oq.HybridArchitecture(2, 1, hidden_features=4, depth=1, projection_policy="dense")
+    values = {name: jnp.asarray(value) for name, value in plan.initial_parameters(5).items()}
+    result = plan.evaluate(
+        values, jnp.ones((3, 2), dtype=jnp.bfloat16), backend="jax", active_depth=0
+    )
+    assert bool(jnp.isfinite(result).all())
