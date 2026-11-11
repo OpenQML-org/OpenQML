@@ -6,6 +6,7 @@ from threading import RLock
 
 import numpy as np
 
+from .compute import memory_budget
 from .errors import ResourceError
 from .ir import UNITARY_GATES, integer
 from .parameters import Expression, Parameter, expression
@@ -48,7 +49,7 @@ def parameter_batches(circuits, max_memory_mb=256):
             if op.name in UNITARY_GATES
             for j in range(len(op.params))
         ]
-        if 8 * len(rows) * len(controls) > max_memory_mb * 2**20:
+        if 8 * len(rows) * len(controls) > memory_budget(max_memory_mb) * 2**20:
             raise ResourceError("Batched parameter values exceed max_memory_mb.")
         prototype, bindings = first, {}
         for i, (path, op) in enumerate(first.walk_operations()):

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .compute import memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import CircuitBuilder, integer
 from .parameters import Parameter, real
@@ -76,7 +77,7 @@ class QuantumTreePlan:
         n = integer(self.num_qubits, "num_qubits", 1)
         heads = integer(self.num_outputs, "num_outputs", 1)
         integer(self.max_work, "max_work", 1)
-        budget = real(self.max_memory_mb)
+        budget = memory_budget(self.max_memory_mb)
         if budget <= 0:
             raise ValidationError("max_memory_mb must be positive.")
         parameters = heads * (12 * (n - 1) + 2)
@@ -150,7 +151,7 @@ class QuantumTreePlan:
         if (
             96 * max(1, math.prod(shape)) * self.num_outputs * self.num_qubits
             + 16 * self.num_parameters
-        ) > self.max_memory_mb * 2**20:
+        ) > memory_budget(self.max_memory_mb) * 2**20:
             raise ResourceError(
                 "Quantum tree native buffers exceed max_memory_mb; reduce the batch."
             )
@@ -198,7 +199,7 @@ class QuantumTreePlan:
         if heads * heads * n > self.max_work:
             raise ResourceError("Exported forest observable descriptions exceed max_work.")
         operations = heads * (13 * n - 10)
-        if 512 * operations + 2 * heads * heads * n > self.max_memory_mb * 2**20:
+        if 512 * operations + 2 * heads * heads * n > memory_budget(self.max_memory_mb) * 2**20:
             raise ResourceError("Exported quantum forest IR exceeds max_memory_mb.")
         inputs = tuple(f"tn_x{i:08d}" for i in range(n))
         weights = tuple(f"tn_w{i:08d}" for i in range(self.num_parameters))

@@ -13,6 +13,7 @@ import numpy as np
 from ._gradient_common import _binding_columns, _names, _observables, _real_array
 from .backends import ExecutionOptions, get_backend
 from .batch import expectations_batch
+from .compute import get_compute_kernel
 from .errors import ValidationError
 from .ir import Circuit, integer
 from .parameters import Expression, expression, real
@@ -330,7 +331,11 @@ class ShiftPlan:
                     if mode == "jvp":
                         result[row] += coefficients[0] * delta
                     else:
-                        product = float(vectors[row] @ delta) if mode == "vjp" else delta
+                        product = (
+                            float(get_compute_kernel().matmul(vectors[row], delta))
+                            if mode == "vjp"
+                            else delta
+                        )
                         for position, coefficient in coefficients:
                             if mode == "vjp":
                                 result[row, position] += coefficient * product
@@ -339,7 +344,11 @@ class ShiftPlan:
                 elif mode == "jvp":
                     result[rows] += coefficients[:, None] * delta
                 else:
-                    product = vectors[rows] @ delta if mode == "vjp" else delta
+                    product = (
+                        get_compute_kernel().matmul(vectors[rows], delta)
+                        if mode == "vjp"
+                        else delta
+                    )
                     for position, coefficient in coefficients:
                         if mode == "vjp":
                             result[rows, position] += coefficient * product

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ..amplitude import AmplitudeEstimationPlan, AmplitudeOracle
+from ..compute import memory_budget
 from ..errors import ResourceError, ValidationError
 from ..ir import Circuit, CircuitBuilder, integer
 from ..parameters import real
@@ -51,7 +52,7 @@ class PayoffOraclePlan:
             or len(values).bit_length() - 1 != self.preparation.num_qubits
         ):
             raise ValidationError("Payoff entries must match every q0-MSB scenario basis state.")
-        memory, discount = real(self.max_memory_mb), real(self.discount)
+        memory, discount = memory_budget(self.max_memory_mb), real(self.discount)
         limit = integer(self.max_operations, "max_operations", 1)
         admission(12 * len(values), memory, work=8 * len(values) * len(values).bit_length())
         if discount <= 0:

@@ -5,6 +5,7 @@ from dataclasses import replace
 import numpy as np
 
 from .backends import ExecutionOptions, get_backend
+from .compute import memory_budget
 from .errors import BackendError, ResourceError, ValidationError
 from .ir import Circuit
 from .observables import Hamiltonian, PauliString
@@ -172,7 +173,9 @@ def _dense_densities(circuits, device, options):
         _resource_check(c, options.max_qubits, options.max_memory_mb, branches=branches)
         peak = max(peak, branches)
     width = max(c.num_qubits for c in circuits)
-    chunk = max(1, min(128, int(options.max_memory_mb * 2**20 / (64 * 4**width * peak))))
+    chunk = max(
+        1, min(128, int(memory_budget(options.max_memory_mb) * 2**20 / (64 * 4**width * peak)))
+    )
     for start in range(0, len(circuits), chunk):
         group = circuits[start : start + chunk]
         if device is get_backend("numpy"):
@@ -213,7 +216,7 @@ def _dense_states(circuits, device, options):
     options = replace(options, max_qubits=limit)
     width = max(c.num_qubits for c in circuits)
     # Bound working buffers independently of the number of retained output states.
-    chunk = max(1, min(128, int(options.max_memory_mb * 2**20 / (64 * 2**width))))
+    chunk = max(1, min(128, int(memory_budget(options.max_memory_mb) * 2**20 / (64 * 2**width))))
     for start in range(0, len(circuits), chunk):
         group = circuits[start : start + chunk]
         if device is get_backend("numpy"):

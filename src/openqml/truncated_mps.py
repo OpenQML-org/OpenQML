@@ -12,6 +12,7 @@ import numpy as np
 
 from .backends import BackendCapabilities, ExecutionOptions
 from .compiler import _check_circuit_limits
+from .compute import get_compute_kernel, memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import Circuit, integer
 from .mps import _read_word
@@ -38,9 +39,9 @@ def _truncate(sites, qubits, matrix, cap, tolerance):
     if qubits[0] != a:
         matrix = matrix.reshape(2, 2, 2, 2).transpose(1, 0, 3, 2).reshape(4, 4)
     left, right = sites[a], sites[b]
-    block = np.einsum("asb,btc->astc", left, right)
-    block = np.einsum("uvst,astc->auvc", matrix.reshape(2, 2, 2, 2), block)
-    u, singular, vh = np.linalg.svd(
+    block = get_compute_kernel().einsum("asb,btc->astc", left, right)
+    block = get_compute_kernel().einsum("uvst,astc->auvc", matrix.reshape(2, 2, 2, 2), block)
+    u, singular, vh = get_compute_kernel().svd(
         block.reshape(2 * left.shape[0], 2 * right.shape[2]), full_matrices=False
     )
     weights = np.square(singular)
@@ -133,7 +134,7 @@ class TruncatedMPSBackend:
         # Conservative state, QR/SVD and contraction buffers. This admission
         # model is not a process RSS guarantee, nor a vendor-LAPACK proof.
         workspace = (64 * width + 8192) * cap * cap + 4096
-        if workspace > options.max_memory_mb * 2**20:
+        if workspace > memory_budget(options.max_memory_mb) * 2**20:
             raise ResourceError("Truncated MPS tensor/workspace bound exceeds max_memory_mb.")
         if (two_site + terms + 1) * width * cap**3 + len(
             circuit.operations
@@ -148,7 +149,7 @@ class TruncatedMPSBackend:
             matrix = _gate_matrix(op.name, [p.evaluate({}) for p in op.params], ops, op.matrix)
             if len(op.qubits) == 1:
                 q = op.qubits[0]
-                sites[q] = np.einsum("st,atb->asb", matrix, sites[q])
+                sites[q] = get_compute_kernel().einsum("st,atb->asb", matrix, sites[q])
             else:
                 lost, local_error = _truncate(
                     sites, op.qubits, matrix, cap, self.discarded_weight_tolerance

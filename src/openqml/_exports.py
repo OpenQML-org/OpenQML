@@ -1,6 +1,11 @@
 """Static public export locations; importing this table imports no engines."""
 
 EXPORTS = {
+    "ComputePolicy": (".compute", "ComputePolicy"),
+    "ComputeKernel": (".compute", "ComputeKernel"),
+    "configure_compute": (".compute", "configure_compute"),
+    "get_compute_kernel": (".compute", "get_compute_kernel"),
+    "NumericalError": (".errors", "NumericalError"),
     "NativeNaturalGradientResult": ("._native_training", "NativeNaturalGradientResult"),
     "ExecutionBatch": ("._scheduling", "ExecutionBatch"),
     "ReadoutRoute": ("._scheduling", "ReadoutRoute"),
@@ -198,6 +203,7 @@ EXPORTS = {
 }
 
 MODULES = {
+    "compute": ".compute",
     "finance": ".finance",
     "torch": ".interfaces.torch",
     "jax": ".interfaces.jax",
@@ -280,6 +286,11 @@ MODULES = {
 }
 
 PUBLIC = [
+    "ComputePolicy",
+    "ComputeKernel",
+    "configure_compute",
+    "get_compute_kernel",
+    "NumericalError",
     "AdaptiveAmplitudeEstimationPlan",
     "AdaptiveAmplitudeEstimate",
     "Model",

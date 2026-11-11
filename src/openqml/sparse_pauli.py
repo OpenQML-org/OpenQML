@@ -17,6 +17,7 @@ import numpy as np
 from ._gradient_common import _binding_columns
 from ._structure import compact_pair
 from .compiler import _check_circuit_limits
+from .compute import get_compute_kernel, memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import CHANNEL_GATES, integer
 from .observables import Hamiltonian, PauliString, SparseHamiltonian, SparsePauliString
@@ -97,7 +98,7 @@ class SparsePauliPlan:
         error, cutoff, budget = (
             real(self.max_error),
             real(self.coefficient_cutoff),
-            real(self.max_memory_mb),
+            memory_budget(self.max_memory_mb),
         )
         if error < 0 or cutoff < 0 or budget <= 0 or (cutoff and not error):
             raise ValidationError("Use nonnegative error/cutoff and a positive memory budget.")
@@ -327,7 +328,7 @@ def _transitions(op, bindings, charge, max_work, max_memory_mb):
     # transfer map. The exponential LOCAL workspace is admitted before powers.
     arity = len(wires)
     exponent = 4 * arity
-    capacity = min(max_work, int(max_memory_mb * 2**20) // 64)
+    capacity = min(max_work, int(memory_budget(max_memory_mb) * 2**20) // 64)
     if exponent >= capacity.bit_length():
         raise ResourceError("Local Pauli transfer expansion exceeds work/memory budget.")
     charge(1 << exponent)
@@ -352,8 +353,15 @@ def _transitions(op, bindings, charge, max_work, max_memory_mb):
         for q in wires:
             local = (local << 2) | ((x >> q) & 1) | (((z >> q) & 1) << 1)
         if local not in cache:
-            evolved = sum(k.conj().T @ basis[local] @ k for k in matrices)
-            coefficients = np.einsum("aij,ji->a", basis, evolved).real / len(evolved)
+            evolved = sum(
+                get_compute_kernel().matmul(
+                    get_compute_kernel().matmul(k.conj().T, basis[local]), k
+                )
+                for k in matrices
+            )
+            coefficients = get_compute_kernel().einsum("aij,ji->a", basis, evolved).real / len(
+                evolved
+            )
             cache[local] = tuple((i, float(c)) for i, c in enumerate(coefficients) if c)
             charge(len(coefficients) * len(evolved) ** 2 * max(1, len(matrices)))
         result = []

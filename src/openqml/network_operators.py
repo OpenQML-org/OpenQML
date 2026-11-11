@@ -14,7 +14,8 @@ from types import MappingProxyType
 
 import numpy as np
 
-from .errors import ResourceError, ValidationError
+from .compute import get_compute_kernel
+from .errors import ValidationError
 from .ir import integer
 
 _OPERATORS = {}
@@ -642,6 +643,12 @@ def input_metadata(inputs, input_features):
 
 
 class OperatorContext:
+    def einsum(self, equation, *operands):
+        return get_compute_kernel().einsum(equation, *operands, xp=self.xp, backend=self.backend)
+
+    def matmul(self, left, right):
+        return get_compute_kernel().matmul(left, right, xp=self.xp)
+
     def __init__(self, architecture, index, parameters, inputs, context, backend, evaluator):
         from .simulator import _TensorOps
 
@@ -714,19 +721,16 @@ class OperatorContext:
         )
 
     def check_workspace(self, elements):
-        if (
-            elements
-            * max(
+        get_compute_kernel().admit(
+            elements,
+            self.architecture.max_memory_mb,
+            itemsize=max(
                 4,
                 self.inputs.dtype.itemsize
                 if self.backend != "torch"
                 else self.inputs.element_size(),
-            )
-            > self.architecture.max_memory_mb * 2**20
-        ):
-            raise ResourceError(
-                "Operator forward workspace exceeds max_memory_mb; reduce chunk size."
-            )
+            ),
+        )
 
 
 for _name, _operator in (

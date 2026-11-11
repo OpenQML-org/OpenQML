@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
+from .compute import memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import integer
 from .parameters import real
@@ -40,11 +41,14 @@ class _PreparedPOVM:
         dimension, classes = self.inverse.shape[-1], self.weights.shape[0]
         if rho.shape[-2:] != (dimension, dimension):
             raise ValidationError("POVM density shape does not match its frame.")
-        if 32 * math.prod(rho.shape[:-2]) * classes * dimension**2 > self.max_memory_mb * 2**20:
+        if (
+            32 * math.prod(rho.shape[:-2]) * classes * dimension**2
+            > memory_budget(self.max_memory_mb) * 2**20
+        ):
             raise ResourceError("POVM batch workspace exceeds max_memory_mb.")
-        value = ops.xp.einsum("...ab,kbc,kac->...k", rho, self.weights, ops.conj(self.weights))
-        anchors = ops.xp.einsum("...ab,bj,aj->...j", rho, self.inverse, ops.conj(self.inverse))
-        value = ops.real(value + self.alpha * (anchors @ self.assignment))
+        value = ops.einsum("...ab,kbc,kac->...k", rho, self.weights, ops.conj(self.weights))
+        anchors = ops.einsum("...ab,bj,aj->...j", rho, self.inverse, ops.conj(self.inverse))
+        value = ops.real(value + self.alpha * ops.matmul(anchors, self.assignment))
         return (1 - self.depolarization) * value + self.depolarization / classes
 
 
@@ -64,8 +68,9 @@ class QuantumPOVMPlan:
         if self.regularization <= 0 or not 0 <= self.depolarization < 1 or self.max_memory_mb <= 0:
             raise ValidationError("Invalid POVM regularization, depolarization or memory budget.")
         if (
-            self.memory_qubits > int(self.max_memory_mb * 2**20).bit_length()
-            or 256 * self.outcomes * 4**self.memory_qubits > self.max_memory_mb * 2**20
+            self.memory_qubits > int(memory_budget(self.max_memory_mb) * 2**20).bit_length()
+            or 256 * self.outcomes * 4**self.memory_qubits
+            > memory_budget(self.max_memory_mb) * 2**20
         ):
             raise ResourceError("POVM frame exceeds max_memory_mb.")
 
@@ -80,12 +85,12 @@ class QuantumPOVMPlan:
         if frame.shape != self.parameter_shape:
             raise ValidationError("POVM frame must have shape [outcomes,d,d,2].")
         a = frame[..., 0] + 1j * frame[..., 1]
-        gram = ops.xp.einsum("kac,kbc->ab", a, ops.conj(a))
+        gram = ops.einsum("kac,kbc->ab", a, ops.conj(a))
         d = gram.shape[-1]
-        alpha = self.regularization * (1 + ops.real(ops.xp.einsum("ii->", gram)) / d)
+        alpha = self.regularization * (1 + ops.real(ops.einsum("ii->", gram)) / d)
         identity = ops.array(np.eye(d))
-        inverse = ops.xp.linalg.solve(ops.xp.linalg.cholesky(gram + alpha * identity), identity)
-        weights = inverse @ a
+        inverse = ops.solve(ops.xp.linalg.cholesky(gram + alpha * identity), identity)
+        weights = ops.matmul(inverse, a)
         assignment = np.zeros((d, self.outcomes))
         assignment[np.arange(d), np.arange(d) % self.outcomes] = 1
         return _PreparedPOVM(

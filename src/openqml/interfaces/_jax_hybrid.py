@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 
 from .._native_training import solve_metric
+from ..compute import get_compute_kernel
 from ..errors import ValidationError
 from ..iqp import IQPGraph
 from ..ir import integer
@@ -87,9 +88,13 @@ class HyperQuantumAdapter:
         }
 
     def _encode(self, parameters, inputs):
-        code = jnp.tanh(inputs @ parameters["down_kernel"] + parameters["down_bias"])
+        code = jnp.tanh(
+            get_compute_kernel().matmul(inputs, parameters["down_kernel"], xp=jnp)
+            + parameters["down_bias"]
+        )
         return code, math.pi * jnp.tanh(
-            code @ parameters["angle_kernel"] + parameters["angle_bias"]
+            get_compute_kernel().matmul(code, parameters["angle_kernel"], xp=jnp)
+            + parameters["angle_bias"]
         )
 
     def __call__(self, parameters, inputs):
@@ -111,7 +116,10 @@ class HyperQuantumAdapter:
 
     def _forward(self, parameters, inputs):
         code, angles = self._encode(parameters["encoder"], inputs)
-        axes = code @ parameters["axes"]["kernel"] + parameters["axes"]["bias"]
+        axes = (
+            get_compute_kernel().matmul(code, parameters["axes"]["kernel"], xp=jnp)
+            + parameters["axes"]["bias"]
+        )
         coordinates = jnp.concatenate((angles, axes), axis=-1)
         value = (
             coordinates.astype(jnp.float32)
@@ -120,7 +128,9 @@ class HyperQuantumAdapter:
         )
         quantum = self.graph.evaluate(value, backend="jax")
         return (
-            inputs + parameters["residual_scale"] * (quantum @ parameters["projection"])
+            inputs
+            + parameters["residual_scale"]
+            * (get_compute_kernel().matmul(quantum, parameters["projection"], xp=jnp))
         ).astype(inputs.dtype)
 
     def metric_product(self, parameters, inputs, tangent):

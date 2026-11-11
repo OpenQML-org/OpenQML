@@ -12,10 +12,11 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .compiler import _check_circuit_limits, decompose
+from .compute import memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import integer
 from .observables import Hamiltonian, PauliString
-from .parameters import expression, real
+from .parameters import expression
 from .pauli import (
     _BASIS,
     _CLIFFORD,
@@ -56,7 +57,7 @@ class PauliTransferPlan:
     def __post_init__(self):
         for name in ("max_terms", "max_nodes", "max_work", "max_operations"):
             integer(getattr(self, name), name, 1)
-        budget = real(self.max_memory_mb)
+        budget = memory_budget(self.max_memory_mb)
         if budget <= 0:
             raise ValidationError("max_memory_mb must be positive.")
         object.__setattr__(self, "max_memory_mb", budget)
@@ -226,7 +227,7 @@ class PauliTransferPlan:
             self.active_parameters,
         )
         volume = 8 * max(1, math.prod(shape)) * (12 * (self.peak_terms + 1) + len(self.observables))
-        if self._metadata_bytes + volume > self.max_memory_mb * 2**20:
+        if self._metadata_bytes + volume > memory_budget(self.max_memory_mb) * 2**20:
             raise ResourceError("Pauli transfer batch exceeds max_memory_mb; reduce the batch.")
         xp = ops.xp
         prepared = self._torch_prepared

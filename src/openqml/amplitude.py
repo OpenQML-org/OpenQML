@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .compiler import _check_circuit_limits, inverse
+from .compute import get_compute_kernel, memory_budget
 from .errors import BackendError, ResourceError, ValidationError
 from .ir import Circuit, CircuitBuilder, integer
 from .parameters import real
@@ -35,7 +36,7 @@ class AmplitudeOracle:
         limit = integer(self.max_operations, "max_operations", 1)
         _check_circuit_limits(self.preparation, max_operations=limit)
         good = integer(self.good_qubit, "good_qubit")
-        memory = real(self.max_memory_mb)
+        memory = memory_budget(self.max_memory_mb)
         if (
             self.preparation.has_effects
             or self.preparation.num_clbits
@@ -68,7 +69,7 @@ class AmplitudeOracle:
         count = forward + m * (1 + backward + reflection + forward) + 1
         if (
             count > self.max_operations
-            or 512 * count + 32 * self._matrix_entries > self.max_memory_mb * 2**20
+            or 512 * count + 32 * self._matrix_entries > memory_budget(self.max_memory_mb) * 2**20
         ):
             raise ResourceError("Amplitude circuit exceeds descriptor or operation budgets.")
         return dict(
@@ -234,7 +235,7 @@ class AmplitudeEstimationPlan:
             raise ValidationError("Shots must be a positive integer or integer depth vector.")
         shots = tuple(integer(int(n), "shots", 1) for n in np.broadcast_to(raw, (len(powers),)))
         visibility = np.broadcast_to(np.asarray(self.visibility, dtype=float), (len(powers),))
-        confidence, memory = real(self.confidence), real(self.max_memory_mb)
+        confidence, memory = real(self.confidence), memory_budget(self.max_memory_mb)
         if (
             not 0 < confidence < 1
             or memory <= 0
@@ -271,7 +272,10 @@ class AmplitudeEstimationPlan:
         )
         grid = max(1025, 64 * d + 1, math.ceil(math.pi * math.sqrt(information) / 2) + 1)
         work = grid * len(self.powers) * 128
-        if 64 * grid * len(self.powers) > self.max_memory_mb * 2**20 or work > self.max_work:
+        if (
+            64 * grid * len(self.powers) > memory_budget(self.max_memory_mb) * 2**20
+            or work > self.max_work
+        ):
             raise ResourceError("Amplitude inference exceeds memory or arithmetic budgets.")
         profile = dict(
             powers=self.powers,
@@ -304,7 +308,9 @@ class AmplitudeEstimationPlan:
         d, v = 2 * np.asarray(self.powers) + 1, np.asarray(self.visibility)
         q = (1 - v) / 2 + v * np.sin(np.asarray(theta)[..., None] * d) ** 2
         q = np.clip(q, np.finfo(float).tiny, 1 - np.finfo(float).eps)
-        return np.log(q) @ successes + np.log1p(-q) @ (np.asarray(self.shots) - successes)
+        return get_compute_kernel().matmul(np.log(q), successes) + get_compute_kernel().matmul(
+            np.log1p(-q), np.asarray(self.shots) - successes
+        )
 
     def fit(self, successes):
         raw = np.asarray(successes)

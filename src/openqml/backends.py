@@ -9,6 +9,7 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
+from .compute import memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import UNITARY_GATES, Circuit, integer
 
@@ -78,9 +79,8 @@ class ExecutionOptions:
         unitary workload; density branches, local matrices and autodiff tapes
         have separate costs. Every execution still checks its actual resources.
         """
-        from .parameters import real
 
-        budget = real(max_memory_mb)
+        budget = memory_budget(max_memory_mb)
         count = integer(batch_size, "batch_size", 1)
         if budget <= 0:
             raise ValidationError("max_memory_mb must be positive.")
@@ -94,12 +94,9 @@ class ExecutionOptions:
         return cls(width, budget, seed)
 
     def __post_init__(self):
-        from .parameters import real
-
         if self.max_qubits is not None:
             integer(self.max_qubits, "max_qubits", 1)
-        if real(self.max_memory_mb) <= 0:
-            raise ValidationError("max_memory_mb must be positive.")
+        object.__setattr__(self, "max_memory_mb", memory_budget(self.max_memory_mb))
         if self.seed is not None:
             integer(self.seed, "seed")
         integer(self.max_branches, "max_branches", 1)

@@ -6,6 +6,7 @@ from typing import NamedTuple
 import numpy as np
 
 from ..architecture import HybridArchitecture, QuantumCellSpec
+from ..compute import get_compute_kernel, memory_budget
 from ..errors import ValidationError
 from ..ir import integer
 from ..network_operators import OperatorSpec
@@ -59,7 +60,7 @@ class MarketForecastPlan:
             raise ValidationError("Forecast model must be recurrent, state-attention or tensor.")
         object.__setattr__(self, "quantiles", levels)
         object.__setattr__(self, "return_scale", real(self.return_scale))
-        object.__setattr__(self, "max_memory_mb", real(self.max_memory_mb))
+        object.__setattr__(self, "max_memory_mb", memory_budget(self.max_memory_mb))
         if self.return_scale <= 0 or self.max_memory_mb <= 0:
             raise ValidationError("Return scale and memory budget must be positive.")
 
@@ -159,7 +160,7 @@ class ScenarioPlan:
                 "Provide finite arithmetic-return atoms [2**k,N] or [2**k,H,N], "
                 "bounded below by -1."
             )
-        object.__setattr__(self, "max_memory_mb", real(self.max_memory_mb))
+        object.__setattr__(self, "max_memory_mb", memory_budget(self.max_memory_mb))
         object.__setattr__(self, "max_work", integer(self.max_work, "max_work", 1))
         s, dimension = x.shape[0], rows(x.shape[1:])
         admission(
@@ -171,7 +172,11 @@ class ScenarioPlan:
         x = x.copy()
         flat = x.reshape((s, dimension))
         square = np.sum(flat * flat, axis=-1)
-        distance = np.sqrt(np.maximum(square[:, None] + square[None, :] - 2 * flat @ flat.T, 0))
+        distance = np.sqrt(
+            np.maximum(
+                square[:, None] + square[None, :] - 2 * get_compute_kernel().matmul(flat, flat.T), 0
+            )
+        )
         np.fill_diagonal(distance, 0)
         for value in (x, flat, distance):
             value.setflags(write=False)
@@ -232,7 +237,7 @@ class ScenarioPlan:
         admission(6 * rows(prefix) * self._flat.size + 2 * self._distances.size, self.max_memory_mb)
         distances = ops.norm(ops.array(self._flat) - target[..., None, :])
         first = ops.sum(p * distances)
-        second = ops.sum(p * (p @ ops.array(self._distances)))
+        second = ops.sum(p * (ops.matmul(p, ops.array(self._distances))))
         return first - 0.5 * second
 
     def returns(self, *, step=None):

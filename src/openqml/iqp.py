@@ -13,9 +13,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .compute import memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import CircuitBuilder, integer
-from .parameters import Parameter, real
+from .parameters import Parameter
 from .simulator import _TensorOps
 
 
@@ -31,7 +32,7 @@ class IQPGraph:
     def __post_init__(self):
         n = integer(self.num_qubits, "num_qubits", 1)
         work = integer(self.max_work, "max_work", 1)
-        budget = real(self.max_memory_mb)
+        budget = memory_budget(self.max_memory_mb)
         if budget <= 0:
             raise ValidationError("max_memory_mb must be positive.")
         capacity = int(budget * 2**20)
@@ -125,7 +126,7 @@ class IQPGraph:
         rows = math.prod(value.shape[:-1])
         if (
             64 * max(1, rows) * (self.num_coordinates + self.num_qubits)
-            > self.max_memory_mb * 2**20
+            > memory_budget(self.max_memory_mb) * 2**20
         ):
             raise ResourceError("IQP batched coordinate/readout workspace exceeds max_memory_mb.")
         n, m = self.num_qubits, len(self.edges)

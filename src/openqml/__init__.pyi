@@ -21,6 +21,7 @@ from . import calibration as calibration
 from . import cli as cli
 from . import compiler as compiler
 from . import components as components
+from . import compute as compute
 from . import conversion as conversion
 from . import costs as costs
 from . import deep as deep
@@ -577,3 +578,16 @@ __version__: str
 __all__: list[str]
 
 from . import adaptive_amplitude as adaptive_amplitude
+from .compute import (
+    ComputeKernel as ComputeKernel,
+)
+from .compute import (
+    ComputePolicy as ComputePolicy,
+)
+from .compute import (
+    configure_compute as configure_compute,
+)
+from .compute import (
+    get_compute_kernel as get_compute_kernel,
+)
+from .errors import NumericalError as NumericalError

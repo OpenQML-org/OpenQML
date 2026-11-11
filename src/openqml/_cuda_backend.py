@@ -7,6 +7,7 @@ import numpy as np
 
 from ._parameter_batches import CircuitCache, parameter_batches
 from .backends import BackendCapabilities
+from .compute import memory_budget
 from .errors import ConversionError, ResourceError
 
 
@@ -116,7 +117,7 @@ class CUDABackend:
         import torch
 
         options = self._options(options)
-        if 8 * len(circuits) * len(observables) > options.max_memory_mb * 2**20:
+        if 8 * len(circuits) * len(observables) > memory_budget(options.max_memory_mb) * 2**20:
             raise ResourceError("GPU readout output exceeds max_memory_mb.")
         like = torch.empty((), device="cuda", dtype=torch.float64)
         output = np.empty((len(circuits), len(observables)))
@@ -127,7 +128,9 @@ class CUDABackend:
                 if per_row is None:
                     per_row = 8 * (len(plan._nodes) + 8)
                 per_row += 8 * len(bindings) + 64 * len(observables)
-                chunk = max(1, int(options.max_memory_mb * 2**20) // (2 * max(1, per_row)))
+                chunk = max(
+                    1, int(memory_budget(options.max_memory_mb) * 2**20) // (2 * max(1, per_row))
+                )
                 for start in range(0, len(rows), chunk):
                     selected = rows[start : start + chunk]
                     parameters = {
@@ -165,7 +168,7 @@ class CUDABackend:
 
         options = self._options(options)
         width = max(c.num_qubits for c in circuits)
-        chunk = max(1, int(options.max_memory_mb * 2**20) // (64 * (1 << width)))
+        chunk = max(1, int(memory_budget(options.max_memory_mb) * 2**20) // (64 * (1 << width)))
         output = []
         like = torch.empty((), dtype=torch.float64, device="cuda")
         with torch.no_grad():
@@ -213,11 +216,11 @@ class CUDABackend:
                     else circuits[r].num_qubits
                     for r in rows
                 )
-                if width * shots > options.max_memory_mb * 2**20:
+                if width * shots > memory_budget(options.max_memory_mb) * 2**20:
                     raise ResourceError("Sampled bit strings exceed max_memory_mb.")
                 states = 1 << prototype.num_qubits
                 per_row = 64 * states + (8 + width) * shots + 8 * len(bindings)
-                chunk = max(1, int(options.max_memory_mb * 2**20) // per_row)
+                chunk = max(1, int(memory_budget(options.max_memory_mb) * 2**20) // per_row)
                 for start in range(0, len(rows), chunk):
                     selected = rows[start : start + chunk]
                     parameters = {

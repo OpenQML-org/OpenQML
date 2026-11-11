@@ -4,16 +4,16 @@ import math
 
 import numpy as np
 
+from .compute import memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import CHANNEL_GATES, UNITARY_GATES, integer
-from .parameters import real
 from .planning import _record_plan
 
 
 def _resource_check(circuit, max_qubits, max_memory_mb, batch_size=1, branches=1):
     if max_qubits is not None:
         integer(max_qubits, "max_qubits", 1)
-    budget = real(max_memory_mb)
+    budget = memory_budget(max_memory_mb)
     if budget <= 0:
         raise ValidationError("max_memory_mb must be positive.")
     numerator, denominator = budget.as_integer_ratio()
@@ -30,7 +30,7 @@ def _planning_limit(circuit, max_qubits, max_memory_mb, batch_size=1, max_branch
     """Bound metadata enumeration by memory before allocating branch-key sets."""
     integer(max_branches, "max_branches", 1)
     _resource_check(circuit, max_qubits, max_memory_mb, batch_size)
-    numerator, denominator = real(max_memory_mb).as_integer_ratio()
+    numerator, denominator = memory_budget(max_memory_mb).as_integer_ratio()
     capacity = ((numerator << 20) // (denominator * 64 * max(1, batch_size))) >> (
         2 * circuit.num_qubits
     )
@@ -40,21 +40,7 @@ def _planning_limit(circuit, max_qubits, max_memory_mb, batch_size=1, max_branch
 def _probability(value, ops):
     p = ops.array(value, real_value=True)
     valid = ops.xp.isfinite(p) & (p >= 0) & (p <= 1)
-    if ops.backend == "numpy":
-        if not np.all(valid):
-            raise ValidationError("Channel probability must lie in [0, 1].")
-    elif ops.backend == "torch":
-        if not getattr(ops.xp.compiler, "is_compiling", lambda: False)() and not bool(
-            ops.xp.all(valid)
-        ):
-            raise ValidationError("Channel probability must lie in [0, 1].")
-    else:
-        import jax
-
-        if not isinstance(p, jax.core.Tracer) and not np.all(np.asarray(valid)):
-            raise ValidationError("Channel probability must lie in [0, 1].")
-    # Traced invalid values propagate NaN instead of a plausible nonphysical map.
-    return ops.xp.where(valid, p, float("nan"))
+    return ops.check(p, valid, "Channel probability must lie in [0, 1].")
 
 
 def channel_kraus(op, bindings=None):
@@ -493,7 +479,7 @@ def execute_density(
         rng = np.random.default_rng(seed)
         if circuit.has_measurements:
             width = circuit.num_clbits if classical_bits is None else len(classical_bits)
-            if width > int(real(max_memory_mb) * 2**20):
+            if width > int(memory_budget(max_memory_mb) * 2**20):
                 raise ResourceError("Classical count strings exceed the working-memory budget.")
             keys = list(states)
             weights = np.maximum(

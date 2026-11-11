@@ -15,6 +15,7 @@ from itertools import product
 import numpy as np
 
 from .compiler import _check_circuit_limits, circuit_stats, decompose
+from .compute import get_compute_kernel, memory_budget
 from .errors import Diagnostic, ResourceError, ValidationError, conversion_error
 from .ir import Circuit, integer
 from .observables import Hamiltonian, PauliString
@@ -48,8 +49,12 @@ def _clifford_table(name):
         matrices.append(matrix)
     result = []
     for matrix in matrices:
-        transformed = unitary.conj().T @ matrix @ unitary
-        overlaps = np.real([np.trace(p @ transformed) / len(unitary) for p in matrices])
+        transformed = get_compute_kernel().matmul(
+            get_compute_kernel().matmul(unitary.conj().T, matrix), unitary
+        )
+        overlaps = np.real(
+            [np.trace(get_compute_kernel().matmul(p, transformed)) / len(unitary) for p in matrices]
+        )
         index = int(np.argmax(np.abs(overlaps)))
         sign = 1 if overlaps[index] > 0 else -1
         # This checks known constant Clifford identities, not user gate data.
@@ -354,7 +359,7 @@ class PauliPlan:
             object.__setattr__(
                 self, name, integer(getattr(self, name), name, 2 if name == "max_nodes" else 1)
             )
-        budget = real(self.max_memory_mb)
+        budget = memory_budget(self.max_memory_mb)
         if budget <= 0:
             raise ValidationError("max_memory_mb must be positive.")
         obs, nodes, roots, work, peak, allocated, operations = _compile(
@@ -431,7 +436,9 @@ class PauliPlan:
         ops, local, shape = _prepare_bindings(
             bindings, backend, like, batch_shape, self._source_parameters, self.active_parameters
         )
-        if (len(self._nodes) + 8) * 8 * max(1, math.prod(shape)) > self.max_memory_mb * 2**20:
+        if (len(self._nodes) + 8) * 8 * max(1, math.prod(shape)) > memory_budget(
+            self.max_memory_mb
+        ) * 2**20:
             raise ResourceError(
                 "Pauli arithmetic exceeds max_memory_mb; reduce the batch or use batch_chunk_size."
             )

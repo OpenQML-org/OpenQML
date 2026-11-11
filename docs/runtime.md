@@ -1,5 +1,11 @@
 # Runtime dispatch
 
+Local numerical engines share `ComputeKernel` for native arrays, matrix
+products, contractions, linear solves and numerical admission. Use
+`configure_compute` to establish workspace, validation and metadata-cache
+policies before creating models or compiled graphs. See [Shared compute
+kernel](compute.md) for defaults and resource accounting.
+
 Numeric execution defaults to `CostAwareBackend`: capability checks first,
 then a Pareto comparison of time, price and estimated readout error. Hardware
 priority QPU → GPU → CPU only breaks equal forecast scores. Without profiles,

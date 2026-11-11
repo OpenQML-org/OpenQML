@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 
 from .compiler import _check_circuit_limits
+from .compute import memory_budget
 from .errors import ConversionError, Diagnostic, ResourceError, ValidationError
 from .ir import integer
 from .parameters import real
@@ -265,7 +266,7 @@ def _verify_conversion(
 
         _native_scope(plan.circuit, plan.target_format, source_options)
     atol, rtol = real(atol), real(rtol)
-    budget = real(max_memory_mb)
+    budget = memory_budget(max_memory_mb)
     if min(atol, rtol) < 0 or budget <= 0:
         raise ValidationError("Use nonnegative tolerances and a positive memory budget.")
     if max_qubits is not None:

@@ -8,6 +8,7 @@ import numpy as np
 
 from .backends import BackendCapabilities
 from .compiler import _check_circuit_limits
+from .compute import memory_budget
 from .errors import ConversionError, ResourceError, ValidationError
 from .ir import integer
 from .parameters import real
@@ -601,7 +602,9 @@ class AdaptiveBackend:
                         1 << ((2 if prototype.has_effects else 1) * prototype.num_qubits)
                     )
                 per_row += 8 * len(bindings) + 64 * len(observables)
-                chunk = max(1, int(options.max_memory_mb * 2**20) // (2 * max(1, per_row)))
+                chunk = max(
+                    1, int(memory_budget(options.max_memory_mb) * 2**20) // (2 * max(1, per_row))
+                )
                 for start in range(0, len(rows), chunk):
                     selected = rows[start : start + chunk]
                     parameters = {k: v[start : start + chunk] for k, v in bindings.items()}

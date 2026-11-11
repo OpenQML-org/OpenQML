@@ -23,6 +23,10 @@ class BackendError(OpenQMLError):
     """An execution backend failed or returned an invalid result."""
 
 
+class NumericalError(BackendError):
+    """A numerical primitive failed or produced a non-finite result."""
+
+
 @dataclass(frozen=True)
 class Diagnostic:
     code: str

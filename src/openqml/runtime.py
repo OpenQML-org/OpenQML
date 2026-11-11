@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass, field, replace
 from types import MappingProxyType
 
 from .backends import BackendCapabilities, ExecutionOptions
+from .compute import memory_budget
 from .costs import (
     BudgetLedger,
     ExecutionFeedback,
@@ -227,7 +228,10 @@ class PriorityBackend:
                 if (
                     task == "sampling"
                     and caps.device_type != "CPU"
-                    and any(c.num_clbits > options.max_memory_mb * 2**20 for c in circuits)
+                    and any(
+                        c.num_clbits > memory_budget(options.max_memory_mb) * 2**20
+                        for c in circuits
+                    )
                 ):
                     raise ResourceError(
                         "The native sampler's full classical strings exceed the budget."
@@ -465,7 +469,7 @@ class CostAwareBackend(PriorityBackend):
         except ValueError as exc:
             raise ValidationError("Native binding shapes cannot be broadcast together.") from exc
         count = max(1, math.prod(shape))
-        if count * 8 * (1 + len(bindings or {})) > options.max_memory_mb * 2**20:
+        if count * 8 * (1 + len(bindings or {})) > memory_budget(options.max_memory_mb) * 2**20:
             raise ResourceError("Native batch metadata exceeds the memory budget.")
         work = replace(self.workload, batch_size=max(self.workload.batch_size or 0, count))
         return self.plan([circuit], task=task, options=options, workload=work), count

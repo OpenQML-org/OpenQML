@@ -13,6 +13,7 @@ from types import MappingProxyType
 
 import numpy as np
 
+from .compute import memory_budget
 from .deep import DeepQuantumPlan
 from .errors import ResourceError, ValidationError
 from .ir import integer
@@ -232,9 +233,9 @@ class HybridArchitecture:
             "max_parameters",
         ):
             object.__setattr__(self, name, integer(getattr(self, name), name, 1))
-        if real(self.max_memory_mb) <= 0 or real(self.norm_epsilon) <= 0:
+        if memory_budget(self.max_memory_mb) <= 0 or real(self.norm_epsilon) <= 0:
             raise ValidationError("Memory and normalization epsilon must be positive.")
-        object.__setattr__(self, "max_memory_mb", real(self.max_memory_mb))
+        object.__setattr__(self, "max_memory_mb", memory_budget(self.max_memory_mb))
         object.__setattr__(self, "norm_epsilon", real(self.norm_epsilon))
         if type(self.rematerialize) is not bool:
             raise ValidationError("rematerialize must be a boolean.")
@@ -309,7 +310,7 @@ class HybridArchitecture:
                 raise ValidationError("Unknown network parameter initializer.")
             scale = real(scale)
             count += math.prod(shape)
-            if count > self.max_parameters or 8 * count > self.max_memory_mb * 2**20:
+            if count > self.max_parameters or 8 * count > memory_budget(self.max_memory_mb) * 2**20:
                 raise ResourceError("Hybrid model parameters exceed the requested budget.")
             descriptors.append(
                 NetworkParameter(name, tuple(shape), role, group, initialization, scale)
@@ -570,9 +571,10 @@ class HybridArchitecture:
             )
 
     def _linear(self, name, parameters, inputs, backend):
+        ops = _TensorOps(backend, inputs)
         plan = self.projections[name]
         if plan is None:
-            return inputs @ parameters[f"{name}_weight"] + parameters[f"{name}_bias"]
+            return ops.matmul(inputs, parameters[f"{name}_weight"]) + parameters[f"{name}_bias"]
         cores = tuple(parameters[f"{name}_core_{i}"] for i in range(len(plan.core_shapes)))
         shape = inputs.shape[:-1]
         flat = inputs.reshape((-1, plan.in_features))
@@ -695,13 +697,14 @@ class HybridArchitecture:
         next_states = dict(state)
         inputs, context, metadata = input_metadata(inputs, self.input_features)
         inputs = self._masked(inputs, context, backend)
+        ops = _TensorOps(backend, inputs)
         if self.input_lift == "graph-pairs":
             from .network_graph import lift_graph_pairs
 
             metadata = self.input_metadata(context)
             ctx = OperatorContext(self, 0, parameters, inputs, context, backend, None)
             inputs, context = lift_graph_pairs(ctx)
-        value = inputs @ parameters["stem_weight"] + parameters["stem_bias"]
+        value = ops.matmul(inputs, parameters["stem_weight"]) + parameters["stem_bias"]
         value = self._masked(value, context, backend)
         for index in self.execution_indices(depth):
             self.operator_specs[index].implementation.validate_metadata(
@@ -742,7 +745,7 @@ class HybridArchitecture:
                     summed = summed / denominator
                 value = summed
         if not self.has_terminal:
-            value = value @ parameters["readout_weight"] + parameters["readout_bias"]
+            value = ops.matmul(value, parameters["readout_weight"]) + parameters["readout_bias"]
             if not pooled:
                 value = self._masked(value, context, backend)
         return (value, next_states) if return_state else value

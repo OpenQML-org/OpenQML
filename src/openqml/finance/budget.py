@@ -73,7 +73,7 @@ def risk_budget_projection(
     target = ops.check(
         bound + cash_rate, bound + cash_rate >= 0, "The risk budget must admit the cash position."
     )
-    incremental = cash_rate[..., None] * total[..., None] - ops.xp.einsum("...sn,...n->...s", r, w)
+    incremental = cash_rate[..., None] * total[..., None] - ops.einsum("...sn,...n->...s", r, w)
     base_cvar = expected_shortfall(incremental, confidence=confidence, probabilities=p)
     robust = base_cvar + radius * ops.norm(w) / (1 - confidence)
     safe_denominator = ops.xp.where(robust > target, robust, ops.array(1))

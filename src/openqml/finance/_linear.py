@@ -4,8 +4,8 @@ import numpy as np
 
 
 def matmat(diagonal, factors, mass, value, ops):
-    projected = ops.xp.einsum("...rn,...nc->...rc", factors, value)
-    return diagonal[..., :, None] * value + ops.xp.einsum(
+    projected = ops.einsum("...rn,...nc->...rc", factors, value)
+    return diagonal[..., :, None] * value + ops.einsum(
         "...rn,...rc->...nc", factors, mass[..., :, None] * projected
     )
 
@@ -18,13 +18,13 @@ def _woodbury(diagonal, factors, mass, rhs, ops):
     weighted = factors * ops.xp.sqrt(ops.xp.abs(mass))[..., :, None]
     signs = ops.xp.sign(mass)
     scaled = weighted * inverse[..., None, :]
-    core = (scaled @ weighted.swapaxes(-1, -2)) * signs[..., None, :]
+    core = ops.matmul(scaled, weighted.swapaxes(-1, -2)) * signs[..., None, :]
     core = core + ops.array(np.eye(factors.shape[-2]))
 
     def apply(value):
         direct = inverse[..., :, None] * value
-        dual = ops.xp.linalg.solve(core, weighted @ direct)
-        return direct - scaled.swapaxes(-1, -2) @ (signs[..., :, None] * dual)
+        dual = ops.solve(core, ops.matmul(weighted, direct))
+        return direct - ops.matmul(scaled.swapaxes(-1, -2), signs[..., :, None] * dual)
 
     result = apply(rhs)
     # Reuse the small factor system for a residual correction after the
@@ -49,7 +49,7 @@ def _pcg(diagonal, factors, mass, rhs, iterations, tolerance, ops):
     eps = np.finfo(np.float64 if "64" in str(rhs.dtype) else np.float32).eps
     tolerance = max(tolerance, 8 * eps)
     weighted = factors * xp.sqrt(xp.abs(mass))[..., :, None]
-    preconditioner = diagonal + xp.einsum("...rn,...r->...n", weighted * weighted, xp.sign(mass))
+    preconditioner = diagonal + ops.einsum("...rn,...r->...n", weighted * weighted, xp.sign(mass))
     zero = xp.zeros_like(rhs)
     z = rhs / preconditioner[..., :, None]
     scale = ops.norm(rhs, axis=-2)

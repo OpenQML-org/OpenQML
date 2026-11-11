@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .backends import BackendCapabilities, ExecutionOptions, get_backend
+from .compute import get_compute_kernel
 from .errors import BackendError, ValidationError
 from .ir import integer
 from .observables import Hamiltonian, PauliString
@@ -147,7 +148,7 @@ def _statistics(counts, group, width, shots):
                 for word in group.paulis
             ]
         )
-        scores = coefficients @ signs
+        scores = get_compute_kernel().matmul(coefficients, signs)
         first += count * scores
         second += count * np.outer(scores, scores)
     mean = first / shots

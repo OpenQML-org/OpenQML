@@ -50,6 +50,19 @@ print(model.predict(x[:2]))
 
 Select `framework="jax"` or `framework="flax"` to change training frameworks. `backend` chooses circuit execution; `device` chooses native tensor placement. Qubit counts follow the selected backend's available resources.
 
+Simulation, tensor networks, hybrid models and financial operators share a
+native compute kernel. It centralizes array placement, matrix products,
+contraction planning, numerical checks and memory admission. Configure a common
+workspace ceiling before constructing models or compiling graphs:
+
+```python
+oq.configure_compute(policy=oq.ComputePolicy(max_memory_mb=512))
+```
+
+Operation-specific budgets remain available. Shared caches hold bounded,
+immutable planning metadata; trainable tensors stay in each forward pass.
+[Compute policies and numerical contracts](https://github.com/OpenQML-org/OpenQML/blob/main/docs/compute.md).
+
 `TensorNetworkPlan` compiles native batched GEMMs, searches bounded contraction
 portfolios and shares compatible intermediate tensors. `iter_evaluate` streams
 broadcast parameter grids within the configured working-memory budget while

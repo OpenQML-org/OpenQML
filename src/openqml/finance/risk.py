@@ -72,8 +72,8 @@ def covariance_matvec(risk, vector):
     ops = Ops(vector, *(risk if isinstance(risk, FactorRisk) else ()))
     vector = ops.real(vector)
     risk = prepare_risk(risk, ops, vector.shape)
-    projected = ops.xp.einsum("...rn,...n->...r", risk.factors, vector)
-    return risk.diagonal * vector + ops.xp.einsum(
+    projected = ops.einsum("...rn,...n->...r", risk.factors, vector)
+    return risk.diagonal * vector + ops.einsum(
         "...rn,...r->...n", risk.factors, risk.factor_weights * projected
     )
 
@@ -89,9 +89,7 @@ def dense_covariance(risk, *, max_memory_mb=256):
     risk = prepare_risk(risk, ops, risk.mean.shape)
     n = risk.mean.shape[-1]
     admission(4 * rows(risk.mean.shape[:-1]) * (n * n + risk.factors.shape[-2] * n), max_memory_mb)
-    matrix = ops.xp.einsum(
-        "...ri,...r,...rj->...ij", risk.factors, risk.factor_weights, risk.factors
-    )
+    matrix = ops.einsum("...ri,...r,...rj->...ij", risk.factors, risk.factor_weights, risk.factors)
     return matrix + ops.array(np.eye(n)) * risk.diagonal[..., None, :]
 
 
@@ -159,7 +157,7 @@ def wasserstein_cvar(weights, scenarios, *, confidence=0.95, probabilities=None,
     w, scenarios = ops.real(weights), ops.real(scenarios)
     if scenarios.ndim < 2 or scenarios.shape[-1] != w.shape[-1]:
         raise ValidationError("Scenario and portfolio asset dimensions must match.")
-    losses = -ops.xp.einsum("...sn,...n->...s", scenarios, w)
+    losses = -ops.einsum("...sn,...n->...s", scenarios, w)
     return expected_shortfall(
         losses, confidence=confidence, probabilities=probabilities
     ) + radius * ops.norm(w) / (1 - confidence)

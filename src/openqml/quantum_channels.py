@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .compute import memory_budget
 from .density import _conjugate, _resource_check
 from .errors import ResourceError, ValidationError
 from .ir import Circuit, integer
@@ -59,7 +60,7 @@ def _roundoff_density(rho, ops):
     states. There is no eigenvalue clipping, projection or rank truncation.
     """
     rho = 0.5 * (rho + _adjoint(rho, ops))
-    trace = ops.real(ops.xp.einsum("...ii->...", rho))
+    trace = ops.real(ops.einsum("...ii->...", rho))
     return rho / trace[..., None, None]
 
 
@@ -79,7 +80,7 @@ def _validate_density(rho, dimension, ops):
     safe = xp.where(finite[..., None, None], rho, ops.array(np.eye(dimension) / dimension))
     error = xp.abs(safe - _adjoint(safe, ops))
     hermitian = error.amax(dim=(-1, -2)) if ops.backend == "torch" else xp.max(error, axis=(-1, -2))
-    trace = xp.einsum("...ii->...", safe)
+    trace = ops.einsum("...ii->...", safe)
     eigen = xp.linalg.eigvalsh((safe + _adjoint(safe, ops)) * 0.5)[..., 0]
     valid = (
         finite & (hermitian <= tolerance) & (xp.abs(trace - 1) <= tolerance) & (eigen >= -tolerance)
@@ -116,7 +117,7 @@ class QuantumChannelPlan:
         object.__setattr__(
             self, "visible_qubits", integer(self.visible_qubits, "visible_qubits", 0)
         )
-        object.__setattr__(self, "max_memory_mb", real(self.max_memory_mb))
+        object.__setattr__(self, "max_memory_mb", memory_budget(self.max_memory_mb))
         m, e = self.memory_qubits, self.environment_qubits
         if self.max_memory_mb <= 0 or self.visible_qubits > m:
             raise ValidationError("Invalid memory budget or visible register width.")
@@ -132,7 +133,7 @@ class QuantumChannelPlan:
         if len(circuit.operations) > self.max_operations:
             raise ResourceError("Channel and reset operations exceed max_operations.")
         count = (1 << self.visible_qubits) - 1 if self.visible_qubits else self.num_outputs
-        if 64 * count * n > self.max_memory_mb * 2**20:
+        if 64 * count * n > memory_budget(self.max_memory_mb) * 2**20:
             raise ResourceError("Channel readout descriptors exceed max_memory_mb.")
         if self.visible_qubits:
             words = tuple(
@@ -180,7 +181,7 @@ class QuantumChannelPlan:
         _resource_check(self.spec.circuit, None, self.max_memory_mb, rows)
         if (
             64 * rows * 4 ** (self.memory_qubits + self.environment_qubits) + 8 * outputs
-            > self.max_memory_mb * 2**20
+            > memory_budget(self.max_memory_mb) * 2**20
         ):
             raise ResourceError("Channel primal workspace exceeds max_memory_mb.")
 
@@ -197,7 +198,7 @@ class QuantumChannelPlan:
         m, e = 1 << self.memory_qubits, 1 << self.environment_qubits
         fresh = np.zeros((e, e), complex)
         fresh[0, 0] = 1
-        joint = ops.xp.einsum("...ab,cd->...acbd", rho, ops.array(fresh)).reshape(
+        joint = ops.einsum("...ab,cd->...acbd", rho, ops.array(fresh)).reshape(
             rho.shape[:-2] + ((m * e) ** 2,)
         )
         bindings = self._bindings(weights, controls)
@@ -207,7 +208,7 @@ class QuantumChannelPlan:
                 joint = _conjugate(
                     joint, matrix, op.qubits, self.memory_qubits + self.environment_qubits, ops
                 )
-        return ops.xp.einsum("...aibi->...ab", joint.reshape(joint.shape[:-1] + (m, e, m, e)))
+        return ops.einsum("...aibi->...ab", joint.reshape(joint.shape[:-1] + (m, e, m, e)))
 
     def apply(self, weights, controls, rho, *, backend="numpy", validate_state=True):
         ops = _TensorOps(backend, weights)
@@ -232,13 +233,13 @@ class QuantumChannelPlan:
             return povm.probabilities(rho)
         if visible:
             d, k = 1 << self.memory_qubits, 1 << visible
-            diagonal = ops.real(ops.xp.einsum("...ii->...i", rho)).reshape(
+            diagonal = ops.real(ops.einsum("...ii->...i", rho)).reshape(
                 rho.shape[:-2] + (k, d // k)
             )
             value = diagonal.sum(dim=-1) if ops.backend == "torch" else diagonal.sum(axis=-1)
             return (1 - depolarization) * value + depolarization / k
         matrices = ops.array(self._readout_matrices()) if matrices is None else matrices
-        return ops.real(ops.xp.einsum("...ab,kba->...k", rho, matrices))
+        return ops.real(ops.einsum("...ab,kba->...k", rho, matrices))
 
     def _readout_matrices(self):
         paulis = {
@@ -406,7 +407,8 @@ class QuantumChannelPlan:
         v, joint = d * d, d * e
         if (
             8 * batch * tokens * v**3 * max(1, (tokens - 1).bit_length()) > max_work
-            or 128 * batch * tokens * (v * v + joint * joint) > self.max_memory_mb * 2**20
+            or 128 * batch * tokens * (v * v + joint * joint)
+            > memory_budget(self.max_memory_mb) * 2**20
         ):
             raise ResourceError(
                 "Parallel channel scan exceeds max_work or max_memory_mb; use sequential scan."
@@ -424,22 +426,22 @@ class QuantumChannelPlan:
                 )
         unitary = vectors.swapaxes(-1, -2).reshape((batch, tokens, d, e, d, e))
         kraus = unitary[..., 0]
-        transfer = xp.einsum("...aec,...bed->...abcd", kraus, ops.conj(kraus)).reshape(
+        transfer = ops.einsum("...aec,...bed->...abcd", kraus, ops.conj(kraus)).reshape(
             (batch, tokens, v, v)
         )
         identity = ops.array(np.eye(v))
         transfer = alpha[..., None, None] * transfer + (1 - alpha[..., None, None]) * identity
         reset_map = initial.reshape((v, 1)) * ops.array(np.eye(d).reshape((1, v)))
-        transfer = xp.where(reset[..., None, None], transfer @ reset_map, transfer)
+        transfer = xp.where(reset[..., None, None], ops.matmul(transfer, reset_map), transfer)
         transfer = xp.where(valid[..., None, None], transfer, identity)
         if ops.backend == "jax":
             import jax
 
-            prefix = jax.lax.associative_scan(lambda a, b: b @ a, transfer, axis=1)
+            prefix = jax.lax.associative_scan(lambda a, b: ops.matmul(b, a), transfer, axis=1)
         else:
             prefix, offset = transfer, 1
             while offset < tokens:
-                updated = prefix[:, offset:] @ prefix[:, :-offset]
+                updated = ops.matmul(prefix[:, offset:], prefix[:, :-offset])
                 prefix = (
                     xp.cat((prefix[:, :offset], updated), dim=1)
                     if ops.backend == "torch"
@@ -447,7 +449,7 @@ class QuantumChannelPlan:
                 )
                 offset *= 2
         states = _roundoff_density(
-            (prefix @ rho.reshape((batch, 1, v, 1))).reshape((batch, tokens, d, d)), ops
+            (ops.matmul(prefix, rho.reshape((batch, 1, v, 1)))).reshape((batch, tokens, d, d)), ops
         )
         outputs = self._read(states, ops, visible, noise, povm)
         return xp.where(valid[..., None], outputs, 0), states[:, -1]

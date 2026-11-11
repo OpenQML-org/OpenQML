@@ -4,9 +4,8 @@ import math
 
 import numpy as np
 
-from .._norms import vector_norm
-from ..errors import ResourceError, ValidationError
-from ..parameters import real
+from ..compute import get_compute_kernel
+from ..errors import ValidationError
 from ..rl import _floating, _Ops
 
 
@@ -52,24 +51,6 @@ class Ops(_Ops):
             if like.dtype.kind in "iu":
                 like = like.astype(float)
         super().__init__(_floating(like))
-
-    def array(self, value, *, boolean=False):
-        if self.name == "jax":
-            import jax
-
-            if not isinstance(self.like, jax.core.Tracer) and isinstance(
-                getattr(self.like, "sharding", None), jax.sharding.SingleDeviceSharding
-            ):
-                return self.xp.asarray(
-                    value, dtype=bool if boolean else self.like.dtype, device=self.like.sharding
-                )
-        if self.name == "torch" and isinstance(value, np.ndarray):
-            compiling = (
-                getattr(self.xp.compiler, "is_compiling", None) or self.xp._dynamo.is_compiling
-            )
-            if not compiling() and (not value.flags.writeable or any(s < 0 for s in value.strides)):
-                value = value.copy()
-        return super().array(value, boolean=boolean)
 
     def sum(self, value, axis=-1, keepdims=False):
         return (
@@ -126,20 +107,6 @@ class Ops(_Ops):
     def broadcast(self, value, shape):
         return self.xp.broadcast_to(value, shape)
 
-    def check(self, value, valid, message, *, resource=False):
-        traced = False
-        if self.name == "torch":
-            traced = getattr(self.xp.compiler, "is_compiling", lambda: False)()
-        elif self.name == "jax":
-            import jax
-
-            traced = isinstance(valid, jax.core.Tracer)
-        if not traced:
-            if not bool(self.xp.all(valid)):
-                raise (ResourceError if resource else ValidationError)(message)
-            return value
-        return self.xp.where(valid, value, float("nan"))
-
     def real(self, value, *, finite=True):
         if isinstance(value, (bool, complex, str, bytes)):
             raise ValidationError("Financial arrays must contain real numeric values.")
@@ -164,9 +131,6 @@ class Ops(_Ops):
             else self.xp.moveaxis(value, source, target)
         )
 
-    def norm(self, value, axis=-1):
-        return vector_norm(value, self.xp, self.name, axis=axis)
-
     def probabilities(self, value, size):
         if size < 1:
             raise ValidationError("Probability distributions need a nonempty scenario axis.")
@@ -185,11 +149,7 @@ class Ops(_Ops):
 
 
 def admission(elements, max_memory_mb=256, *, work=0, max_work=1_000_000_000):
-    budget = real(max_memory_mb)
-    if budget <= 0:
-        raise ValidationError("max_memory_mb must be positive.")
-    if 16 * elements > budget * 2**20 or work > max_work:
-        raise ResourceError("Financial primal workspace or arithmetic estimate exceeds the budget.")
+    get_compute_kernel().admit(elements, max_memory_mb, work=work, max_work=max_work)
 
 
 def rows(shape):

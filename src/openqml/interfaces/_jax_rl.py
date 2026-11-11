@@ -5,6 +5,7 @@ import math
 import jax
 import jax.numpy as jnp
 
+from ..compute import get_compute_kernel
 from ..errors import ValidationError
 from ..ir import integer
 from ..rl import ActorCriticOutput, surrogate_fit_loss
@@ -82,7 +83,7 @@ class QuantumActorCritic:
 
         def linear(name, inputs):
             p = parameters[name]
-            return inputs @ p["kernel"] + p["bias"]
+            return get_compute_kernel().matmul(inputs, p["kernel"], xp=jnp) + p["bias"]
 
         controls = math.pi * jnp.tanh(linear("encoder", observations)) * parameters["input_scale"]
         features = self.quantum(parameters["quantum"], controls)
