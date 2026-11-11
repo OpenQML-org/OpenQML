@@ -293,6 +293,12 @@ def list_backends() -> tuple[str, ...]:
 
 
 def get_backend(backend: str | StatevectorBackend) -> StatevectorBackend:
+    if isinstance(backend, str) and backend == "auto":
+        from .runtime import _RUNTIME_CONTEXT
+
+        scoped = _RUNTIME_CONTEXT.get()
+        if scoped is not None:
+            return _validate_backend(scoped)
     if not isinstance(backend, str):
         return _validate_backend(backend)
     with _LOCK:

@@ -17,7 +17,7 @@ from ._gradient_common import _binding_columns, _names, _real_array
 from ._structure import split_circuit
 from .adjoint import AdjointPlan, _check_adjoint, _reverse, _tangent_forward
 from .compiler import _check_circuit_limits
-from .compute import get_compute_kernel, memory_budget
+from .compute import compute_operation, get_compute_kernel, memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import Circuit, integer
 from .observables import PauliString
@@ -156,6 +156,7 @@ class QuantumMetricPlan:
             result[:, j] = self._product(columns, direction)
         return (result + result.T) * 0.5
 
+    @compute_operation
     def natural_gradient(
         self, bindings, gradient, *, damping=1e-3, tolerance=1e-10, max_iterations=64
     ):

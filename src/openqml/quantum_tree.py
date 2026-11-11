@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .compute import memory_budget
+from .compute import compute_operation, memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import CircuitBuilder, integer
 from .parameters import Parameter, real
@@ -127,6 +127,7 @@ class QuantumTreePlan:
         result[count:] = math.pi / 4
         return result
 
+    @compute_operation
     def evaluate(self, weights, inputs, *, backend="numpy"):
         if backend == "numpy":
             weights, inputs = np.asarray(weights), np.asarray(inputs)

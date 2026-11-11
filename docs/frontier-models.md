@@ -114,10 +114,9 @@ shared time-conditioned denoiser. In Torch it implements
 per-example Hilbert-Schmidt error against the preceding forward density state.
 `process.sample(denoiser, batch_size, ...)` starts at the maximally mixed state.
 The forward process depolarizes; pure environments allow reverse entropy
-removal. The objective is an implementation adaptation, without transferring
-paper benchmark results. Generated objects are quantum densities, not images.
+removal. The objective trains reverse channels on quantum density matrices.
 
-## Execution and method sources
+## Execution
 
 Explicit density carries use native framework GPU/CPU execution. The planner
 excludes QPUs before availability checks and cost pruning because its numeric
@@ -132,10 +131,6 @@ carries do not support the distributed tensor mesh adapter. There is no fixed
 qubit ceiling; requested resources determine admission. Continuous-variable
 models, fault-tolerant constructions and fully coherent quantum attention
 require dedicated execution primitives beyond these discrete circuit families.
-
-- [Quantum Variational Activation Functions Empower Kolmogorov-Arnold Networks](https://arxiv.org/abs/2509.14026), 2025 preprint: trainable univariate activations.
-- [Trainable Quantum-Native Language Models](https://arxiv.org/abs/2610.12806), 2026 preprint: dissipative memory and direct POVM readout, with explicit capacity and classical-control limitations.
-- [Quantum Generative Diffusion Model](https://arxiv.org/abs/2401.07039): depolarizing trajectories and Stinespring reverse channels for mixed-state generation.
 
 Select model families using task-specific held-out metrics and the execution
 costs of the chosen representation. Each implementation's parameter ownership,

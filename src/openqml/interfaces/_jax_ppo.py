@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .._compiled import compile_compute
 from ..errors import ValidationError
 from ..rl import categorical_statistics, squashed_gaussian_log_probability
 from ..rl_training import PPOTrainingLoop
@@ -47,7 +48,7 @@ class PPOTrainer(PPOTrainingLoop):
         self.scale = jnp.asarray((self.environments.high - self.environments.low) / 2)
         self.offset = jnp.asarray((self.environments.high + self.environments.low) / 2)
         self._apply = getattr(model, "apply", model)
-        self._policy = jax.jit(self._apply)
+        self._policy = compile_compute(self._apply, backend="jax")
         self._learn = make_train_step(
             optimizer,
             self._objective,

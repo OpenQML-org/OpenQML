@@ -140,3 +140,28 @@ The joint scheduling design draws on [Qonductor](https://arxiv.org/abs/2408.0431
 and [Qurator](https://arxiv.org/abs/2604.05505). OpenQML enumerates its finite
 candidate Pareto set directly and uses augmented Chebyshev preferences with
 configured cost, latency, noise and queue profiles.
+
+## Scoped configuration and job recovery
+
+`runtime_context(backend=...)` or `runtime_context(policy=..., profiles=...)`
+selects the automatic scheduler for one thread/async task without changing the
+registry. Worker chunks inherit runtime and compute scopes. Each operation
+keeps its selected backend and kernel snapshot.
+
+`RecoveryPolicy` bounds retries of result retrieval from an existing provider
+job. Qiskit V2 adapters keep the original handle, job ID and PUB row layout;
+they do not re-submit on transient retrieval failures. Native result timeouts
+are passed to SDKs that support them; SDK networking controls the blocking call
+when that interface exposes no timeout. Retry attempts and backoff are bounded.
+
+`BackendJobError.resume()` retries that retained job. A single-job error exposes
+`error.pending.to_dict()`; `recover_job(receipt, loader)` retrieves it by ID and
+validates results using the recorded layout. Chunked errors retain completed
+chunks and per-chunk failures; resumption combines completed data without
+re-executing those chunks. Unknown submission state is never replayed.
+
+Registered QPUs use a concurrent circuit breaker. Repeated transient failures
+exclude new submissions until cooldown; one probe is admitted after cooldown.
+Already submitted jobs remain recoverable. A later automatic scheduling call
+can select another eligible backend. Training calls keep their pinned noise
+and gradient contract.

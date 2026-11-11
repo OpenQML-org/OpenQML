@@ -53,15 +53,18 @@ Select `framework="jax"` or `framework="flax"` to change training frameworks. `b
 Simulation, tensor networks, hybrid models and financial operators share a
 native compute kernel. It centralizes array placement, matrix products,
 contraction planning, numerical checks and memory admission. Configure a common
-workspace ceiling before constructing models or compiling graphs:
+workspace ceiling for an isolated execution scope:
 
 ```python
 import openqml as oq
 
-oq.configure_compute(policy=oq.ComputePolicy(max_memory_mb=512))
+with oq.compute_context(policy=oq.ComputePolicy(max_memory_mb=512)):
+    result = oq.expectations(oq.Circuit(1).h(0), [oq.PauliString("Z")])
 ```
 
-Operation-specific budgets remain available. Shared caches hold bounded,
+Use `compile_compute` for checked Torch/JAX compilation. Iterative solves certify
+their true residual before returning a solution. Operation-specific budgets
+remain available. Shared caches hold bounded,
 immutable planning metadata; trainable tensors stay in each forward pass.
 [Compute policies and numerical contracts](https://github.com/OpenQML-org/OpenQML/blob/main/docs/compute.md).
 

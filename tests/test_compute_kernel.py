@@ -211,8 +211,8 @@ def test_torch_compile_and_gradients_stay_native():
     torch.testing.assert_close(
         torch.autograd.grad(actual, a)[0], torch.autograd.grad(expected, a)[0]
     )
-    bad = compiled(torch.tensor([[float("nan"), 0.0], [0.0, 1.0]], dtype=torch.float64))
-    assert not bool(torch.isfinite(bad))
+    with pytest.raises(RuntimeError, match="OpenQML:NumericalError"):
+        compiled(torch.tensor([[float("nan"), 0.0], [0.0, 1.0]], dtype=torch.float64))
 
 
 def test_jax_jit_and_gradients_stay_native():

@@ -1,6 +1,14 @@
 """Static public export locations; importing this table imports no engines."""
 
 EXPORTS = {
+    "compile_compute": ("._compiled", "compile_compute"),
+    "compute_context": (".compute", "compute_context"),
+    "ConvergenceError": (".errors", "ConvergenceError"),
+    "RecoveryPolicy": (".recovery", "RecoveryPolicy"),
+    "BackendJobError": (".recovery", "BackendJobError"),
+    "BackendUnavailableError": (".recovery", "BackendUnavailableError"),
+    "recover_job": (".providers", "recover_job"),
+    "runtime_context": (".runtime", "runtime_context"),
     "ComputePolicy": (".compute", "ComputePolicy"),
     "ComputeKernel": (".compute", "ComputeKernel"),
     "configure_compute": (".compute", "configure_compute"),
@@ -203,6 +211,7 @@ EXPORTS = {
 }
 
 MODULES = {
+    "recovery": ".recovery",
     "compute": ".compute",
     "finance": ".finance",
     "torch": ".interfaces.torch",
@@ -286,6 +295,14 @@ MODULES = {
 }
 
 PUBLIC = [
+    "compile_compute",
+    "compute_context",
+    "ConvergenceError",
+    "RecoveryPolicy",
+    "BackendJobError",
+    "BackendUnavailableError",
+    "recover_job",
+    "runtime_context",
     "ComputePolicy",
     "ComputeKernel",
     "configure_compute",

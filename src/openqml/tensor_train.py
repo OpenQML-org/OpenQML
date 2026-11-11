@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .compute import get_compute_kernel, memory_budget
+from .compute import compute_operation, get_compute_kernel, memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import integer
 from .parameters import real
@@ -143,6 +143,7 @@ class TensorTrainPlan:
             "padding": "zero_input; crop_output",
         }
 
+    @compute_operation
     def apply(self, cores, inputs, *, backend="numpy"):
         cores = tuple(cores)
         if len(cores) != len(self.core_shapes) or any(
@@ -320,6 +321,7 @@ class TensorTrainMatrix:
     def __call__(self, inputs):
         return self.plan.apply(self.cores, np.asarray(inputs), backend="numpy")
 
+    @compute_operation
     def to_dense(self, *, max_memory_mb=None):
         budget = self.plan.max_memory_mb if max_memory_mb is None else memory_budget(max_memory_mb)
         a, b = self.plan.in_features, self.plan.out_features

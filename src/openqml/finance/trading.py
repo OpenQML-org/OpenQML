@@ -5,7 +5,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from ..compute import memory_budget
+from ..compute import compute_operation, memory_budget
 from ..errors import ValidationError
 from ..ir import integer
 from ..parameters import real
@@ -54,6 +54,7 @@ class SelfFinancingPlan:
                 "and a positive memory budget."
             )
 
+    @compute_operation
     def rollout(
         self,
         returns,

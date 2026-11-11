@@ -5,7 +5,7 @@ from dataclasses import replace
 import numpy as np
 
 from .backends import ExecutionOptions, get_backend
-from .compute import memory_budget
+from .compute import compute_operation, memory_budget
 from .errors import BackendError, ResourceError, ValidationError
 from .ir import Circuit
 from .observables import Hamiltonian, PauliString
@@ -228,6 +228,7 @@ def _dense_states(circuits, device, options):
         yield group, validate_states(states, group)
 
 
+@compute_operation
 def expectations_batch(
     circuits,
     observables,
@@ -311,6 +312,7 @@ def expectations_batch(
     return validate_expectations(output, len(values), observables)
 
 
+@compute_operation
 def execute_batch(
     circuits,
     bindings=None,
