@@ -129,10 +129,13 @@ def test_framework_facades_preserve_native_apis_and_quantum_layers():
         assert "QuantumLayer" in dir(getattr(oq, name))
 
 
-def test_readme_uses_the_public_package_import():
+def test_readme_uses_the_public_package_import(monkeypatch):
     import ast
     import re
 
+    from openqml import compute
+
+    monkeypatch.setattr(compute, "_KERNEL", compute.get_compute_kernel())
     text = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
     blocks = re.findall(r"```python\n(.*?)```", text, re.S)
     assert blocks

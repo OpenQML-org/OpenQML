@@ -280,7 +280,11 @@ class ComputeKernel:
         shapes = tuple(tuple(int(n) for n in v.shape) for v in operands)
         itemsize = max(np.dtype(v.dtype).itemsize for v in operands)
         cap = self.policy.max_memory_mb
-        limit = None if cap is None else int(cap * 2**20) // itemsize
+        if cap is None:
+            limit = None
+        else:
+            numerator, denominator = cap.as_integer_ratio()
+            limit = (numerator << 20) // (denominator * itemsize)
 
         def build():
             views = tuple(np.broadcast_to(np.zeros((), dtype=np.uint8), s) for s in shapes)

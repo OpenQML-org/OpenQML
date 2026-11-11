@@ -56,6 +56,8 @@ contraction planning, numerical checks and memory admission. Configure a common
 workspace ceiling before constructing models or compiling graphs:
 
 ```python
+import openqml as oq
+
 oq.configure_compute(policy=oq.ComputePolicy(max_memory_mb=512))
 ```
 
