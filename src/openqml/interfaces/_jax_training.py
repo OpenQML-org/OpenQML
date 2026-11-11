@@ -3,6 +3,7 @@
 import jax
 import jax.numpy as jnp
 
+from .._compiled import compile_compute
 from .._norms import global_norm
 from ..errors import ValidationError
 from ..ir import integer
@@ -181,4 +182,4 @@ def make_train_step(
             },
         )
 
-    return jax.jit(step) if jit else step
+    return compile_compute(step, backend="jax", check_outputs=False) if jit else step

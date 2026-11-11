@@ -1,13 +1,125 @@
 """Adapters for caller-provided execution engines."""
 
 from dataclasses import dataclass, field, replace
+from threading import RLock
 
 import numpy as np
 
 from ._parameter_batches import CircuitCache, parameter_batches
 from .backends import BackendCapabilities
+from .compute import get_compute_kernel
 from .errors import BackendError, ResourceError, ValidationError
 from .observables import Hamiltonian
+from .recovery import BackendJobError, PendingJob, RecoveryPolicy
+
+
+def _layout(metadata):
+    from .ir import integer
+
+    rows, columns = (integer(n, "provider result dimension") for n in metadata["shape"])
+    get_compute_kernel().admit(rows * max(1, columns), metadata["max_memory_mb"])
+    layouts = tuple(tuple(integer(i, "provider row") for i in row) for row in metadata["layouts"])
+    if sorted(i for row in layouts for i in row) != list(range(rows)):
+        raise BackendError("Provider receipt has invalid row coverage.")
+    return rows, columns, layouts
+
+
+def _estimator_result(results, metadata):
+    rows, columns, layouts = _layout(metadata)
+    if len(results) != len(layouts):
+        raise BackendError("Estimator returned an unexpected number of PUB results.")
+    output = np.empty((rows, columns), dtype=float)
+    for indices, pub in zip(layouts, results, strict=True):
+        data = np.asarray(pub.data.evs)
+        if data.shape != (columns, len(indices)) or data.dtype.kind not in "fiu":
+            raise BackendError("Estimator returned an unexpected PUB broadcast shape or dtype.")
+        output[list(indices)] = data.T
+    bounds = np.asarray(metadata["bounds"])
+    policy = get_compute_kernel().policy
+    if not np.isfinite(output).all() or np.any(
+        np.abs(output) > bounds + policy.validation_atol + policy.validation_rtol * bounds
+    ):
+        raise BackendError("Estimator returned non-finite or out-of-range expectations.")
+    return output
+
+
+def _sampler_result(results, metadata):
+    from .ir import integer
+
+    rows, _, layouts = _layout(metadata)
+    if len(results) != len(layouts):
+        raise BackendError("Sampler returned an unexpected number of PUB results.")
+    output = [None] * rows
+    for indices, pub in zip(layouts, results, strict=True):
+        if pub.data.c.shape != (len(indices),):
+            raise BackendError("Sampler returned an unexpected PUB broadcast shape.")
+        for i, row in enumerate(indices):
+            counts = pub.data.c.get_counts((i,))
+            width = metadata["widths"][row]
+            if any(
+                not isinstance(key, str) or len(key) != width or set(key) - {"0", "1"}
+                for key in counts
+            ):
+                raise BackendError("Sampler returned invalid classical bit strings.")
+            counts = {key[::-1]: integer(n, "provider count") for key, n in counts.items()}
+            if sum(counts.values()) != metadata["shots"]:
+                raise BackendError("Sampler counts do not sum to the submitted shots.")
+            output[row] = counts
+    return output
+
+
+def recover_job(receipt, loader, *, recovery=None):
+    """Retrieve a recorded job by ID and decode it without submitting new work."""
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("schema") != "openqml.provider_job.v1"
+        or not isinstance(receipt.get("job_id"), str)
+        or not receipt["job_id"]
+    ):
+        raise ValidationError("Provide a provider job receipt with a job ID.")
+    metadata = receipt.get("metadata", {})
+    decoders = {"estimator-v2": _estimator_result, "sampler-v2": _sampler_result}
+    if not isinstance(metadata, dict) or metadata.get("kind") not in decoders:
+        raise ValidationError("Unknown provider result decoder.")
+    try:
+        rows, columns, _ = _layout(metadata)
+        if metadata["kind"] == "estimator-v2":
+            bounds = np.asarray(metadata["bounds"])
+            if bounds.shape != (columns,) or np.any(np.isnan(bounds) | (bounds < 0)):
+                raise ValueError("Invalid observable bounds.")
+        else:
+            from .ir import integer
+
+            integer(metadata["shots"], "receipt shots", 1)
+            if len(metadata["widths"]) != rows:
+                raise ValueError("Invalid classical widths.")
+            for width in metadata["widths"]:
+                integer(width, "receipt classical width")
+    except (KeyError, TypeError, ValueError, OverflowError, BackendError) as exc:
+        raise ValidationError("Invalid provider job receipt metadata.") from exc
+    pending = PendingJob(
+        loader(receipt["job_id"]),
+        decoders[metadata["kind"]],
+        backend=receipt["backend"],
+        metadata=metadata,
+        policy=recovery,
+    )
+    if pending.job_id is not None and pending.job_id != receipt["job_id"]:
+        raise ValidationError("Retrieved job ID differs from the retained receipt.")
+    return pending.result()
+
+
+def _provider_job(submit, decoder, metadata, backend, recovery):
+    try:
+        job = submit()
+    except Exception as exc:
+        # Submission state is unknown: never replay a potentially charged job.
+        raise BackendJobError(
+            f"Provider {backend!r} submission failed; "
+            f"reconcile provider status before resubmitting: {exc}",
+            stage="submission",
+        ) from exc
+    return PendingJob(job, decoder, backend=backend, metadata=metadata, policy=recovery).result()
 
 
 @dataclass(frozen=True)
@@ -24,13 +136,18 @@ class QiskitEstimatorBackend:
     precision: float | None = None
     pass_manager: object = None
     cache_size: int = 16
+    recovery: RecoveryPolicy | None = None
     _cache: object = field(init=False, repr=False, compare=False)
+    _transpiler_lock: object = field(init=False, repr=False, compare=False)
     capabilities: BackendCapabilities = field(
         default_factory=lambda: BackendCapabilities(native_expectations=True)
     )
 
     def __post_init__(self):
         object.__setattr__(self, "_cache", CircuitCache(self.cache_size))
+        object.__setattr__(self, "_transpiler_lock", RLock())
+        if self.recovery is not None and not isinstance(self.recovery, RecoveryPolicy):
+            raise ValidationError("recovery must be RecoveryPolicy.")
         if not callable(getattr(self.estimator, "run", None)):
             raise ValidationError("Provide an initialized Qiskit V2 estimator.")
         if self.precision is not None:
@@ -52,7 +169,10 @@ class QiskitEstimatorBackend:
         from .ir import integer
 
         shots = integer(shots, "shots", 1)
-        return replace(self, precision=shots**-0.5)
+        configured = replace(self, precision=shots**-0.5)
+        object.__setattr__(configured, "_cache", self._cache)
+        object.__setattr__(configured, "_transpiler_lock", self._transpiler_lock)
+        return configured
 
     def expectations_batch(self, circuits, observables, *, options):
         from .adapters._common import dependency
@@ -73,7 +193,10 @@ class QiskitEstimatorBackend:
 
             def compile_circuit(prototype=prototype):
                 native = to_qiskit(prototype)
-                return native if self.pass_manager is None else self.pass_manager.run(native)
+                if self.pass_manager is None:
+                    return native
+                with self._transpiler_lock:
+                    return self.pass_manager.run(native)
 
             native = self._cache.get(prototype, compile_circuit)
             mapped = operators
@@ -90,21 +213,25 @@ class QiskitEstimatorBackend:
             # Observable (M,1) and parameter (B,) shapes broadcast to (M,B).
             pubs.append((native, [[operator] for operator in mapped], values))
             layouts.append(rows)
-        try:
-            results = self.estimator.run(pubs, precision=self.precision).result()
-            if len(results) != len(pubs):
-                raise BackendError("Estimator returned an unexpected number of PUB results.")
-            output = np.empty((len(circuits), len(observables)), dtype=float)
-            for rows, pub in zip(layouts, results, strict=True):
-                data = np.asarray(pub.data.evs)
-                if data.shape != (len(observables), len(rows)):
-                    raise BackendError("Estimator returned an unexpected PUB broadcast shape.")
-                output[list(rows)] = data.T
-            return output
-        except BackendError:
-            raise
-        except Exception as exc:
-            raise BackendError(f"Qiskit EstimatorV2 failed: {exc}") from exc
+        metadata = {
+            "kind": "estimator-v2",
+            "shape": (len(circuits), len(observables)),
+            "layouts": layouts,
+            "max_memory_mb": options.max_memory_mb,
+            "bounds": [
+                sum(abs(t.coefficient) for t in o.terms)
+                if isinstance(o, Hamiltonian)
+                else abs(o.coefficient)
+                for o in observables
+            ],
+        }
+        return _provider_job(
+            lambda: self.estimator.run(pubs, precision=self.precision),
+            _estimator_result,
+            metadata,
+            self.name,
+            self.recovery,
+        )
 
 
 @dataclass(frozen=True)
@@ -115,7 +242,9 @@ class QiskitSamplerBackend:
     name: str = "qiskit-sampler-v2"
     pass_manager: object = None
     cache_size: int = 16
+    recovery: RecoveryPolicy | None = None
     _cache: object = field(init=False, repr=False, compare=False)
+    _transpiler_lock: object = field(init=False, repr=False, compare=False)
     capabilities: BackendCapabilities = field(
         default_factory=lambda: BackendCapabilities(
             native_sampling=True, mid_circuit_measurements=True
@@ -124,6 +253,9 @@ class QiskitSamplerBackend:
 
     def __post_init__(self):
         object.__setattr__(self, "_cache", CircuitCache(self.cache_size))
+        object.__setattr__(self, "_transpiler_lock", RLock())
+        if self.recovery is not None and not isinstance(self.recovery, RecoveryPolicy):
+            raise ValidationError("recovery must be RecoveryPolicy.")
         if not callable(getattr(self.sampler, "run", None)):
             raise ValidationError("Provide an initialized Qiskit V2 sampler.")
 
@@ -142,32 +274,31 @@ class QiskitSamplerBackend:
 
             def compile_circuit(prototype=prototype):
                 native = to_qiskit(prototype)
-                return native if self.pass_manager is None else self.pass_manager.run(native)
+                if self.pass_manager is None:
+                    return native
+                with self._transpiler_lock:
+                    return self.pass_manager.run(native)
 
             native = self._cache.get(prototype, compile_circuit)
             parameters = [bindings[p.name] for p in native.parameters]
             values = np.stack(parameters, axis=-1) if parameters else np.empty((len(rows), 0))
             jobs.append((native, values))
             layouts.append(rows)
-        try:
-            results = self.sampler.run(jobs, shots=shots).result()
-            if len(results) != len(jobs):
-                raise BackendError("Sampler returned an unexpected number of PUB results.")
-            # to_qiskit creates one register named c, in c0..cN IR order. A pass
-            # manager may add ancillas but must preserve that classical interface.
-            output = [None] * len(circuits)
-            for rows, pub in zip(layouts, results, strict=True):
-                if pub.data.c.shape != (len(rows),):
-                    raise BackendError("Sampler returned an unexpected PUB broadcast shape.")
-                for i, row in enumerate(rows):
-                    output[row] = {
-                        key[::-1]: int(n) for key, n in pub.data.c.get_counts((i,)).items()
-                    }
-            return output
-        except BackendError:
-            raise
-        except Exception as exc:
-            raise BackendError(f"Qiskit SamplerV2 failed: {exc}") from exc
+        metadata = {
+            "kind": "sampler-v2",
+            "shape": (len(circuits), 1),
+            "layouts": layouts,
+            "max_memory_mb": options.max_memory_mb,
+            "shots": shots,
+            "widths": [c.num_clbits for c in measured],
+        }
+        return _provider_job(
+            lambda: self.sampler.run(jobs, shots=shots),
+            _sampler_result,
+            metadata,
+            self.name,
+            self.recovery,
+        )
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,6 @@
 """Small financial entry points; policies and native results stay explicit."""
 
+from ..compute import compute_operation
 from ..errors import ResourceError, ValidationError
 from ..parameters import real
 from ._array import Ops
@@ -65,6 +66,7 @@ def _exact_coherent(payoff, oracle, offset, scale, discount, backend, memory):
     return PayoffEstimate(value, ((value, value),), 1.0, None)
 
 
+@compute_operation
 def allocate(
     returns=None,
     *,
@@ -130,6 +132,7 @@ def allocate(
     )
 
 
+@compute_operation
 def price(
     payoffs=None,
     *,

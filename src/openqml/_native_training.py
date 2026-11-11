@@ -3,7 +3,7 @@
 from typing import NamedTuple
 
 from ._norms import global_norm, stop
-from .errors import ValidationError
+from .errors import ConvergenceError, ValidationError
 from .ir import integer
 from .parameters import real
 
@@ -12,21 +12,32 @@ class NativeNaturalGradientResult(NamedTuple):
     direction: dict
     converged: object
     iterations: object
-    metric_products: int
+    metric_products: object
     residual_norm: object
     damping: float
 
 
-def solve_metric(matvec, gradient, ops, *, damping=1e-3, tolerance=1e-6, max_iterations=32):
-    """Fixed-budget, masked CG; no device-to-host synchronization in iterations.
+def solve_metric(
+    matvec,
+    gradient,
+    ops,
+    *,
+    damping=1e-3,
+    tolerance=1e-6,
+    max_iterations=32,
+    require_convergence=True,
+):
+    """Bounded CG with a fresh damped-system residual certificate.
 
-    All matvecs are executed even after logical convergence. The fresh residual
-    reports the true damped-system error, not a recursive residual estimate.
+    Eager calls stop at convergence; JAX skips inactive products in its graph.
+    Compiled Torch retains masked iterations to preserve differentiation.
     """
     damping, tolerance = real(damping), real(tolerance)
     if damping <= 0 or tolerance <= 0:
         raise ValidationError("Use positive damping and tolerance.")
     integer(max_iterations, "max_iterations", 1)
+    if type(require_convergence) is not bool:
+        raise ValidationError("require_convergence must be a boolean.")
     if not gradient:
         raise ValidationError("Native metric solve requires a nonempty parameter gradient.")
     keys = tuple(gradient)
@@ -70,22 +81,47 @@ def solve_metric(matvec, gradient, ops, *, damping=1e-3, tolerance=1e-6, max_ite
     if ops.backend == "jax":
         from jax import lax
 
-        state = lax.fori_loop(0, max_iterations, iteration, state)
+        state = lax.fori_loop(
+            0,
+            max_iterations,
+            lambda i, s: lax.cond(s[4], lambda: iteration(i, s), lambda: s),
+            state,
+        )
+        products = (state[-1] + 1).astype(ops.xp.int32)
     else:
+        compiling = (
+            ops.backend == "torch" and getattr(ops.xp.compiler, "is_compiling", lambda: False)()
+        )
+        products = 1
         for i in range(max_iterations):
+            if not compiling and not bool(state[4]):
+                break
             state = iteration(i, state)
+            products += 1
     direction, _, _, _, _, iterations = state
     product = apply(direction)
     error = {k: gradient[k] - product[k] for k in keys}
     relative_norm = global_norm(error.values(), ops.xp, ops.backend)
     norm = relative_norm * scale
+    converged = ops.xp.isfinite(norm) & (relative_norm <= threshold)
+    direction = {key: value * scale for key, value in direction.items()}
+    if require_convergence:
+        direction = {
+            key: ops.check(
+                value,
+                converged,
+                "Natural-gradient solve failed its true damped-system residual tolerance.",
+                error=ConvergenceError,
+            )
+            for key, value in direction.items()
+        }
     return NativeNaturalGradientResult(
-        {key: value * scale for key, value in direction.items()},
-        ops.xp.isfinite(norm) & (relative_norm <= threshold),
+        direction,
+        converged,
         iterations.to(dtype=ops.xp.int64)
         if ops.backend == "torch"
         else iterations.astype(ops.xp.int32),
-        max_iterations + 1,
+        products,
         norm,
         damping,
     )

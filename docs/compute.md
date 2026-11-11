@@ -37,10 +37,19 @@ print(kernel.cache_info())
 
 `get_compute_kernel()` returns the same service used by local quantum,
 reinforcement and financial array bridges. `configure_compute()` atomically
-installs a new service with an empty cache. Configure before creating models,
-starting worker threads or tracing native graphs. Retrace compiled Torch/JAX
-functions after changing the policy: Python configuration is captured when
-their graphs are built.
+installs a new service with an empty cache. Global updates apply to new operations. Existing operations and native-array
+bridges retain their kernel snapshot. Use `compute_context(policy=...)` or
+`compute_context(kernel=...)` to isolate configuration in a thread or async task;
+nested scopes restore their predecessor, including after exceptions. Runtime
+worker submissions propagate these scopes. Kernel policies are read-only.
+
+`compile_compute(function, backend="jax")` uses checkify to carry checks through
+the compiled graph and raises their typed errors at the host call boundary.
+`backend="torch"` uses native graph assertions and checks returned values;
+`compiler="eager"` selects Torch's eager graph engine for debugging. Put gradient
+and batching transforms inside `function`. Each compiled callable pins its
+kernel; `.graph` exposes lower-level execution (JAX returns error status and
+values). Raw third-party JIT calls follow their native compiler error semantics.
 
 `max_memory_mb=None`, the default, preserves callers' operation-specific
 budgets. A configured ceiling is combined with each requested budget using the
@@ -57,7 +66,7 @@ ceiling by creating a large outer product.
 | Provider density matrices | Hermitian and unit trace within `validation_atol`; minimum eigenvalue at least `-validation_atol` |
 | Provider expectation values | Magnitude at most the observable coefficient bound plus `validation_atol + validation_rtol * bound` |
 | Linear solve and SVD | Finite inputs and results; eager numerical factorization failures raise `NumericalError`, a `BackendError` subclass |
-| Financial and channel domains | Eager invalid inputs raise `ValidationError`; compiled invalid lanes produce non-finite values |
+| Financial and channel domains | Eager and checked compiled calls raise typed validation errors |
 | Resource admission | Invalid budgets raise `ValidationError`; rejected workspace or work estimates raise `ResourceError` before the admitted allocation |
 
 These are validation tolerances. Solver convergence criteria, truncation
@@ -77,8 +86,11 @@ and capability policy.
 The shared LRU cache defaults to 256 entries and 8 MiB of conservatively counted
 Python metadata. NumPy einsum paths are keyed by equation, shapes and memory
 policy. Shape-specialized tensor contraction descriptors are interned across
-plans. A lock serializes cache publication and prevents duplicate compilation
-of the same key. Oversized entries bypass retention; either zero cache limit
+plans. Binary NumPy contractions lower to prepared batched GEMMs; local tensor
+programs execute preallocated slots without rebuilding node dictionaries.
+A per-key future prevents duplicate compilation while unrelated keys build
+concurrently. Cache publication is locked; clearing a cache invalidates pending
+publication from its previous generation. Oversized entries bypass retention; either zero cache limit
 disables retention. `clear_cache()` releases metadata and resets counters.
 
 Cached objects are immutable metadata. Parameter values, activation arrays,
@@ -104,3 +116,9 @@ Implementation references:
 - [PyTorch tensor contractions](https://docs.pytorch.org/docs/stable/generated/torch.einsum.html)
 - [PyTorch numerical accuracy](https://docs.pytorch.org/docs/stable/notes/numerical_accuracy.html)
 - [JAX functional error checks](https://docs.jax.dev/en/latest/debugging/checkify_guide.html)
+
+Iterative factor and natural-gradient solvers recompute the true system residual.
+A missed tolerance raises `ConvergenceError`, including through checked compiled
+calls. Native metric solves can return explicit nonconvergence diagnostics with
+`require_convergence=False`. Converged eager/native iterations stop issuing
+additional metric products.

@@ -105,7 +105,7 @@ are configured separately on the runtime.
 Use `plan.verify(bindings, mode="roundtrip")` to compare export/reimport maps at
 a binding. `mode="native"` executes supported native artifacts, and
 `plan.certify()` applies bounded exact algebraic checks. See
-[semantic kernels](semantic-kernels.md) and [execution](training-and-execution.md)
+[compute policies](compute.md) and [runtime dispatch](runtime.md)
 for the supported verification domains and resource controls.
 
 Directly constructed parameter-free expression nodes are evaluated at conversion

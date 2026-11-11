@@ -27,6 +27,10 @@ class NumericalError(BackendError):
     """A numerical primitive failed or produced a non-finite result."""
 
 
+class ConvergenceError(NumericalError):
+    """An iterative solution failed its freshly recomputed residual contract."""
+
+
 @dataclass(frozen=True)
 class Diagnostic:
     code: str

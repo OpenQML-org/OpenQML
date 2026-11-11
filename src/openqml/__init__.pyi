@@ -578,16 +578,24 @@ __version__: str
 __all__: list[str]
 
 from . import adaptive_amplitude as adaptive_amplitude
+from ._compiled import compile_compute as compile_compute
 from .compute import (
     ComputeKernel as ComputeKernel,
 )
 from .compute import (
     ComputePolicy as ComputePolicy,
 )
+from .compute import compute_context as compute_context
 from .compute import (
     configure_compute as configure_compute,
 )
 from .compute import (
     get_compute_kernel as get_compute_kernel,
 )
+from .errors import ConvergenceError as ConvergenceError
 from .errors import NumericalError as NumericalError
+from .providers import recover_job as recover_job
+from .recovery import BackendJobError as BackendJobError
+from .recovery import BackendUnavailableError as BackendUnavailableError
+from .recovery import RecoveryPolicy as RecoveryPolicy
+from .runtime import runtime_context as runtime_context

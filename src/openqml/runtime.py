@@ -3,12 +3,14 @@
 import hashlib
 import time
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar, copy_context
 from dataclasses import asdict, dataclass, field, replace
+from functools import partial
 from types import MappingProxyType
 
 from .backends import BackendCapabilities, ExecutionOptions
-from .compute import memory_budget
+from .compute import compute_operation, memory_budget
 from .costs import (
     BudgetLedger,
     ExecutionFeedback,
@@ -20,7 +22,21 @@ from .costs import (
     estimate_cost,
     select_cost,
 )
-from .errors import ConversionError, MissingDependencyError, ResourceError, ValidationError
+from .errors import (
+    BackendError,
+    ConversionError,
+    MissingDependencyError,
+    ResourceError,
+    ValidationError,
+)
+from .recovery import (
+    CircuitBreaker,
+    PendingBatch,
+    RecoveryPolicy,
+    recovery_context,
+)
+
+_RUNTIME_CONTEXT = ContextVar("openqml_runtime_backend", default=None)
 
 
 @dataclass(frozen=True)
@@ -65,6 +81,8 @@ class QPUBackend:
     backend: object
     available: object = True
     execution_profile: object = None
+    recovery: RecoveryPolicy = field(default_factory=RecoveryPolicy)
+    _breaker: object = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
         from .backends import _validate_backend
@@ -72,6 +90,10 @@ class QPUBackend:
         _validate_backend(self.backend)
         if type(self.available) is not bool and not callable(self.available):
             raise ValidationError("QPU availability must be a boolean or callable.")
+        if not isinstance(self.recovery, RecoveryPolicy):
+            raise ValidationError("recovery must be RecoveryPolicy.")
+        if self._breaker is None:
+            object.__setattr__(self, "_breaker", CircuitBreaker(self.recovery))
 
     @property
     def name(self):
@@ -82,22 +104,46 @@ class QPUBackend:
         return replace(self.backend.capabilities, device_type="QPU")
 
     def is_available(self):
+        if not self._breaker.available():
+            return False
         value = self.available() if callable(self.available) else self.available
         if type(value) is not bool:
             raise ValidationError("QPU availability checks must return a boolean.")
         return value
 
     def __getattr__(self, name):
-        return getattr(object.__getattribute__(self, "backend"), name)
+        implementation = getattr(object.__getattribute__(self, "backend"), name)
+        if name in {"run", "run_density", "expectations_batch", "sample_batch"} and callable(
+            implementation
+        ):
+
+            def invoke(*args, **kwargs):
+                self._breaker.acquire()
+                try:
+                    with recovery_context(self.recovery):
+                        result = implementation(*args, **kwargs)
+                except Exception as exc:
+                    if self.recovery.transient(exc) or isinstance(exc, BackendError):
+                        self._breaker.failure()
+                    else:
+                        self._breaker.success()
+                    raise
+                self._breaker.success()
+                return result
+
+            return invoke
+        return implementation
 
 
-def register_qpu_backend(backend, *, available=True, replace=False, profile=None):
+def register_qpu_backend(backend, *, available=True, replace=False, profile=None, recovery=None):
     """Register configured hardware; auto requires a fresh cost/quality quote."""
     from .backends import register_backend
 
     if profile is not None and not isinstance(profile, ExecutionProfile) and not callable(profile):
         raise ValidationError("profile must be ExecutionProfile or a read-only quote callback.")
-    wrapped = QPUBackend(backend, available, profile)
+    wrapped = QPUBackend(
+        backend, available, profile, RecoveryPolicy() if recovery is None else recovery
+    )
     register_backend(wrapped, replace=replace)
     return wrapped
 
@@ -558,7 +604,7 @@ class CostAwareBackend(PriorityBackend):
                 ):
                     configured = device.with_shots(costs[index].shots)
                     device = (
-                        QPUBackend(configured, device.available, device.execution_profile)
+                        replace(device, backend=configured)
                         if isinstance(device, QPUBackend)
                         else configured
                     )
@@ -609,6 +655,7 @@ class _ObservedBackend:
     def __getattr__(self, name):
         return getattr(self.backend, name)
 
+    @compute_operation
     def _invoke(self, method, circuits, *args, options, callback=None):
         request = SchedulingRequest(
             tuple(circuits),
@@ -658,19 +705,29 @@ class _ObservedBackend:
                 with nullcontext() if gpu is None else torch.cuda.device(gpu):
                     return getattr(self.backend, method)(chunk, *args[1:], options=local)
 
+            def combine(results):
+                return (
+                    np.concatenate(results, axis=0)
+                    if method == "expectations_batch"
+                    else [row for chunk in results for row in chunk]
+                )
+
+            calls = [
+                partial(copy_context().run, submit, i, chunk) for i, chunk in enumerate(chunks)
+            ]
+            pending = PendingBatch(calls, combine)
             if profile.concurrency == 1:
-                results = [submit(i, chunk) for i, chunk in enumerate(chunks)]
+                for i, call in enumerate(calls):
+                    pending.take(i, call)
             else:
                 pool = ThreadPoolExecutor(max_workers=min(profile.concurrency, len(chunks)))
                 try:
-                    futures = [pool.submit(submit, i, chunk) for i, chunk in enumerate(chunks)]
-                    results = [future.result() for future in futures]
+                    futures = [pool.submit(pending.take, i, call) for i, call in enumerate(calls)]
+                    for future in futures:
+                        future.result()
                 finally:
                     pool.shutdown(wait=True, cancel_futures=True)
-            if method == "expectations_batch":
-                result = np.concatenate(results, axis=0)
-            else:
-                result = [row for chunk in results for row in chunk]
+            result = pending.assemble()
         else:
             result = getattr(self.backend, method)(*args, options=options)
         raw = estimate_cost(
@@ -712,3 +769,27 @@ def configure_runtime(*, policy=None, workload=None, profiles=None, ledger=None)
     with _LOCK:
         _REGISTRY["auto"] = backend
     return backend
+
+
+@contextmanager
+def runtime_context(*, backend=None, policy=None, workload=None, profiles=None, ledger=None):
+    """Select a scheduler in one thread or async task without changing the registry."""
+    if backend is not None and any(v is not None for v in (policy, workload, profiles, ledger)):
+        raise ValidationError("Select an explicit backend or scheduler options.")
+    from .backends import get_backend
+
+    selected = (
+        get_backend(backend)
+        if backend is not None
+        else CostAwareBackend(
+            policy=SchedulingPolicy() if policy is None else policy,
+            workload=TrainingWorkload() if workload is None else workload,
+            profiles={} if profiles is None else profiles,
+            ledger=ledger,
+        )
+    )
+    token = _RUNTIME_CONTEXT.set(selected)
+    try:
+        yield selected
+    finally:
+        _RUNTIME_CONTEXT.reset(token)

@@ -4,12 +4,11 @@ import math
 
 import numpy as np
 
-from ..compute import get_compute_kernel
+from ..compute import RealOps, floating_array, get_compute_kernel
 from ..errors import ValidationError
-from ..rl import _floating, _Ops
 
 
-class Ops(_Ops):
+class Ops(RealOps):
     def __init__(self, *values):
         values = tuple(v for v in values if v is not None)
         if not values:
@@ -50,7 +49,7 @@ class Ops(_Ops):
                 raise ValidationError("Financial arrays must contain real numeric values.")
             if like.dtype.kind in "iu":
                 like = like.astype(float)
-        super().__init__(_floating(like))
+        super().__init__(floating_array(like))
 
     def sum(self, value, axis=-1, keepdims=False):
         return (

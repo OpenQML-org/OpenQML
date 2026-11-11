@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 from ._gradient_common import _observables
 from .compiler import _check_circuit_limits
-from .compute import memory_budget
+from .compute import compute_context, compute_operation, memory_budget
 from .errors import MissingDependencyError, ResourceError, ValidationError
 from .ir import integer
 from .observables import Hamiltonian, PauliString
@@ -331,6 +331,7 @@ class TensorNetworkPlan:
             "memory_scope": "representation_admission; excludes_autodiff_tapes_and_process_RSS",
         }
 
+    @compute_operation
     def evaluate(
         self,
         bindings=None,
@@ -423,7 +424,8 @@ class TensorNetworkPlan:
             self.active_parameters,
             numpy_copy=False,
         )
-        capacity = chunk_capacity(self, local, shape)
+        with compute_context(kernel=ops.kernel):
+            capacity = chunk_capacity(self, local, shape)
         size = (
             capacity
             if batch_chunk_size is None
@@ -433,13 +435,15 @@ class TensorNetworkPlan:
         for start in range(0, max(1, total), size):
             stop = min(start + size, total)
             chunk = gather_rows(local, shape, start, stop, ops)
-            yield self.evaluate(
-                chunk,
-                backend=backend,
-                like=like,
-                batch_shape=(stop - start,),
-                return_report=return_report,
-            )
+            with compute_context(kernel=ops.kernel):
+                result = self.evaluate(
+                    chunk,
+                    backend=backend,
+                    like=like,
+                    batch_shape=(stop - start,),
+                    return_report=return_report,
+                )
+            yield result
 
     def _evaluate_chunks(
         self,
@@ -565,6 +569,10 @@ class TensorNetworkPlan:
                     result = program.run(raw, assignment, reuse, ops, _statistics)
                     total = total + ops.real(result)
                     continue
+                if _executor is None:
+                    result = program.run_flat(raw, assignment, ops, _statistics)
+                    total = total + ops.real(result)
+                    continue
                 fixed = {index: (assignment >> j) & 1 for j, index in enumerate(sliced)}
                 values = {}
                 for j, value in enumerate(raw):
@@ -578,11 +586,7 @@ class TensorNetworkPlan:
                     )
                 for k, (a, b, la, lb, shared, _) in enumerate(steps):
                     left, right = values.pop(a), values.pop(b)
-                    result = (
-                        program.kernels[k].apply(left, right, ops)
-                        if _executor is None
-                        else _executor.contract(left, right, la, lb, shared, graph_index, k)
-                    )
+                    result = _executor.contract(left, right, la, lb, shared, graph_index, k)
                     values[len(desc) + k] = result
                     if _statistics is not None:
                         _statistics["contractions_executed"] += 1

@@ -8,9 +8,8 @@ Time-major traces distinguish termination from time-limit truncation.
 import math
 from typing import NamedTuple
 
-import numpy as np
-
-from .compute import KernelOps
+from .compute import RealOps as _Ops
+from .compute import floating_array as _floating
 from .errors import ValidationError
 from .parameters import real
 
@@ -52,63 +51,6 @@ class ActorCriticOutput(NamedTuple):
     policy: object
     value: object
     log_std: object = None
-
-
-class _Ops(KernelOps):
-    def __init__(self, like):
-        module = type(like).__module__
-        self.like = like
-        if module.startswith("torch"):
-            import torch
-
-            self.name, self.xp = "torch", torch
-        elif module.startswith(("jax", "jaxlib")):
-            import jax.numpy as jnp
-
-            self.name, self.xp = "jax", jnp
-        else:
-            self.name, self.xp = "numpy", np
-        self.backend = self.name
-
-    def array(self, value, *, boolean=False):
-        return self.kernel.asarray(
-            value,
-            xp=self.xp,
-            backend=self.backend,
-            like=self.like,
-            dtype=(self.xp.bool if self.name == "torch" else bool) if boolean else self.like.dtype,
-        )
-
-    def stop(self, value):
-        if self.name == "torch":
-            return value.detach()
-        if self.name == "jax":
-            import jax
-
-            return jax.lax.stop_gradient(value)
-        return value
-
-    def cat(self, values, axis=0):
-        if self.name == "torch":
-            return self.xp.cat(values, dim=axis)
-        return self.xp.concatenate(values, axis=axis)
-
-    def maximum(self, left, right):
-        return self.xp.maximum(left, self.array(right))
-
-
-def _floating(value):
-    module = type(value).__module__
-    if not module.startswith(("torch", "jax", "jaxlib")) and not isinstance(value, np.ndarray):
-        value = np.asarray(value, dtype=float)
-    if str(value.dtype).removeprefix("torch.") not in {"float16", "bfloat16", "float32", "float64"}:
-        raise ValidationError("RL inputs must be real floating tensors.")
-    # Accumulate losses and traces in at least float32 under mixed precision.
-    if str(value.dtype).removeprefix("torch.") in {"float16", "bfloat16"}:
-        return (
-            value.float() if type(value).__module__.startswith("torch") else value.astype("float32")
-        )
-    return value
 
 
 def _same(ops, reference, *values):

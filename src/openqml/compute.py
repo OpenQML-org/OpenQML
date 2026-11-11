@@ -8,13 +8,17 @@ from __future__ import annotations
 
 import math
 import sys
-from collections import Counter, OrderedDict
+from collections import Counter
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, fields, is_dataclass
+from functools import wraps
 from numbers import Integral, Real
 from threading import RLock
 
 import numpy as np
 
+from ._cache import SingleFlightCache
 from .errors import NumericalError, ResourceError, ValidationError
 
 
@@ -25,7 +29,7 @@ def _positive(value, name, *, zero=False):
         value = float(value)
     except (TypeError, ValueError, OverflowError) as exc:
         raise ValidationError(f"{name} must be a finite real number.") from exc
-    if not math.isfinite(value) or value < 0 or (value == 0 and not zero):
+    if not -float("inf") < value < float("inf") or value < 0 or (value == 0 and not zero):
         raise ValidationError(f"{name} must be finite and {'nonnegative' if zero else 'positive'}.")
     return value
 
@@ -120,62 +124,120 @@ def _einsum_shape(equation, shapes):
     )
 
 
-class _PlanCache:
+class _PlanCache(SingleFlightCache):
     def __init__(self, policy):
-        self.policy, self.lock = policy, RLock()
-        self.values = OrderedDict()
-        self.bytes = self.hits = self.misses = self.evictions = 0
+        super().__init__(
+            policy.cache_entries,
+            policy.cache_bytes,
+            lambda key, value: 256 + _metadata_size(key) + _metadata_size(value),
+        )
 
-    def get(self, key, build):
-        # Compilation under one reentrant lock prevents duplicate same-key
-        # planning and publishes only complete immutable plans.
-        with self.lock:
-            if key in self.values:
-                self.hits += 1
-                self.values.move_to_end(key)
-                return self.values[key][0]
-            self.misses += 1
-            value = build()
-            size = 256 + _metadata_size(key) + _metadata_size(value)
-            if not self.policy.cache_entries or size > self.policy.cache_bytes:
-                return value
-            while self.values and (
-                len(self.values) >= self.policy.cache_entries
-                or self.bytes + size > self.policy.cache_bytes
-            ):
-                _, (_, removed) = self.values.popitem(last=False)
-                self.bytes -= removed
-                self.evictions += 1
-            self.values[key] = value, size
-            self.bytes += size
-            return value
 
-    def info(self):
-        with self.lock:
-            return {
-                "entries": len(self.values),
-                "bytes": self.bytes,
-                "hits": self.hits,
-                "misses": self.misses,
-                "evictions": self.evictions,
-                "max_entries": self.policy.cache_entries,
-                "max_bytes": self.policy.cache_bytes,
-            }
+@dataclass(frozen=True)
+class _BinaryGEMM:
+    left_axes: tuple
+    right_axes: tuple
+    left_expand: tuple
+    right_expand: tuple
+    left_matrix: tuple
+    right_matrix: tuple
+    natural_shape: tuple
+    output_axes: tuple
+    output_shape: tuple
 
-    def clear(self):
-        with self.lock:
-            self.values.clear()
-            self.bytes = self.hits = self.misses = self.evictions = 0
+    @classmethod
+    def compile(cls, equation, shapes):
+        source, arrow, target = equation.replace(" ", "").partition("->")
+        terms = source.split(",")
+        if len(terms) != 2:
+            return None
+        widths = [len(s) - len(t.replace("...", "")) for t, s in zip(terms, shapes, strict=True)]
+        if min(widths) < 0:
+            return None
+        ellipsis = tuple(f"#{i}" for i in range(max(widths)))
+        labels = []
+        for term, width in zip(terms, widths, strict=True):
+            before, dot, after = term.partition("...")
+            if width and not dot:
+                return None
+            row = tuple(before) + (ellipsis[-width:] if width else ()) + tuple(after)
+            if len(set(row)) != len(row):
+                return None
+            labels.append(row)
+        if arrow:
+            before, dot, after = target.partition("...")
+            output = tuple(before) + (ellipsis if dot else ()) + tuple(after)
+        else:
+            counts = Counter(x for row in labels for x in row)
+            output = ellipsis + tuple(
+                sorted(x for x, n in counts.items() if n == 1 and x[0] != "#")
+            )
+        left, right = labels
+        if len(set(output)) != len(output) or set(output) - set(left + right):
+            return None
+        sizes = {}
+        for row, shape in zip(labels, shapes, strict=True):
+            for label, extent in zip(row, shape, strict=True):
+                if label in sizes and sizes[label] != extent and sizes[label] != 1 and extent != 1:
+                    return None
+                sizes[label] = extent if sizes.get(label, 1) == 1 else sizes[label]
+        batch = tuple(x for x in output if x in left and x in right)
+        contracted = tuple(x for x in left if x in right and x not in output)
+        a = tuple(x for x in left if x not in batch + contracted)
+        b = tuple(x for x in right if x not in batch + contracted)
+        if set(a + b) - set(output):
+            return None
+        natural = batch + a + b
+        if set(natural) != set(output):
+            return None
+        k = math.prod(sizes[x] for x in contracted)
+        expand = tuple(
+            tuple(sizes[x] if x in contracted else n for x, n in zip(row, shape, strict=True))
+            for row, shape in zip(labels, shapes, strict=True)
+        )
+        batches = tuple(
+            tuple(shape[row.index(x)] for x in batch)
+            for row, shape in zip(labels, shapes, strict=True)
+        )
+        return cls(
+            tuple(left.index(x) for x in batch + a + contracted),
+            tuple(right.index(x) for x in batch + contracted + b),
+            *expand,
+            batches[0] + (math.prod(sizes[x] for x in a), k),
+            batches[1] + (k, math.prod(sizes[x] for x in b)),
+            tuple(sizes[x] for x in natural),
+            tuple(natural.index(x) for x in output),
+            tuple(sizes[x] for x in output),
+        )
+
+    def apply(self, left, right):
+        if left.shape != self.left_expand:
+            left = np.broadcast_to(left, self.left_expand)
+        if right.shape != self.right_expand:
+            right = np.broadcast_to(right, self.right_expand)
+        left = left.transpose(self.left_axes).reshape(self.left_matrix)
+        right = right.transpose(self.right_axes).reshape(self.right_matrix)
+        result = np.matmul(left, right).reshape(self.natural_shape)
+        return result.transpose(self.output_axes)
 
 
 class ComputeKernel:
     """One compute service for simulation, tensor networks, AI and finance."""
 
     def __init__(self, policy=None):
-        self.policy = ComputePolicy() if policy is None else policy
+        self._policy = ComputePolicy() if policy is None else policy
         if not isinstance(self.policy, ComputePolicy):
             raise ValidationError("policy must be ComputePolicy.")
+        if self.policy.max_memory_mb is None:
+            self._memory_bytes = None
+        else:
+            numerator, denominator = self.policy.max_memory_mb.as_integer_ratio()
+            self._memory_bytes = (numerator << 20) // denominator
         self._plans = _PlanCache(self.policy)
+
+    @property
+    def policy(self):
+        return self._policy
 
     def memory_budget(self, requested):
         requested = _positive(requested, "max_memory_mb")
@@ -193,6 +255,13 @@ class ComputeKernel:
         ):
             raise ValidationError("max_work must be a nonnegative integer.")
         budget = self.memory_budget(max_memory_mb)
+        torch = sys.modules.get("torch")
+        if torch is not None and getattr(torch.compiler, "is_compiling", lambda: False)():
+            valid = elements * itemsize <= budget * 2**20
+            if max_work is not None:
+                valid = valid & (work <= max_work)
+            torch._check(valid, lambda: "[OpenQML:ResourceError] Compute budget exceeded.")
+            return budget
         numerator, denominator = budget.as_integer_ratio()
         if elements * itemsize > (numerator << 20) // denominator or (
             max_work is not None and work > max_work
@@ -202,6 +271,18 @@ class ComputeKernel:
 
     def cache_info(self):
         return self._plans.info()
+
+    def compile(self, function, *, backend, compiler=None, check_outputs=True, **options):
+        from ._compiled import compile_compute
+
+        return compile_compute(
+            function,
+            backend=backend,
+            compiler=compiler,
+            kernel=self,
+            check_outputs=check_outputs,
+            **options,
+        )
 
     def clear_cache(self):
         self._plans.clear()
@@ -222,7 +303,15 @@ class ComputeKernel:
             if len(set(dtypes)) > 1 and any("complex" in dtype for dtype in dtypes):
                 itemsize *= 2
             elements = sum(math.prod(v.shape) for v in values) + buffers * math.prod(output_shape)
-            self.admit(elements, cap, itemsize=itemsize)
+            required = elements * itemsize
+            torch = sys.modules.get("torch")
+            if torch is not None and getattr(torch.compiler, "is_compiling", lambda: False)():
+                torch._check(
+                    required <= self._memory_bytes,
+                    lambda: "[OpenQML:ResourceError] Compute workspace exceeds the budget.",
+                )
+            elif required > self._memory_bytes:
+                raise ResourceError("Compute workspace exceeds the budget.")
 
     def asarray(self, value, *, xp=np, backend="numpy", dtype=None, like=None, device=None):
         """Convert once, preserving native device placement and differentiation."""
@@ -287,11 +376,20 @@ class ComputeKernel:
             limit = (numerator << 20) // (denominator * itemsize)
 
         def build():
+            if len(operands) == 2 and all(v.dtype.kind in "fciub" for v in operands):
+                gemm = _BinaryGEMM.compile(equation, shapes)
+                if gemm is not None:
+                    return gemm
             views = tuple(np.broadcast_to(np.zeros((), dtype=np.uint8), s) for s in shapes)
             optimize = "greedy" if limit is None else ("greedy", limit)
             return tuple(np.einsum_path(equation, *views, optimize=optimize)[0])
 
         path = self.plan("einsum", (equation, shapes, limit), build)
+        if isinstance(path, _BinaryGEMM):
+            if self.policy.max_memory_mb is not None:
+                # Include potential transpose/reshape copies before allocating them.
+                self._workspace(operands + operands, path.output_shape)
+            return path.apply(*operands)
         return np.einsum(equation, *operands, optimize=list(path))
 
     def check(self, value, valid, message, *, xp=np, backend="numpy", error=ValidationError):
@@ -307,6 +405,13 @@ class ComputeKernel:
             if not bool(xp.all(valid)):
                 raise error(message)
             return value
+        label = f"[OpenQML:{error.__name__}] {message}"
+        if backend == "torch":
+            xp._assert_async(xp.all(valid), label)
+        else:
+            from jax.experimental import checkify
+
+            checkify.debug_check(xp.all(valid), label)
         return xp.where(valid, value, float("nan"))
 
     def finite(self, value, *, xp=np, backend="numpy", error=NumericalError):
@@ -362,11 +467,13 @@ class ComputeKernel:
 
 
 _KERNEL = ComputeKernel()
+_COMPUTE_CONTEXT = ContextVar("openqml_compute_kernel", default=None)
+_CONFIG_LOCK = RLock()
 
 
 def get_compute_kernel():
     """Return the shared process-local kernel without discovering devices."""
-    return _KERNEL
+    return _COMPUTE_CONTEXT.get() or _KERNEL
 
 
 def configure_compute(*, policy=None):
@@ -378,13 +485,45 @@ def configure_compute(*, policy=None):
     """
     global _KERNEL
     kernel = ComputeKernel(policy)
-    _KERNEL = kernel
+    with _CONFIG_LOCK:
+        _KERNEL = kernel
     return kernel
+
+
+@contextmanager
+def compute_context(*, policy=None, kernel=None):
+    """Isolate a kernel in the current thread/async task and restore it on exit."""
+    if policy is not None and kernel is not None:
+        raise ValidationError("Select a kernel or a policy, not both.")
+    selected = ComputeKernel(policy) if policy is not None else kernel or get_compute_kernel()
+    if not isinstance(selected, ComputeKernel):
+        raise ValidationError("kernel must be ComputeKernel.")
+    token = _COMPUTE_CONTEXT.set(selected)
+    try:
+        yield selected
+    finally:
+        _COMPUTE_CONTEXT.reset(token)
+
+
+def compute_operation(function):
+    """Pin one policy snapshot across eager execution and nested numerical calls."""
+
+    @wraps(function)
+    def call(*args, **kwargs):
+        torch = sys.modules.get("torch")
+        if _COMPUTE_CONTEXT.get() is not None or (
+            torch is not None and getattr(torch.compiler, "is_compiling", lambda: False)()
+        ):
+            return function(*args, **kwargs)
+        with compute_context():
+            return function(*args, **kwargs)
+
+    return call
 
 
 def memory_budget(requested):
     """Apply the shared ceiling to a caller's operation-specific workspace."""
-    return _KERNEL.memory_budget(requested)
+    return get_compute_kernel().memory_budget(requested)
 
 
 class KernelOps:
@@ -392,7 +531,7 @@ class KernelOps:
 
     @property
     def kernel(self):
-        return _KERNEL
+        return self._kernel
 
     def matmul(self, left, right, *, out=None):
         return self.kernel.matmul(left, right, xp=self.xp, out=out)
@@ -403,15 +542,73 @@ class KernelOps:
     def solve(self, matrix, rhs):
         return self.kernel.solve(matrix, rhs, xp=self.xp, backend=self.backend)
 
-    def check(self, value, valid, message, *, resource=False):
+    def check(self, value, valid, message, *, resource=False, error=None):
         return self.kernel.check(
             value,
             valid,
             message,
             xp=self.xp,
             backend=self.backend,
-            error=ResourceError if resource else ValidationError,
+            error=error or (ResourceError if resource else ValidationError),
         )
 
     def norm(self, value, axis=-1):
         return self.kernel.norm(value, xp=self.xp, backend=self.backend, axis=axis)
+
+
+class RealOps(KernelOps):
+    def __init__(self, like):
+        self._kernel = get_compute_kernel()
+        module = type(like).__module__
+        self.like = like
+        if module.startswith("torch"):
+            import torch
+
+            self.name, self.xp = "torch", torch
+        elif module.startswith(("jax", "jaxlib")):
+            import jax.numpy as jnp
+
+            self.name, self.xp = "jax", jnp
+        else:
+            self.name, self.xp = "numpy", np
+        self.backend = self.name
+
+    def array(self, value, *, boolean=False):
+        return self.kernel.asarray(
+            value,
+            xp=self.xp,
+            backend=self.backend,
+            like=self.like,
+            dtype=(self.xp.bool if self.name == "torch" else bool) if boolean else self.like.dtype,
+        )
+
+    def stop(self, value):
+        if self.name == "torch":
+            return value.detach()
+        if self.name == "jax":
+            import jax
+
+            return jax.lax.stop_gradient(value)
+        return value
+
+    def cat(self, values, axis=0):
+        if self.name == "torch":
+            return self.xp.cat(values, dim=axis)
+        return self.xp.concatenate(values, axis=axis)
+
+    def maximum(self, left, right):
+        return self.xp.maximum(left, self.array(right))
+
+
+def floating_array(value):
+    module = type(value).__module__
+    if not module.startswith(("torch", "jax", "jaxlib")) and not isinstance(value, np.ndarray):
+        value = np.asarray(value, dtype=float)
+    if str(value.dtype).removeprefix("torch.") not in {"float16", "bfloat16", "float32", "float64"}:
+        raise ValidationError("Inputs must be real floating tensors.")
+    # Accumulate losses and traces in at least float32 under mixed precision.
+    if str(value.dtype).removeprefix("torch.") in {"float16", "bfloat16"}:
+        return (
+            value.float() if type(value).__module__.startswith("torch") else value.astype("float32")
+        )
+    return value

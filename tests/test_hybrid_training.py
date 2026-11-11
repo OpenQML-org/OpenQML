@@ -219,7 +219,8 @@ def test_native_pullback_and_cg_match_dense_encoder_jacobian():
     torch.testing.assert_close(
         torch.cat([result.direction[k].flatten() for k in keys]), expected, atol=1e-10, rtol=1e-10
     )
-    assert bool(result.converged) and result.metric_products == 17
+    assert bool(result.converged) and result.metric_products == int(result.iterations) + 1
+    assert result.metric_products < 17
     zero = {k: torch.zeros_like(p) for k, p in parameters.items()}
     empty = model.natural_gradient(inputs, zero, max_iterations=2)
     assert bool(empty.converged) and float(empty.iterations) == 0

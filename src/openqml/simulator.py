@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from .compute import KernelOps, get_compute_kernel, memory_budget
+from .compute import KernelOps, compute_operation, get_compute_kernel, memory_budget
 from .errors import (
     BackendError,
     MissingDependencyError,
@@ -54,6 +54,7 @@ class _TensorOps(KernelOps):
     """Keep framework tensors on their device and inside their differentiation graph."""
 
     def __init__(self, backend="numpy", like=None):
+        self._kernel = get_compute_kernel()
         self.backend, self.device = backend, None
         self.like = like
         try:
@@ -320,6 +321,7 @@ def _initial_state(num_qubits, shape, ops):
     return ops.xp.broadcast_to(state, shape + (2**num_qubits,))
 
 
+@compute_operation
 def statevector(
     circuit: Circuit,
     bindings: Mapping[str, Any] | None = None,
@@ -533,6 +535,7 @@ def _expectation_from_state(state, observable, num_qubits, ops):
     return _expectations_from_state(state, (observable,), num_qubits, ops)[..., 0]
 
 
+@compute_operation
 def expectation(
     circuit,
     observable,
@@ -606,6 +609,7 @@ def expectation(
     )
 
 
+@compute_operation
 def expectations(
     circuit,
     observables,
@@ -755,6 +759,7 @@ def _external_state(circuit, backend):
     raise ValidationError(f"Unknown execution backend: {backend!r}.")
 
 
+@compute_operation
 def execute(
     circuit: Circuit,
     bindings=None,

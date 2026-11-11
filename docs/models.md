@@ -182,27 +182,3 @@ checkpoint replay is included in the default gradient work estimate. A routing
 plan constructed without metadata assumes a bootstrap workload, not a measured
 whole-dataset forecast. Forward workspace checks exclude autodiff tapes and
 framework allocator reservations.
-
-## Research basis and scope
-
-Shared temporal QCNN filters follow [Hybrid Quantum Temporal Convolutional
-Networks (2026)](https://arxiv.org/abs/2602.23578). Independent quantum Q/K/V and
-Gaussian measurement similarities draw on [QTrans (2026)](https://arxiv.org/abs/2609.12011).
-The positive-feature mode uses [linear attention](https://arxiv.org/abs/2006.16236)
-with learned quantum embeddings. Graph aggregation uses shared message functions
-and [distance-invariant geometry](https://arxiv.org/abs/2102.09844).
-
-State attention combines [projected quantum readouts, Nature Communications
-(2021)](https://arxiv.org/abs/2011.01938) with a learned physical kernel and linear
-sufficient statistics. Pair graphs adapt the matrix-product update in
-[Provably Powerful Graph Networks (2019)](https://arxiv.org/abs/1905.11136), using
-shared quantum features. Sparse transfer execution adapts structure/parameter
-separation from [PADO-Pauli (October 2026 preprint)](https://arxiv.org/abs/2610.17755).
-These combinations do not reproduce the papers' complete systems or results.
-
-The `order=1` local messages retain ordinary message-passing
-expressivity limits; the coherent higher-WL construction in
-[2026 quantum graph work](https://arxiv.org/abs/2606.26873) is a different model.
-Quantum circuit cost depends on entangled width and the selected representation.
-Constructors create trainable specifications; fit parameters on the target task
-and select architectures with held-out loss and measured resource use.

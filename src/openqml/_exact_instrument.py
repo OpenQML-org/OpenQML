@@ -8,7 +8,7 @@ Q(zeta_8), with exact rational arithmetic and conservative real atoms.
 Independent components are factored using the UNION of both programs' quantum
 and classical dependencies. No dense state or optional SDK is used. The worst
 case is exponential; width, live terms, work and coefficient sizes are bounded.
-See docs/semantic-kernels.md for the semantics, trust boundary and references.
+See docs/interoperability.md for the circuit conversion contract.
 """
 
 import json

@@ -1,11 +1,10 @@
 """Group readout workloads by structure while keeping stochastic rows distinct."""
 
-from collections import OrderedDict
 from dataclasses import replace
-from threading import RLock
 
 import numpy as np
 
+from ._cache import SingleFlightCache
 from .compute import memory_budget
 from .errors import ResourceError
 from .ir import UNITARY_GATES, integer
@@ -80,24 +79,14 @@ def parameter_batches(circuits, max_memory_mb=256):
 
 
 class CircuitCache:
-    """Bounded, instance-local compiled topology cache; never caches readouts."""
+    """Instance-local SDK topology cache with per-key compilation admission."""
 
     def __init__(self, size):
         self.size = integer(size, "cache_size")
-        self._entries, self._lock = OrderedDict(), RLock()
+        self._cache = SingleFlightCache(self.size)
 
     def get(self, key, compile_circuit):
-        with self._lock:
-            if key in self._entries:
-                self._entries.move_to_end(key)
-                return self._entries[key]
-            value = compile_circuit()
-            if self.size:
-                self._entries[key] = value
-                while len(self._entries) > self.size:
-                    self._entries.popitem(last=False)
-            return value
+        return self._cache.get(key, compile_circuit)
 
     def clear(self):
-        with self._lock:
-            self._entries.clear()
+        self._cache.clear()

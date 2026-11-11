@@ -4,7 +4,7 @@ import math
 
 import numpy as np
 
-from .compute import memory_budget
+from .compute import compute_operation, memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import CHANNEL_GATES, UNITARY_GATES, integer
 from .planning import _record_plan
@@ -278,6 +278,7 @@ def _simulate(
     return states, ops, shape
 
 
+@compute_operation
 def density_matrix(
     circuit,
     bindings=None,
@@ -446,6 +447,7 @@ def expectation_from_density(rho, observable, num_qubits, ops):
     return _expectations_from_density(rho, (observable,), num_qubits, ops)[..., 0]
 
 
+@compute_operation
 def execute_density(
     circuit,
     bindings=None,

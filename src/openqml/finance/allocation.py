@@ -11,6 +11,7 @@ from typing import NamedTuple
 
 import numpy as np
 
+from ..compute import compute_operation
 from ..errors import ValidationError
 from ..ir import integer
 from ..parameters import real
@@ -88,6 +89,7 @@ class AllocationPlan:
             excludes="autodiff_tapes_allocator_and_framework_reserves",
         )
 
+    @compute_operation
     def solve(self, mean, risk, *, previous=None, caps=1, fees=0, budget=1, warm_start=None):
         ops = Ops(
             mean, *(risk if isinstance(risk, FactorRisk) else ()), previous, caps, fees, budget

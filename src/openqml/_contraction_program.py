@@ -19,8 +19,10 @@ class ContractionKernel:
     @classmethod
     def compile(cls, la, lb, shared):
         la, lb, shared = tuple(la), tuple(lb), tuple(shared)
+        names = {label: i for i, label in enumerate(dict.fromkeys(la + lb))}
+        signature = tuple(tuple(names[x] for x in row) for row in (la, lb, shared))
         return get_compute_kernel().plan(
-            "contraction", (la, lb, shared), lambda: cls._compile(la, lb, shared)
+            "contraction", signature, lambda: cls._compile(la, lb, shared)
         )
 
     @classmethod
@@ -114,3 +116,24 @@ class ContractionProgram:
                 a, b = self.steps[node - self.input_count][:2]
                 pending.extend(((node, True), (b, False), (a, False)))
         return values[root]
+
+    def run_flat(self, raw, assignment, ops, statistics=None):
+        """Execute precompiled slots without per-node dictionaries or tree walks."""
+        values = [None] * (self.input_count + len(self.steps))
+        for node, (value, selector) in enumerate(zip(raw, self.selectors, strict=True)):
+            if self.masks[node]:
+                prefix = value.ndim - len(selector)
+                value = value[
+                    (slice(None),) * prefix
+                    + tuple(
+                        (assignment >> bit) & 1 if bit >= 0 else slice(None) for bit in selector
+                    )
+                ]
+            values[node] = value
+        for k, ((a, b, *_), kernel) in enumerate(zip(self.steps, self.kernels, strict=True)):
+            value = kernel.apply(values[a], values[b], ops)
+            values[a] = values[b] = None
+            values[self.input_count + k] = value
+        if statistics is not None:
+            statistics["contractions_executed"] += len(self.steps)
+        return values[-1]
