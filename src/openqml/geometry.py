@@ -17,6 +17,7 @@ from ._gradient_common import _binding_columns, _names, _real_array
 from ._structure import split_circuit
 from .adjoint import AdjointPlan, _check_adjoint, _reverse, _tangent_forward
 from .compiler import _check_circuit_limits
+from .compute import get_compute_kernel, memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import Circuit, integer
 from .observables import PauliString
@@ -62,7 +63,7 @@ class QuantumMetricPlan:
             integer(self.max_qubits, "max_qubits", 1)
             if self.circuit.num_qubits > self.max_qubits:
                 raise ResourceError("Quantum geometry exceeds the explicit max_qubits limit.")
-        budget = real(self.max_memory_mb)
+        budget = memory_budget(self.max_memory_mb)
         if budget <= 0:
             raise ValidationError("max_memory_mb must be positive.")
         integer(self.max_work, "max_work", 1)
@@ -146,7 +147,7 @@ class QuantumMetricPlan:
         """Explicit small-metric diagnostic; the natural-gradient solver avoids it."""
         columns = self._bindings(bindings)
         count = len(self.parameters)
-        if count * count * 8 + self._row_mib * 2**20 > self.max_memory_mb * 2**20:
+        if count * count * 8 + self._row_mib * 2**20 > memory_budget(self.max_memory_mb) * 2**20:
             raise ResourceError("Explicit metric plus working state exceeds max_memory_mb.")
         result = np.empty((count, count))
         for j in range(count):
@@ -171,7 +172,7 @@ class QuantumMetricPlan:
         gradient = _real_array(gradient, (len(self.parameters),), "Gradient")
         direction, residual = np.zeros_like(gradient), gradient.copy()
         search = residual.copy()
-        squared = float(residual @ residual)
+        squared = float(get_compute_kernel().matmul(residual, residual))
         if not np.isfinite(squared):
             raise ValidationError("Gradient norm exceeds finite precision.")
         threshold = tolerance * max(1.0, np.sqrt(squared))
@@ -187,7 +188,7 @@ class QuantumMetricPlan:
             for iteration in range(max_iterations):
                 iterations = iteration + 1
                 product = apply(search)
-                curvature = float(search @ product)
+                curvature = float(get_compute_kernel().matmul(search, product))
                 if not np.isfinite(curvature) or curvature <= 0:
                     reason = "nonpositive_numeric_curvature"
                     break
@@ -196,7 +197,7 @@ class QuantumMetricPlan:
                 if not np.isfinite(direction).all():
                     raise ValidationError("Natural-gradient direction exceeds finite precision.")
                 residual -= step * product
-                updated = float(residual @ residual)
+                updated = float(get_compute_kernel().matmul(residual, residual))
                 if np.sqrt(updated) <= threshold:
                     break
                 search = residual + (updated / squared) * search

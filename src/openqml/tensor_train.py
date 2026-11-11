@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .compute import get_compute_kernel, memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import integer
 from .parameters import real
@@ -58,7 +59,7 @@ class TensorTrainPlan:
         )
         if len(ins) != len(outs):
             raise ValidationError("Input/output mode counts must match.")
-        budget = real(self.max_memory_mb)
+        budget = memory_budget(self.max_memory_mb)
         if budget <= 0:
             raise ValidationError("max_memory_mb must be positive.")
         integer(self.max_work, "max_work", 1)
@@ -124,7 +125,7 @@ class TensorTrainPlan:
     def batch_capacity(self):
         return max(
             1,
-            int(self.max_memory_mb * 2**20 - 16 * self.num_parameters)
+            int(memory_budget(self.max_memory_mb) * 2**20 - 16 * self.num_parameters)
             // self.working_bytes_per_row,
         )
 
@@ -185,7 +186,7 @@ class TensorTrainPlan:
         state = x.reshape((rows, 1, 1, remaining))
         for core, i, o in zip(local, ins, outs, strict=True):
             remaining //= i
-            state = ops.xp.einsum(
+            state = ops.einsum(
                 "bpaij,aioz->bpozj", state.reshape((rows, prefix, rank, i, remaining)), core
             )
             prefix *= o
@@ -267,7 +268,7 @@ class TensorTrainMatrix:
                 or math.prod(outs) < out_features
             ):
                 raise ValidationError("Dense import modes do not fit the source matrix.")
-        budget = real(max_memory_mb)
+        budget = memory_budget(max_memory_mb)
         if budget <= 0 or 64 * math.prod(ins) * math.prod(outs) > budget * 2**20:
             raise ResourceError("TT-SVD dense import/workspace exceeds max_memory_mb.")
         cap = (
@@ -294,7 +295,9 @@ class TensorTrainMatrix:
         allowance = 0.0 if tolerance is None else (tolerance * unit_norm) ** 2 / max(1, d - 1)
         for k, (i, o) in enumerate(zip(ins[:-1], outs[:-1], strict=True)):
             remaining = math.prod(ins[k + 1 :]) * math.prod(outs[k + 1 :])
-            u, s, vh = np.linalg.svd(tail.reshape(rank * i * o, remaining), full_matrices=False)
+            u, s, vh = get_compute_kernel().svd(
+                tail.reshape(rank * i * o, remaining), full_matrices=False
+            )
             selected = len(s)
             tails = np.concatenate((np.cumsum((s[::-1] ** 2))[::-1], [0.0]))
             if tolerance is not None:
@@ -318,7 +321,7 @@ class TensorTrainMatrix:
         return self.plan.apply(self.cores, np.asarray(inputs), backend="numpy")
 
     def to_dense(self, *, max_memory_mb=None):
-        budget = self.plan.max_memory_mb if max_memory_mb is None else real(max_memory_mb)
+        budget = self.plan.max_memory_mb if max_memory_mb is None else memory_budget(max_memory_mb)
         a, b = self.plan.in_features, self.plan.out_features
         if budget <= 0 or 24 * a * b > budget * 2**20:
             raise ResourceError("Dense MPO export exceeds max_memory_mb.")

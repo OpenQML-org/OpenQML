@@ -5,6 +5,7 @@ from itertools import islice
 
 import numpy as np
 
+from .compute import get_compute_kernel
 from .errors import BackendError, OpenQMLError, ValidationError
 from .ir import integer
 from .observables import Hamiltonian
@@ -58,9 +59,9 @@ def validate_state(value, circuit):
         raise BackendError("Backend returned nonnumeric state data.") from exc
     if state.shape != (2**circuit.num_qubits,) or not np.isfinite(state).all():
         raise BackendError("Backend returned an invalid state shape or values.")
-    with np.errstate(over="ignore", invalid="ignore"):
-        norm = np.vdot(state, state).real
-    if not np.isfinite(norm) or not np.isclose(norm, 1, atol=1e-6, rtol=0):
+    tolerance = get_compute_kernel().policy.validation_atol
+    norm = get_compute_kernel().norm(state)
+    if not np.isfinite(norm) or not np.isclose(norm, 1, atol=tolerance / 2, rtol=0):
         raise BackendError("Backend returned an unnormalized state.")
     return state
 
@@ -94,7 +95,8 @@ def validate_expectations(value, batch_size, observables):
             for ob in observables
         ]
     )
-    if np.any(np.abs(output) > bounds + 1e-6):
+    policy = get_compute_kernel().policy
+    if np.any(np.abs(output) > bounds + policy.validation_atol + policy.validation_rtol * bounds):
         raise BackendError("Backend expectation exceeds the observable's spectral bound.")
     return output.astype(float, copy=False)
 
@@ -112,13 +114,18 @@ def validate_density(value, circuit):
     except (TypeError, ValueError, OverflowError) as exc:
         raise BackendError("Backend returned invalid density data.") from exc
     size = 2**circuit.num_qubits
+    tolerance = get_compute_kernel().policy.validation_atol
     if (
         rho.shape != (size, size)
         or not np.isfinite(rho).all()
-        or not np.allclose(rho, rho.conj().T, atol=1e-6, rtol=0)
-        or not np.isclose(np.trace(rho), 1, atol=1e-6, rtol=0)
+        or not np.allclose(rho, rho.conj().T, atol=tolerance, rtol=0)
+        or not np.isclose(np.trace(rho), 1, atol=tolerance, rtol=0)
     ):
         raise BackendError("Backend returned an invalid Hermitian, normalized density matrix.")
-    if np.linalg.eigvalsh(rho).min() < -1e-6:
+    try:
+        minimum = np.linalg.eigvalsh(rho).min()
+    except np.linalg.LinAlgError as exc:
+        raise BackendError("Backend density eigendecomposition did not converge.") from exc
+    if minimum < -tolerance:
         raise BackendError("Backend returned a density matrix that is not positive semidefinite.")
     return rho

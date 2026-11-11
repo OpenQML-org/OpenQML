@@ -5,6 +5,7 @@ from typing import NamedTuple
 
 import numpy as np
 
+from ..compute import memory_budget
 from ..errors import ValidationError
 from ..ir import integer
 from ..parameters import real
@@ -37,7 +38,7 @@ class SelfFinancingPlan:
     def __post_init__(self):
         for name in ("execution_lag", "root_iterations"):
             object.__setattr__(self, name, integer(getattr(self, name), name, 1))
-        object.__setattr__(self, "max_memory_mb", real(self.max_memory_mb))
+        object.__setattr__(self, "max_memory_mb", memory_budget(self.max_memory_mb))
         values = []
         for name in ("fees", "impact"):
             x = np.asarray(getattr(self, name), dtype=float)

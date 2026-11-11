@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .compute import memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import integer
 from .layers import LayerSpec
@@ -30,11 +31,12 @@ class BornCircuitPlan:
             object.__setattr__(self, name, integer(getattr(self, name), name, 1))
         if self.visible_qubits > self.num_qubits:
             raise ValidationError("Visible width exceeds the circuit width.")
-        object.__setattr__(self, "max_memory_mb", real(self.max_memory_mb))
+        object.__setattr__(self, "max_memory_mb", memory_budget(self.max_memory_mb))
         if (
             self.max_memory_mb <= 0
-            or self.visible_qubits > int(self.max_memory_mb * 2**20).bit_length()
-            or 64 * (1 << self.visible_qubits) * self.num_qubits > self.max_memory_mb * 2**20
+            or self.visible_qubits > int(memory_budget(self.max_memory_mb) * 2**20).bit_length()
+            or 64 * (1 << self.visible_qubits) * self.num_qubits
+            > memory_budget(self.max_memory_mb) * 2**20
         ):
             raise ResourceError("Born readout descriptors exceed max_memory_mb.")
         base = FeatureCircuitPlan(
@@ -153,7 +155,7 @@ def shifted_tokens(
         or min(ids.shape) < 1
     ):
         raise ValidationError("Tokens require nonempty signed integer IDs[B,T].")
-    if 16 * math.prod(ids.shape) * classes > real(max_memory_mb) * 2**20:
+    if 16 * math.prod(ids.shape) * classes > memory_budget(max_memory_mb) * 2**20:
         raise ResourceError("Teacher-forcing features exceed max_memory_mb.")
 
     def boolean(value, default):
@@ -206,7 +208,7 @@ class QuantumDiffusionPlan:
                 "Diffusion requires a QuantumChannelPlan and linear/cosine schedule."
             )
         object.__setattr__(self, "steps", integer(self.steps, "steps", 1))
-        if 8 * (self.steps + 1) > self.channel.max_memory_mb * 2**20:
+        if 8 * (self.steps + 1) > memory_budget(self.channel.max_memory_mb) * 2**20:
             raise ResourceError("Diffusion schedule exceeds max_memory_mb.")
 
     @property
@@ -258,7 +260,7 @@ class QuantumDiffusionPlan:
             ops,
         )
         return ops.real(
-            ops.xp.einsum("...ab,...ab->...", predicted - target, ops.conj(predicted - target))
+            ops.einsum("...ab,...ab->...", predicted - target, ops.conj(predicted - target))
         )
 
     def sample(self, denoiser, batch_size, *, backend="numpy", like=None):

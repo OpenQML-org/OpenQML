@@ -10,6 +10,7 @@ from typing import Any
 
 import numpy as np
 
+from .compute import KernelOps, get_compute_kernel, memory_budget
 from .errors import (
     BackendError,
     MissingDependencyError,
@@ -17,7 +18,6 @@ from .errors import (
     ValidationError,
 )
 from .ir import UNITARY_GATES, Circuit, integer
-from .parameters import real
 
 _I = np.eye(2, dtype=complex)
 _X = np.array([[0, 1], [1, 0]], dtype=complex)
@@ -50,11 +50,12 @@ _FIXED["cswap"][4:, 4:] = _FIXED["swap"]
 _FIXED["iswap"] = np.array([[1, 0, 0, 0], [0, 0, 1j, 0], [0, 1j, 0, 0], [0, 0, 0, 1]])
 
 
-class _TensorOps:
+class _TensorOps(KernelOps):
     """Keep framework tensors on their device and inside their differentiation graph."""
 
     def __init__(self, backend="numpy", like=None):
         self.backend, self.device = backend, None
+        self.like = like
         try:
             if backend == "numpy":
                 self.xp, self.dtype, self.real_dtype = np, np.complex128, np.float64
@@ -86,19 +87,9 @@ class _TensorOps:
 
     def array(self, value, *, real_value=False):
         dtype = self.real_dtype if real_value else self.dtype
-        if self.backend == "torch":
-            if isinstance(value, np.ndarray):
-                compiling = (
-                    getattr(self.xp.compiler, "is_compiling", None) or self.xp._dynamo.is_compiling
-                )
-                # Inspect host layouts during eager conversion; compiled native
-                # graphs already own their tensor inputs.
-                if not compiling() and (
-                    not value.flags.writeable or any(s < 0 for s in value.strides)
-                ):
-                    value = value.copy()
-            return self.xp.as_tensor(value, dtype=dtype, device=self.device)
-        return self.xp.asarray(value, dtype=dtype)
+        return self.kernel.asarray(
+            value, xp=self.xp, backend=self.backend, dtype=dtype, like=self.like, device=self.device
+        )
 
     def stack(self, values, axis=0):
         arrays = tuple(self.array(value) for value in values)
@@ -205,7 +196,7 @@ def _apply_numpy(state, matrix, qubits, num_qubits):
         # Every generated index is in range. clip avoids take's mandatory
         # temporary out buffer in raise mode; buffers are reused across tiles.
         np.take(state, selected, axis=-1, out=block[..., :size], mode="clip")
-        np.matmul(matrix, block[..., :size], out=evolved[..., :size])
+        get_compute_kernel().matmul(matrix, block[..., :size], out=evolved[..., :size])
         result[..., selected] = evolved[..., :size]
     return result
 
@@ -226,14 +217,14 @@ def _apply_matrix(state, matrix, qubits, num_qubits, ops):
     block = ops.transpose(state.reshape(batch_shape + (2,) * num_qubits), axes).reshape(
         batch_shape + (2 ** len(qubits), 2 ** (num_qubits - len(qubits)))
     )
-    evolved = (matrix @ block).reshape(batch_shape + (2,) * num_qubits)
+    evolved = ops.matmul(matrix, block).reshape(batch_shape + (2,) * num_qubits)
     return ops.transpose(evolved, inverse).reshape(batch_shape + (2**num_qubits,))
 
 
 def _resource_check(circuit, max_qubits, max_memory_mb, batch_size=1):
     if max_qubits is not None:
         integer(max_qubits, "max_qubits", 1)
-    budget = real(max_memory_mb)
+    budget = memory_budget(max_memory_mb)
     if budget <= 0:
         raise ValidationError("max_memory_mb must be positive.")
     # Four state buffers; autodiff graphs may retain additional memory.
@@ -931,11 +922,10 @@ def execute(
 
 def _sample_probabilities(circuit, probabilities, shots, seed, max_memory_mb, classical_bits=None):
     """Joint computational sampling with terminal classical storage writes."""
-    from .parameters import real
 
     measurements = [op for op in circuit.operations if op.name == "measure"]
     width = circuit.num_clbits if classical_bits is None else len(classical_bits)
-    if measurements and width > int(real(max_memory_mb) * 2**20):
+    if measurements and width > int(memory_budget(max_memory_mb) * 2**20):
         raise ResourceError("Classical count strings exceed the working-memory budget.")
     histogram = np.random.default_rng(seed).multinomial(shots, probabilities / probabilities.sum())
     counts = {}

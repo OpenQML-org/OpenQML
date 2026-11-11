@@ -118,7 +118,14 @@ class Operation:
             dimension = 2 ** len(qubits)
             if value.shape != (dimension, dimension) or not np.all(np.isfinite(value)):
                 raise ValidationError("Unitary matrix dimensions or entries are invalid.")
-            if not np.allclose(value.conj().T @ value, np.eye(dimension), atol=1e-10, rtol=0):
+            from .compute import get_compute_kernel
+
+            if not np.allclose(
+                get_compute_kernel().matmul(value.conj().T, value),
+                np.eye(dimension),
+                atol=1e-10,
+                rtol=0,
+            ):
                 raise ValidationError("The supplied matrix is not unitary.")
             object.__setattr__(
                 self, "matrix", tuple(tuple(complex(x) for x in row) for row in value)
@@ -135,7 +142,11 @@ class Operation:
                 or not np.isfinite(value).all()
             ):
                 raise ValidationError("Kraus operators need finite, matching square matrices.")
-            completeness = (value.conj().transpose(0, 2, 1) @ value).sum(axis=0)
+            from .compute import get_compute_kernel
+
+            completeness = (
+                get_compute_kernel().matmul(value.conj().transpose(0, 2, 1), value).sum(axis=0)
+            )
             if not np.allclose(completeness, np.eye(dimension), atol=1e-10, rtol=0):
                 raise ValidationError(
                     "Kraus operators must define a trace-preserving quantum channel."

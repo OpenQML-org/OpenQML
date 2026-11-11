@@ -4,10 +4,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ..compute import memory_budget
 from ..errors import ValidationError
 from ..ir import integer
 from ..models import Model
-from ..parameters import real
 from ._array import admission
 from .validation import PurgedWalkForward
 
@@ -60,7 +60,7 @@ def walk_forward(
     if splitter.step_size < splitter.test_size:
         raise ValidationError("Out-of-sample test folds must be disjoint: step_size >= test_size.")
     validation_size = integer(validation_size, "validation_size", 0)
-    maximum = real(max_memory_mb)
+    maximum = memory_budget(max_memory_mb)
     if maximum <= 0:
         raise ValidationError("max_memory_mb must be positive.")
     try:

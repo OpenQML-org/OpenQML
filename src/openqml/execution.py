@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, field, replace
 
 from ._scheduling import _evaluate_dense, _schedule_dense
 from .compiler import _check_circuit_limits, circuit_stats
+from .compute import memory_budget
 from .errors import ConversionError, Diagnostic, ResourceError, ValidationError, conversion_error
 from .ir import Circuit, integer
 from .observables import Hamiltonian, PauliString
@@ -537,7 +538,7 @@ class ExpectationPlan:
             if name == "max_dense_qubits" and getattr(self, name) is None:
                 continue
             object.__setattr__(self, name, integer(getattr(self, name), name, minimum))
-        budget = real(self.max_memory_mb)
+        budget = memory_budget(self.max_memory_mb)
         if budget <= 0:
             raise ValidationError("max_memory_mb must be positive.")
         object.__setattr__(self, "max_memory_mb", budget)

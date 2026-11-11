@@ -11,10 +11,10 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ._gradient_common import _binding_columns, _names, _observables, _real_array
+from .compute import get_compute_kernel, memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import Circuit, integer
 from .observables import Hamiltonian
-from .parameters import real
 from .simulator import _X, _Y, _Z, _apply_matrix, _expectations_from_state, _gate_matrix, _TensorOps
 
 
@@ -25,7 +25,7 @@ def _check_adjoint(circuit, max_qubits, max_memory_mb):
         raise ValidationError("Adjoint differentiation requires a unitary circuit without effects.")
     if max_qubits is not None:
         integer(max_qubits, "max_qubits", 1)
-    budget = real(max_memory_mb)
+    budget = memory_budget(max_memory_mb)
     if budget <= 0:
         raise ValidationError("max_memory_mb must be positive.")
     width = circuit.num_qubits
@@ -71,7 +71,7 @@ def _derivative_matrix(name, params, index, matrix):
         generator = -0.5j * np.kron(pauli, pauli)
     else:
         raise ValidationError(f"No adjoint derivative for gate {name!r}.")
-    return generator @ matrix
+    return get_compute_kernel().matmul(generator, matrix)
 
 
 def _forward(circuit, bindings, batch_size):
@@ -242,7 +242,7 @@ class AdjointPlan:
                 "max_qubits",
                 None if self.max_qubits is None else integer(self.max_qubits, "max_qubits", 1),
             ),
-            ("max_memory_mb", real(self.max_memory_mb)),
+            ("max_memory_mb", memory_budget(self.max_memory_mb)),
             ("_derivatives", derivatives),
             ("_symbols", symbols),
             ("_row_mib", required),

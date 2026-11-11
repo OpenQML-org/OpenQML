@@ -8,6 +8,7 @@ from typing import NamedTuple
 
 import numpy as np
 
+from ..compute import get_compute_kernel, memory_budget
 from ..errors import ResourceError, ValidationError
 from ..ir import CircuitBuilder, integer
 from ..layers import LayerSpec
@@ -75,7 +76,7 @@ class CardinalityProblem:
         object.__setattr__(self, "linear", linear)
         object.__setattr__(self, "cardinality", k)
         object.__setattr__(self, "offset", real(self.offset))
-        object.__setattr__(self, "max_memory_mb", real(self.max_memory_mb))
+        object.__setattr__(self, "max_memory_mb", memory_budget(self.max_memory_mb))
 
     @property
     def num_assets(self):
@@ -85,7 +86,11 @@ class CardinalityProblem:
         x = _bits(selection, self.num_assets)
         if require_feasible and int(x.sum()) != self.cardinality:
             raise ValidationError("Selection violates the hard cardinality constraint.")
-        return float(x @ self.matrix @ x + self.linear @ x + self.offset)
+        return float(
+            get_compute_kernel().matmul(get_compute_kernel().matmul(x, self.matrix), x)
+            + get_compute_kernel().matmul(self.linear, x)
+            + self.offset
+        )
 
     def condition(self, indices, fixed_selection):
         """Exact conditional QUBO, including cross-block costs and global offset."""
@@ -102,10 +107,17 @@ class CardinalityProblem:
             raise ValidationError("Fixed holdings leave an infeasible conditional cardinality.")
         x = fixed[outside]
         linear = self.linear[free] + (
-            2 * self.matrix[np.ix_(free, outside)] @ x if len(outside) else 0
+            get_compute_kernel().matmul(2 * self.matrix[np.ix_(free, outside)], x)
+            if len(outside)
+            else 0
         )
         offset = self.offset + (
-            float(x @ self.matrix[np.ix_(outside, outside)] @ x + self.linear[outside] @ x)
+            float(
+                get_compute_kernel().matmul(
+                    get_compute_kernel().matmul(x, self.matrix[np.ix_(outside, outside)]), x
+                )
+                + get_compute_kernel().matmul(self.linear[outside], x)
+            )
             if len(outside)
             else 0
         )
@@ -145,7 +157,7 @@ class CardinalityProblem:
         work = self.num_assets**2 + count * self.cardinality * (self.num_assets - self.cardinality)
         if work > integer(max_work, "max_work", 1):
             raise ResourceError("Cardinality-preserving local refinement exceeds max_work.")
-        product = self.matrix @ x
+        product = get_compute_kernel().matmul(self.matrix, x)
         for _ in range(count):
             held, absent = np.flatnonzero(x), np.flatnonzero(1 - x)
             if not len(held) or not len(absent):
@@ -208,7 +220,9 @@ class PortfolioSelection:
         linear = (
             -mean / k - turnover * previous / k + fees * (abs(1 / k - previous) - abs(previous))
         )
-        offset = 0.5 * turnover * float(previous @ previous) + float(fees @ abs(previous))
+        offset = 0.5 * turnover * float(get_compute_kernel().matmul(previous, previous)) + float(
+            get_compute_kernel().matmul(fees, abs(previous))
+        )
         object.__setattr__(
             self, "problem", CardinalityProblem(matrix, linear, k, offset, self.max_memory_mb)
         )

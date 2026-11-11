@@ -277,9 +277,9 @@ class AllocationPlan:
             # including finite probability derivatives at zero scenario mass.
             weighted = factors * xp.sqrt(mass)[..., :, None]
             gram = (
-                weighted @ weighted.swapaxes(-1, -2)
+                ops.matmul(weighted, weighted.swapaxes(-1, -2))
                 if factors.shape[-2] <= factors.shape[-1]
-                else weighted.swapaxes(-1, -2) @ weighted
+                else ops.matmul(weighted.swapaxes(-1, -2), weighted)
             )
             bound = xp.maximum(xp.linalg.eigvalsh(gram)[..., -1], ops.array(0))
         else:

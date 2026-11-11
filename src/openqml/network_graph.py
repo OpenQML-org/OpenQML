@@ -120,7 +120,7 @@ def quantum_pairs(ctx):
     left = xp.tanh(ctx.project("pair_left", joined)) * mask[..., None]
     right = xp.tanh(ctx.project("pair_right", joined)) * mask[..., None]
     # The same pair features feed both factors: no triple-index circuit batch.
-    contraction = xp.einsum("bikc,bkjc->bijc", left, right)
+    contraction = ctx.einsum("bikc,bkjc->bijc", left, right)
     count = ctx.sum(mask, -1, True)
     count = count.clamp_min(1) if ctx.backend == "torch" else xp.maximum(count, 1)
     contraction = contraction / xp.sqrt(count[..., None])

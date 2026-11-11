@@ -10,6 +10,7 @@ from typing import NamedTuple
 
 import numpy as np
 
+from .compute import KernelOps
 from .errors import ValidationError
 from .parameters import real
 
@@ -53,7 +54,7 @@ class ActorCriticOutput(NamedTuple):
     log_std: object = None
 
 
-class _Ops:
+class _Ops(KernelOps):
     def __init__(self, like):
         module = type(like).__module__
         self.like = like
@@ -67,15 +68,16 @@ class _Ops:
             self.name, self.xp = "jax", jnp
         else:
             self.name, self.xp = "numpy", np
+        self.backend = self.name
 
     def array(self, value, *, boolean=False):
-        if self.name == "torch":
-            return self.xp.as_tensor(
-                value,
-                device=self.like.device,
-                dtype=self.xp.bool if boolean else self.like.dtype,
-            )
-        return self.xp.asarray(value, dtype=bool if boolean else self.like.dtype)
+        return self.kernel.asarray(
+            value,
+            xp=self.xp,
+            backend=self.backend,
+            like=self.like,
+            dtype=(self.xp.bool if self.name == "torch" else bool) if boolean else self.like.dtype,
+        )
 
     def stop(self, value):
         if self.name == "torch":

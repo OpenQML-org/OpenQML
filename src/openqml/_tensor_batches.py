@@ -4,11 +4,17 @@ import math
 
 import numpy as np
 
+from .compute import memory_budget
 from .errors import ResourceError
 
 
 def chunk_capacity(plan, values, shape, output_bytes=0):
-    available = plan.max_memory_mb * 2**20 - plan._metadata_bytes - plan._reuse_bytes - output_bytes
+    available = (
+        memory_budget(plan.max_memory_mb) * 2**20
+        - plan._metadata_bytes
+        - plan._reuse_bytes
+        - output_bytes
+    )
     quantum = max(1, plan.working_bytes - plan._metadata_bytes - plan._reuse_bytes)
     indexing = 8 * (2 * len(values) + len(shape) + len(plan.observables) + 2)
     capacity = int(available) // (quantum + indexing)

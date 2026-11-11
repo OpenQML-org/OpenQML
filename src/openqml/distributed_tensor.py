@@ -11,6 +11,7 @@ import math
 import time
 from dataclasses import dataclass, field
 
+from .compute import memory_budget
 from .errors import MissingDependencyError, ResourceError, ValidationError
 from .ir import integer
 from .parameters import real
@@ -194,7 +195,7 @@ class DistributedTensorPlan:
             raise ValidationError("rematerialize must be a boolean.")
         for name in ("max_layout_work", "beam_width", "max_layouts"):
             integer(getattr(self, name), name, 1)
-        budget = real(self.max_memory_mb) * 2**20
+        budget = memory_budget(self.max_memory_mb) * 2**20
         if budget <= 0:
             raise ValidationError("max_memory_mb must be positive.")
         options = dict(self.tensor_options)
@@ -309,7 +310,10 @@ class DistributedTensorPlan:
         )
         rows = max(1, math.prod(shape))
         metadata = self._plan._metadata_bytes
-        if metadata + rows * (self.working_bytes_per_rank - metadata) > self.max_memory_mb * 2**20:
+        if (
+            metadata + rows * (self.working_bytes_per_rank - metadata)
+            > memory_budget(self.max_memory_mb) * 2**20
+        ):
             raise ResourceError("Distributed batch exceeds the per-rank memory budget.")
         cuda = like.device.type == "cuda"
         if cuda and (not torch.cuda.is_available() or dist.get_backend() != "nccl"):

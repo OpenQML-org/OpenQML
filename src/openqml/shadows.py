@@ -14,6 +14,7 @@ from itertools import product
 import numpy as np
 
 from .backends import ExecutionOptions
+from .compute import get_compute_kernel, memory_budget
 from .errors import BackendError, ResourceError, ValidationError
 from .ir import Circuit, integer
 from .measurement import _rotate, measurement_plan
@@ -55,12 +56,12 @@ def _density(data, qubits, regularization):
             if axis:
                 scores *= (data[0][:, q] == axis - 1) * 3 * (1 - 2 * data[1][:, q].astype(float))
         coefficients.append(float(scores.mean()))
-    rho = np.einsum("p,pij->ij", coefficients, basis) / (1 << len(qubits))
+    rho = get_compute_kernel().einsum("p,pij->ij", coefficients, basis) / (1 << len(qubits))
     rho = (rho + rho.conj().T) / 2
     eigenvalues, vectors = np.linalg.eigh(rho)
     eigenvalues = np.maximum(eigenvalues, 0)
     eigenvalues /= eigenvalues.sum()
-    rho = (vectors * eigenvalues) @ vectors.conj().T
+    rho = get_compute_kernel().matmul(vectors * eigenvalues, vectors.conj().T)
     return (1 - regularization) * rho + regularization * np.eye(len(rho)) / len(rho)
 
 
@@ -73,16 +74,16 @@ def _entropy(rho):
 def _dual(rho):
     width = len(rho).bit_length() - 1
     basis, frame = _pauli_basis(width), _frame(width)
-    coordinates = np.einsum("pij,ji->p", basis, rho).real
-    probability = frame @ coordinates
+    coordinates = get_compute_kernel().einsum("pij,ji->p", basis, rho).real
+    probability = get_compute_kernel().matmul(frame, coordinates)
     if np.min(probability) <= 0:
         raise ValidationError("Dual-frame reference state must have positive POVM probabilities.")
     weighted = frame / probability[:, None]
-    gram = frame.T @ weighted
-    dual = np.linalg.solve(gram, weighted.T).T
+    gram = get_compute_kernel().matmul(frame.T, weighted)
+    dual = get_compute_kernel().solve(gram, weighted.T).T
     # Identity has an exact constant estimator, and retains this simpler column.
     dual[:, 0] = 1
-    residual = float(np.max(np.abs(frame.T @ dual - np.eye(4**width))))
+    residual = float(np.max(np.abs(get_compute_kernel().matmul(frame.T, dual) - np.eye(4**width))))
     if not np.isfinite(dual).all() or residual > 1e-9:
         raise ValidationError("Local dual frame failed its reconstruction check.")
     return dual, residual
@@ -171,7 +172,9 @@ def _readouts(
     terms = sum(len(o.terms) if isinstance(o, Hamiltonian) else 1 for o in observables)
     if terms * count * width > max_work:
         raise ResourceError("Shadow postprocessing exceeds max_work.")
-    if (3 * count * len(observables) + 4 * len(observables) ** 2) * 8 > max_memory_mb * 2**20:
+    if (3 * count * len(observables) + 4 * len(observables) ** 2) * 8 > memory_budget(
+        max_memory_mb
+    ) * 2**20:
         raise ResourceError("Shadow postprocessing exceeds max_memory_mb.")
     indices = []
     for block in blocks:
@@ -191,7 +194,7 @@ def _readouts(
             scores[:, column] += value
     mean = scores.mean(axis=0)
     centered = scores - mean
-    covariance = centered.T @ centered / (count * (count - 1))
+    covariance = get_compute_kernel().matmul(centered.T, centered) / (count * (count - 1))
     if not np.isfinite(mean).all() or not np.isfinite(covariance).all():
         raise ValidationError("Shadow readouts exceed finite precision.")
     settings = len(np.unique(production[0], axis=0))
@@ -265,7 +268,7 @@ def shadow_estimate(
         + 512 * width**2
         + 8192
     )
-    if workspace > max_memory_mb * 2**20:
+    if workspace > memory_budget(max_memory_mb) * 2**20:
         raise ResourceError("Shadow records/readouts exceed max_memory_mb.")
     options = ExecutionOptions(max_qubits, max_memory_mb, seed, max_branches)
     if max_qubits is not None and width > max_qubits:

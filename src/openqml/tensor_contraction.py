@@ -11,10 +11,10 @@ from dataclasses import dataclass, field
 
 from ._gradient_common import _observables
 from .compiler import _check_circuit_limits
+from .compute import memory_budget
 from .errors import MissingDependencyError, ResourceError, ValidationError
 from .ir import integer
 from .observables import Hamiltonian, PauliString
-from .parameters import real
 from .pauli import _prepare_bindings
 
 
@@ -191,7 +191,7 @@ class TensorNetworkPlan:
             raise ValidationError("optimizer must be greedy, portfolio or cotengra.")
         for name in ("max_work", "max_operations", "max_slices", "max_flops", "search_trials"):
             integer(getattr(self, name), name, 1)
-        budget = real(self.max_memory_mb)
+        budget = memory_budget(self.max_memory_mb)
         if budget <= 0:
             raise ValidationError("max_memory_mb must be positive.")
         obs = _observables(self.observables, self.circuit.num_qubits, label="Tensor network")
@@ -298,7 +298,9 @@ class TensorNetworkPlan:
     def batch_capacity(self):
         return max(
             1,
-            int(self.max_memory_mb * 2**20 - self._metadata_bytes - self._reuse_bytes)
+            int(
+                memory_budget(self.max_memory_mb) * 2**20 - self._metadata_bytes - self._reuse_bytes
+            )
             // max(1, self.working_bytes - self._metadata_bytes - self._reuse_bytes),
         )
 
@@ -514,7 +516,7 @@ class TensorNetworkPlan:
         if (
             rows > self.batch_capacity
             or 8 * rows * (len(local) + len(self.observables))
-            > self.max_memory_mb * 2**20 - self._metadata_bytes
+            > memory_budget(self.max_memory_mb) * 2**20 - self._metadata_bytes
         ):
             raise ResourceError("Tensor network batch exceeds max_memory_mb; reduce the batch.")
         zero = ops.xp.broadcast_to(ops.array(0, real_value=True), shape)

@@ -4,9 +4,9 @@ from contextlib import nullcontext
 
 import numpy as np
 
+from .compute import memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import integer
-from .parameters import real
 from .quantum_channels import _checked
 from .quantum_generative import shifted_tokens
 from .simulator import _TensorOps
@@ -50,7 +50,7 @@ def sample_tokens(
         if prompt.ndim != 2 or min(prompt.shape) < 1:
             raise ValidationError("Prompt requires nonempty token IDs[B,T].")
         batch_size = prompt.shape[0]
-    if 16 * batch_size * (steps + classes) > real(max_memory_mb) * 2**20:
+    if 16 * batch_size * (steps + classes) > memory_budget(max_memory_mb) * 2**20:
         raise ResourceError("Autoregressive output/features exceed max_memory_mb.")
     if backend == "jax" and key is None:
         raise ValidationError("JAX sampling requires an explicit random key.")

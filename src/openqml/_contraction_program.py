@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from .compute import get_compute_kernel
+
 
 @dataclass(frozen=True)
 class ContractionKernel:
@@ -16,6 +18,13 @@ class ContractionKernel:
 
     @classmethod
     def compile(cls, la, lb, shared):
+        la, lb, shared = tuple(la), tuple(lb), tuple(shared)
+        return get_compute_kernel().plan(
+            "contraction", (la, lb, shared), lambda: cls._compile(la, lb, shared)
+        )
+
+    @classmethod
+    def _compile(cls, la, lb, shared):
         a, b = tuple(x for x in la if x not in shared), tuple(x for x in lb if x not in shared)
         return cls(
             tuple(la.index(x) for x in a + shared),
@@ -34,7 +43,7 @@ class ContractionKernel:
         pb = tuple(range(nb)) + tuple(nb + i for i in self.right_axes)
         left = ops.transpose(left, pa).reshape(left.shape[:na] + (self.m, self.k))
         right = ops.transpose(right, pb).reshape(right.shape[:nb] + (self.k, self.n))
-        value = left @ right
+        value = ops.matmul(left, right)
         return value.reshape(value.shape[:-2] + (2,) * self.output_rank)
 
 

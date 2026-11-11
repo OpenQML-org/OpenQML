@@ -10,10 +10,10 @@ from dataclasses import dataclass, field
 from ._gradient_common import _observables
 from ._structure import split_circuit
 from .compiler import _check_circuit_limits
+from .compute import memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import integer
 from .observables import Hamiltonian, PauliString
-from .parameters import real
 
 
 @dataclass(frozen=True, eq=False)
@@ -44,7 +44,7 @@ class ComponentPlan:
             integer(self.max_qubits, "max_qubits", 1)
             if self.circuit.num_qubits > self.max_qubits:
                 raise ResourceError("Component execution exceeds the explicit max_qubits limit.")
-        budget = real(self.max_memory_mb)
+        budget = memory_budget(self.max_memory_mb)
         if budget <= 0:
             raise ValidationError("max_memory_mb must be positive.")
         obs = _observables(self.observables, self.circuit.num_qubits, label="Component")
@@ -143,7 +143,9 @@ class ComponentPlan:
         rows = max(1, math.prod(shape))
         output_bytes = 16 + 32 * sum(len(q) for q in self._queries) + 64 * len(self.observables)
         capacity = (
-            int(self.max_memory_mb * 2**20) - self._metadata_bytes - output_bytes * (rows - 1)
+            int(memory_budget(self.max_memory_mb) * 2**20)
+            - self._metadata_bytes
+            - output_bytes * (rows - 1)
         )
         if capacity <= 0:
             raise ResourceError("Component batched readouts exceed max_memory_mb.")

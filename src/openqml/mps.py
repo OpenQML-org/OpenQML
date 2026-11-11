@@ -12,6 +12,7 @@ import numpy as np
 
 from .backends import BackendCapabilities
 from .compiler import _check_circuit_limits
+from .compute import get_compute_kernel, memory_budget
 from .errors import ResourceError, ValidationError
 from .ir import integer
 from .observables import Hamiltonian
@@ -70,10 +71,12 @@ def _two_site(sites, qubits, matrix):
     if qubits[0] != a:
         matrix = matrix.reshape(2, 2, 2, 2).transpose(1, 0, 3, 2).reshape(4, 4)
     left, right = sites[a], sites[b]
-    block = np.einsum("asb,btc->astc", left, right)
-    transformed = np.einsum("uvst,astc->auvc", matrix.reshape(2, 2, 2, 2), block)
+    block = get_compute_kernel().einsum("asb,btc->astc", left, right)
+    transformed = get_compute_kernel().einsum("uvst,astc->auvc", matrix.reshape(2, 2, 2, 2), block)
     rows, columns = 2 * left.shape[0], 2 * right.shape[2]
-    u, singular, vh = np.linalg.svd(transformed.reshape(rows, columns), full_matrices=False)
+    u, singular, vh = get_compute_kernel().svd(
+        transformed.reshape(rows, columns), full_matrices=False
+    )
     size = len(singular)
     sites[a] = u.reshape(left.shape[0], 2, size)
     sites[b] = (singular[:, None] * vh).reshape(size, 2, right.shape[2])
@@ -90,8 +93,10 @@ def _read_word(sites, word):
         for s in range(2):
             for t in range(2):
                 if matrix[s, t]:
-                    product = environment @ site[:, t, :]
-                    result += matrix[s, t] * (site[:, s, :].conj().T @ product)
+                    product = get_compute_kernel().matmul(environment, site[:, t, :])
+                    result += matrix[s, t] * (
+                        get_compute_kernel().matmul(site[:, s, :].conj().T, product)
+                    )
         environment = result
     return float(environment[0, 0].real)
 
@@ -122,7 +127,7 @@ class MPSBackend:
 
         _observables(observables, circuits)
         rows, ops = [], _TensorOps()
-        numerator, denominator = float(options.max_memory_mb).as_integer_ratio()
+        numerator, denominator = memory_budget(options.max_memory_mb).as_integer_ratio()
         budget = (numerator << 20) // denominator
         for circuit in circuits:
             _check_circuit_limits(circuit, max_operations=self.max_operations)
@@ -152,7 +157,7 @@ class MPSBackend:
                 )
                 if len(operation.qubits) == 1:
                     q = operation.qubits[0]
-                    sites[q] = np.einsum("st,atb->asb", matrix, sites[q])
+                    sites[q] = get_compute_kernel().einsum("st,atb->asb", matrix, sites[q])
                 else:
                     _two_site(sites, operation.qubits, matrix)
             values, cache = [], {}

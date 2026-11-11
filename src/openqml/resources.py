@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 
 from .backends import ExecutionOptions
 from .compiler import _check_circuit_limits
+from .compute import memory_budget
 from .errors import Diagnostic, ResourceError
 from .ir import integer
 
@@ -87,7 +88,7 @@ def estimate_resources(
     def byte_count(exponent):
         return batch * (1 << exponent) if exponent + batch.bit_length() <= 63 else None
 
-    budget = float(options.max_memory_mb)
+    budget = memory_budget(options.max_memory_mb)
     numerator, denominator = budget.as_integer_ratio()
     available_bytes = (numerator << 20) // denominator
     memory_ok = batch <= available_bytes >> (width + 6)
