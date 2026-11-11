@@ -1,0 +1,790 @@
+"""Capability admission and cost-aware dispatch before submitting work."""
+
+import hashlib
+import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar, copy_context
+from dataclasses import asdict, dataclass, field, replace
+from functools import partial
+from types import MappingProxyType
+
+from ..compute import compute_operation, memory_budget
+from ..errors import (
+    BackendError,
+    ConversionError,
+    MissingDependencyError,
+    ResourceError,
+    ValidationError,
+)
+from .backends import BackendCapabilities, ExecutionOptions
+from .costs import (
+    BudgetLedger,
+    ExecutionFeedback,
+    ExecutionProfile,
+    SchedulingPolicy,
+    SchedulingRequest,
+    TrainingWorkload,
+    check_cost,
+    estimate_cost,
+    select_cost,
+)
+from .recovery import CircuitBreaker, PendingBatch, RecoveryPolicy, recovery_context
+
+_RUNTIME_CONTEXT = ContextVar("openqml_runtime_backend", default=None)
+
+
+@dataclass(frozen=True)
+class DispatchCandidate:
+    backend: str
+    device: str
+    eligible: bool
+    reason: str
+    estimate: dict | None = None
+
+
+@dataclass(frozen=True)
+class DispatchPlan:
+    backend: str
+    device: str
+    task: str
+    candidates: tuple[DispatchCandidate, ...]
+    _backend: object = field(repr=False, compare=False)
+    decision: str = "hardware_priority"
+    pareto_backends: tuple[str, ...] = ()
+
+    def to_dict(self):
+        return {
+            "backend": self.backend,
+            "device": self.device,
+            "task": self.task,
+            "candidates": [asdict(c) for c in self.candidates],
+            "decision": self.decision,
+            "pareto_backends": list(self.pareto_backends),
+        }
+
+
+@dataclass(frozen=True)
+class QPUBackend:
+    """Mark an explicitly configured provider as hardware eligible for auto.
+
+    No credentials or cloud devices are discovered. available is a boolean or a
+    caller-owned zero-argument availability check; it must not submit jobs.
+    Provider execution errors propagate and are never retried on another device.
+    """
+
+    backend: object
+    available: object = True
+    execution_profile: object = None
+    recovery: RecoveryPolicy = field(default_factory=RecoveryPolicy)
+    _breaker: object = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self):
+        from .backends import _validate_backend
+
+        _validate_backend(self.backend)
+        if type(self.available) is not bool and not callable(self.available):
+            raise ValidationError("QPU availability must be a boolean or callable.")
+        if not isinstance(self.recovery, RecoveryPolicy):
+            raise ValidationError("recovery must be RecoveryPolicy.")
+        if self._breaker is None:
+            object.__setattr__(self, "_breaker", CircuitBreaker(self.recovery))
+
+    @property
+    def name(self):
+        return self.backend.name
+
+    @property
+    def capabilities(self):
+        return replace(self.backend.capabilities, device_type="QPU")
+
+    def is_available(self):
+        if not self._breaker.available():
+            return False
+        value = self.available() if callable(self.available) else self.available
+        if type(value) is not bool:
+            raise ValidationError("QPU availability checks must return a boolean.")
+        return value
+
+    def __getattr__(self, name):
+        implementation = getattr(object.__getattribute__(self, "backend"), name)
+        if name in {"run", "run_density", "expectations_batch", "sample_batch"} and callable(
+            implementation
+        ):
+
+            def invoke(*args, **kwargs):
+                self._breaker.acquire()
+                try:
+                    with recovery_context(self.recovery):
+                        result = implementation(*args, **kwargs)
+                except Exception as exc:
+                    if self.recovery.transient(exc) or isinstance(exc, BackendError):
+                        self._breaker.failure()
+                    else:
+                        self._breaker.success()
+                    raise
+                self._breaker.success()
+                return result
+
+            return invoke
+        return implementation
+
+
+def register_qpu_backend(backend, *, available=True, replace=False, profile=None, recovery=None):
+    """Register configured hardware; auto requires a fresh cost/quality quote."""
+    from .backends import register_backend
+
+    if profile is not None and not isinstance(profile, ExecutionProfile) and not callable(profile):
+        raise ValidationError("profile must be ExecutionProfile or a read-only quote callback.")
+    wrapped = QPUBackend(
+        backend, available, profile, RecoveryPolicy() if recovery is None else recovery
+    )
+    register_backend(wrapped, replace=replace)
+    return wrapped
+
+
+def resolve_backend(backend, task, circuits, observables=(), *, options, shots=None, workload=None):
+    """Resolve only automatic routing; explicit backend instances remain pinned."""
+    return (
+        backend.plan(
+            circuits,
+            task=task,
+            observables=observables,
+            options=options,
+            shots=shots,
+            workload=workload,
+        )._backend
+        if isinstance(backend, PriorityBackend)
+        else backend
+    )
+
+
+@dataclass(frozen=True)
+class PriorityBackend:
+    name: str = "auto"
+    require_exact: bool = False
+    capabilities: BackendCapabilities = field(
+        default_factory=lambda: BackendCapabilities(
+            native_expectations=True,
+            native_sampling=True,
+            density_matrix=True,
+            channels=True,
+            reset=True,
+            classical_control=True,
+            mid_circuit_measurements=True,
+            measurement_expectations=True,
+        )
+    )
+
+    def __post_init__(self):
+        if type(self.require_exact) is not bool:
+            raise ValidationError("require_exact must be a boolean.")
+
+    def plan(
+        self,
+        circuits,
+        *,
+        task="expectations",
+        observables=(),
+        options=None,
+        shots=None,
+        workload=None,
+        native_candidates=(),
+        allowed_devices=None,
+        _collect=False,
+    ):
+        """Inspect an automatic route without executing a circuit or cloud job."""
+        from ..ir import Circuit
+        from ..ir.compiler import decompose
+        from .backends import _LOCK, _REGISTRY, check_effects, get_backend
+
+        methods = {
+            "expectations": "expectations_batch",
+            "sampling": "sample_batch",
+            "statevector": "run",
+            "density": "run_density",
+        }
+        if task not in methods:
+            raise ValidationError("Unknown dispatch task.")
+        if allowed_devices is not None:
+            if isinstance(allowed_devices, str):
+                raise ValidationError("allowed_devices must be a collection of device types.")
+            allowed_devices = frozenset(allowed_devices)
+            if not allowed_devices or allowed_devices - {"QPU", "GPU", "CPU"}:
+                raise ValidationError("allowed_devices must contain QPU, GPU or CPU.")
+        circuits = (circuits,) if isinstance(circuits, Circuit) else tuple(circuits)
+        observables = tuple(observables)
+        if not circuits:
+            raise ValidationError("Dispatch planning requires at least one circuit.")
+        if any(not isinstance(c, Circuit) for c in circuits):
+            raise ValidationError("Dispatch inputs must be Circuit objects.")
+        options = ExecutionOptions() if options is None else options
+        if not isinstance(options, ExecutionOptions):
+            raise ValidationError("options must be ExecutionOptions.")
+        if any(
+            options.max_qubits is not None and c.num_qubits > options.max_qubits for c in circuits
+        ):
+            raise ResourceError("Circuit exceeds the requested qubit limit.")
+        with _LOCK:
+            devices = [d for d in _REGISTRY.values() if d.capabilities.device_type == "QPU"]
+            names = set(_REGISTRY) | {"gpu", "cpu"}
+        native_candidates = tuple(native_candidates)
+        for device in native_candidates:
+            if (
+                not isinstance(getattr(device, "name", None), str)
+                or not device.name
+                or device.name in names
+                or not isinstance(getattr(device, "capabilities", None), BackendCapabilities)
+                or getattr(getattr(device, "capabilities", None), "device_type", None)
+                not in {"GPU", "CPU"}
+            ):
+                raise ValidationError(
+                    "Native candidates need unique local backend names and capabilities."
+                )
+            names.add(device.name)
+        candidates, eligible = [], []
+        # Lazy resolution keeps Torch and cloud SDKs outside a core-only import.
+        native_gpu = tuple(d for d in native_candidates if d.capabilities.device_type == "GPU")
+        native_cpu = tuple(d for d in native_candidates if d.capabilities.device_type == "CPU")
+        # A framework-native candidate replaces the generic implementation for
+        # its platform, so its quote is applied to the engine actually used.
+        for device in (*devices, *(native_gpu or ("gpu",)), *(native_cpu or ("cpu",))):
+            if isinstance(device, str):
+                device = get_backend(device)
+            try:
+                caps = device.capabilities
+                if allowed_devices is not None and caps.device_type not in allowed_devices:
+                    raise ResourceError("Device is outside the required execution contract.")
+                available = getattr(device, "is_available", lambda: True)()
+                if type(available) is not bool:
+                    raise ValidationError("Device availability must be a boolean.")
+                if not available:
+                    raise ResourceError("Device is unavailable or has not been enabled.")
+                if not callable(getattr(device, methods[task], None)):
+                    raise ValidationError(f"No {task} interface.")
+                if task == "expectations" and not caps.native_expectations:
+                    raise ValidationError("No native expectation interface.")
+                if task == "sampling" and not caps.native_sampling:
+                    raise ValidationError("No native sampling interface.")
+                if (
+                    task == "sampling"
+                    and caps.device_type != "CPU"
+                    and any(
+                        c.num_clbits > memory_budget(options.max_memory_mb) * 2**20
+                        for c in circuits
+                    )
+                ):
+                    raise ResourceError(
+                        "The native sampler's full classical strings exceed the budget."
+                    )
+                if task == "density" and not caps.density_matrix:
+                    raise ValidationError("No density matrix interface.")
+                if task == "expectations" and self.require_exact and not caps.exact_expectations:
+                    raise ValidationError("Exact expectations are required by this policy.")
+                for circuit in circuits:
+                    if caps.max_qubits is not None and circuit.num_qubits > caps.max_qubits:
+                        raise ResourceError("Circuit exceeds the device's physical width.")
+                    check_effects(circuit, device, expectation=task == "expectations")
+                    if task == "statevector" and circuit.has_effects:
+                        raise ValidationError("Effects do not have a single pure output state.")
+                    decompose(circuit, basis=caps.gates)
+                admit = getattr(device, "admit", None)
+                if admit is not None:
+                    admit(task, circuits, observables, options=options)
+            except (MissingDependencyError, ResourceError, ConversionError, ValidationError) as exc:
+                candidates.append(
+                    DispatchCandidate(device.name, device.capabilities.device_type, False, str(exc))
+                )
+                continue
+            candidates.append(
+                DispatchCandidate(
+                    device.name,
+                    device.capabilities.device_type,
+                    True,
+                    "Available and supports the requested task and resource policy.",
+                )
+            )
+            eligible.append(device)
+            if _collect:
+                continue
+            return DispatchPlan(
+                device.name, device.capabilities.device_type, task, tuple(candidates), device
+            )
+        if _collect:
+            return tuple(eligible), tuple(candidates)
+        raise ResourceError(
+            "No eligible device. " + "; ".join(f"{c.backend}: {c.reason}" for c in candidates)
+        )
+
+    def expectations_batch(self, circuits, observables, *, options):
+        from ..sim.batch import expectations_batch
+
+        device = resolve_backend(self, "expectations", circuits, observables, options=options)
+        return expectations_batch(circuits, observables, backend=device, **options.__dict__)
+
+    def sample_batch(self, circuits, shots, *, options):
+        from ..sim.batch import execute_batch
+
+        device = resolve_backend(self, "sampling", circuits, options=options, shots=shots)
+        return [
+            r.counts
+            for r in execute_batch(circuits, shots=shots, backend=device, **options.__dict__)
+        ]
+
+    def run(self, circuit, *, options):
+        from ._validation import invoke
+
+        device = resolve_backend(self, "statevector", [circuit], options=options)
+        return invoke(device, "run", circuit, options=options)
+
+    def run_density(self, circuit, *, options):
+        from ._validation import invoke
+
+        device = resolve_backend(self, "density", [circuit], options=options)
+        return invoke(device, "run_density", circuit, options=options)
+
+
+def _feedback_key(device, request, shots):
+    # Shape/resource class, not parameter values or user data. Profile sources
+    # distinguish layouts and calibration regimes chosen by a quote callback.
+    width = max(c.num_qubits for c in request.circuits)
+    digest = hashlib.sha256()
+    topologies = set()
+    for circuit in request.circuits:
+        topology = hashlib.sha256()
+        for path, op in circuit.walk_operations():
+            topology.update(
+                repr((path, op.name, op.qubits, op.clbits, len(op.params), op.condition)).encode()
+            )
+        topologies.add(topology.digest())
+    for topology in sorted(topologies):
+        digest.update(topology)
+    digest.update(repr(request.observables).encode())
+    rows = max(len(request.circuits), request.workload.batch_size or 0)
+    return device.name, request.task, width, digest.hexdigest(), rows.bit_length(), shots
+
+
+@dataclass(frozen=True)
+class CostAwareBackend(PriorityBackend):
+    """Rank feasible quotes, with QPU/GPU/CPU order only breaking equal scores.
+
+    Missing QPU prices/noise/queue estimates never imply free or fast hardware.
+    Without quotes, unconstrained local execution remains available and is
+    explicitly labelled unprofiled. PriorityBackend retains the legacy policy.
+    """
+
+    policy: SchedulingPolicy = field(default_factory=SchedulingPolicy)
+    workload: TrainingWorkload = field(default_factory=TrainingWorkload)
+    profiles: object = field(default_factory=dict, repr=False, compare=False)
+    feedback: object = field(default_factory=ExecutionFeedback, repr=False, compare=False)
+    ledger: object = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not isinstance(self.policy, SchedulingPolicy) or not isinstance(
+            self.workload, TrainingWorkload
+        ):
+            raise ValidationError("Expected SchedulingPolicy and TrainingWorkload.")
+        try:
+            profiles = dict(self.profiles)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                "profiles must map backend names to profiles or callbacks."
+            ) from exc
+        if any(
+            not isinstance(k, str) or (not isinstance(v, ExecutionProfile) and not callable(v))
+            for k, v in profiles.items()
+        ):
+            raise ValidationError("profiles must map backend names to profiles or callbacks.")
+        if not isinstance(self.feedback, ExecutionFeedback):
+            raise ValidationError("feedback must be ExecutionFeedback.")
+        if self.ledger is not None and not isinstance(self.ledger, BudgetLedger):
+            raise ValidationError("ledger must be BudgetLedger or None.")
+        object.__setattr__(self, "profiles", MappingProxyType(profiles))
+
+    def _quote(self, device, request):
+        profile = self.profiles.get(device.name, getattr(device, "execution_profile", None))
+        if callable(profile):
+            profile = profile(request)
+        if profile is None:
+            raise ResourceError("No workload cost/quality profile; QPU capability is not a quote.")
+        if not isinstance(profile, ExecutionProfile):
+            raise ValidationError("Quote callbacks must return ExecutionProfile.")
+        if device.capabilities.device_type == "QPU" and any(
+            getattr(profile, name) is None
+            for name in ("queue_seconds", "cost_per_second", "noise_bias")
+        ):
+            raise ResourceError("QPU quotes require explicit queue, pricing and noise estimates.")
+        if self.ledger is not None and profile.cost_per_second is None:
+            raise ResourceError("Spending admission requires explicit pricing.")
+        exact = request.task in {"statevector", "density"} or (
+            request.task == "expectations" and device.capabilities.exact_expectations
+        )
+        adjustable = request.task == "expectations" and callable(
+            getattr(device, "with_shots", None)
+        )
+        if device.capabilities.device_type not in request.workload.native_devices:
+            request = replace(
+                request, workload=replace(request.workload, native_gradient_evaluations=None)
+            )
+        cost = estimate_cost(
+            profile, request, self.policy, exact=exact, adjustable_shots=adjustable
+        )
+        key = (*_feedback_key(device, request, cost.shots), profile.source)
+        median, upper, count = self.feedback.correction(key)
+        corrected = replace(
+            cost,
+            seconds=cost.seconds * median,
+            upper_seconds=cost.upper_seconds * upper,
+            observations=count,
+        )
+        if request.workload.execution_batches is not None:
+            corrected = self._phase_feedback(device, profile, request, cost, exact, adjustable)
+        check_cost(corrected, self.policy)
+        if (
+            self.ledger is not None
+            and self.ledger.reserved + corrected.upper_cost > self.ledger.limit
+        ):
+            raise ResourceError("Forecast exceeds the remaining session spending budget.")
+        return profile, corrected, key
+
+    def _phase_feedback(self, device, profile, request, cost, exact, adjustable):
+        """Correct known sequential call phases using their own observed batch classes."""
+        from collections import Counter
+
+        work, phases = request.workload, Counter()
+        gradient = (
+            work.native_gradient_evaluations
+            if exact and work.native_gradient_evaluations is not None
+            else work.gradient_evaluations
+        )
+        for size, repeats in Counter(work.execution_batches).items():
+            for quantity, chunk in ((size, None), (size * gradient, work.gradient_chunk_size)):
+                if not quantity:
+                    continue
+                client = min(quantity, work.submission_batch_size or quantity, chunk or quantity)
+                full, tail = divmod(quantity, client)
+                phases[client] += full * repeats * work.steps
+                if tail:
+                    phases[tail] += repeats * work.steps
+        seconds = work.steps * work.classical_seconds_per_step
+        upper = seconds * (1 + self.policy.risk_sigma * profile.relative_uncertainty)
+        observations = {}
+        for rows, repeats in phases.items():
+            local = replace(
+                work,
+                batch_size=rows,
+                steps=1,
+                gradient_evaluations=0,
+                native_gradient_evaluations=0,
+                execution_batches=None,
+                microbatch_size=None,
+                submission_batch_size=None,
+                gradient_chunk_size=None,
+                classical_seconds_per_step=0,
+                classical_cost_per_step=0,
+            )
+            subrequest = replace(request, workload=local, shots=cost.shots or None)
+            raw = estimate_cost(
+                profile, subrequest, self.policy, exact=exact, adjustable_shots=adjustable
+            )
+            key = (*_feedback_key(device, subrequest, cost.shots), profile.source)
+            median, margin, count = self.feedback.correction(key)
+            observations[key] = count
+            seconds += repeats * raw.seconds * median
+            upper += repeats * raw.upper_seconds * margin
+        return replace(
+            cost, seconds=seconds, upper_seconds=upper, observations=sum(observations.values())
+        )
+
+    def native_plan(self, circuit, bindings, batch_shape, *, task, options):
+        import math
+
+        import numpy as np
+
+        try:
+            shape = np.broadcast_shapes(
+                *(np.shape(v) for v in (bindings or {}).values()),
+                () if batch_shape is None else tuple(batch_shape),
+            )
+        except ValueError as exc:
+            raise ValidationError("Native binding shapes cannot be broadcast together.") from exc
+        count = max(1, math.prod(shape))
+        if count * 8 * (1 + len(bindings or {})) > memory_budget(options.max_memory_mb) * 2**20:
+            raise ResourceError("Native batch metadata exceeds the memory budget.")
+        work = replace(self.workload, batch_size=max(self.workload.batch_size or 0, count))
+        return self.plan([circuit], task=task, options=options, workload=work), count
+
+    def plan(
+        self,
+        circuits,
+        *,
+        task="expectations",
+        observables=(),
+        options=None,
+        shots=None,
+        workload=None,
+        only_backend=None,
+        native_candidates=(),
+        allowed_devices=None,
+        _alternatives=False,
+    ):
+        from ..ir import Circuit, integer
+
+        circuits = (circuits,) if isinstance(circuits, Circuit) else tuple(circuits)
+        observables = tuple(observables)
+        if shots is not None:
+            integer(shots, "shots", 1)
+        work = self.workload if workload is None else workload
+        if not isinstance(work, TrainingWorkload):
+            raise ValidationError("workload must be TrainingWorkload.")
+        options = ExecutionOptions() if options is None else options
+        devices, admission = super().plan(
+            circuits,
+            task=task,
+            observables=observables,
+            options=options,
+            native_candidates=native_candidates,
+            allowed_devices=allowed_devices,
+            _collect=True,
+        )
+        if only_backend is not None:
+            if not isinstance(only_backend, str):
+                raise ValidationError("only_backend must be a backend name.")
+            devices = tuple(d for d in devices if d.name == only_backend)
+        request = SchedulingRequest(circuits, observables, task, options, work, shots)
+        candidates = list(admission)
+        by_name = {c.backend: i for i, c in enumerate(candidates)}
+        quoted, costs, unprofiled = [], [], []
+        constrained = (
+            self.policy.require_profiles
+            or self.ledger is not None
+            or any(
+                getattr(self.policy, k) is not None for k in ("max_cost", "max_seconds", "max_rmse")
+            )
+        )
+        for device in devices:
+            try:
+                profile, cost, key = self._quote(device, request)
+            except ResourceError as exc:
+                missing = (
+                    device.name not in self.profiles
+                    and getattr(device, "execution_profile", None) is None
+                )
+                fallback = missing and device.capabilities.device_type != "QPU" and not constrained
+                if fallback:
+                    unprofiled.append(device)
+                candidates[by_name[device.name]] = DispatchCandidate(
+                    device.name, device.capabilities.device_type, fallback, str(exc)
+                )
+                continue
+            candidates[by_name[device.name]] = DispatchCandidate(
+                device.name,
+                device.capabilities.device_type,
+                True,
+                "Feasible workload forecast using the configured execution profiles.",
+                cost.to_dict(),
+            )
+            quoted.append((device, profile, key))
+            costs.append(cost)
+        if costs:
+            selected, frontier = select_cost(costs, self.policy)
+
+            def materialize(index):
+                device, profile, _ = quoted[index]
+                if (
+                    task == "expectations"
+                    and costs[index].shots
+                    and callable(getattr(device, "with_shots", None))
+                ):
+                    configured = device.with_shots(costs[index].shots)
+                    device = (
+                        replace(device, backend=configured)
+                        if isinstance(device, QPUBackend)
+                        else configured
+                    )
+                observed = _ObservedBackend(
+                    device, self, profile, task, observables, costs[index].shots
+                )
+                return DispatchPlan(
+                    device.name,
+                    device.capabilities.device_type,
+                    task,
+                    tuple(candidates),
+                    observed,
+                    "pareto_cost_quality_forecast",
+                    tuple(quoted[i][0].name for i in frontier),
+                )
+
+            if _alternatives:
+                return tuple(
+                    materialize(i) for i in (selected, *(j for j in frontier if j != selected))
+                )
+            return materialize(selected)
+        if unprofiled:
+            device = unprofiled[0]
+            plan = DispatchPlan(
+                device.name,
+                device.capabilities.device_type,
+                task,
+                tuple(candidates),
+                device,
+                "unprofiled_local_fallback",
+            )
+            return (plan,) if _alternatives else plan
+        raise ResourceError(
+            "No cost/quality-feasible device. "
+            + "; ".join(f"{c.backend}: {c.reason}" for c in candidates)
+        )
+
+    def alternatives(self, circuits, **options):
+        """Return nondominated execution views from one admission/quote snapshot."""
+        return self.plan(circuits, _alternatives=True, **options)
+
+
+class _ObservedBackend:
+    def __init__(self, backend, scheduler, profile, task, observables, shots):
+        self.backend, self.scheduler, self.profile = backend, scheduler, profile
+        self.task, self.observables, self.shots = task, observables, shots
+
+    def __getattr__(self, name):
+        return getattr(self.backend, name)
+
+    @compute_operation
+    def _invoke(self, method, circuits, *args, options, callback=None):
+        request = SchedulingRequest(
+            tuple(circuits),
+            self.observables,
+            self.task,
+            options,
+            TrainingWorkload(),
+            self.shots or None,
+        )
+        # Refresh queue/calibration quotes at each actual submission, including
+        # a ShiftPlan pinned for training. Never migrate its noise model mid-VJP.
+        profile, cost, key = self.scheduler._quote(self.backend, request)
+        if self.scheduler.ledger is not None:
+            self.scheduler.ledger.reserve(cost.upper_cost)
+        start = time.perf_counter()
+        if callback is not None:
+            result = callback()
+        elif (
+            method in {"expectations_batch", "sample_batch"}
+            and len(circuits) > profile.max_batch_size
+        ):
+            chunks = [
+                request.circuits[i : i + profile.max_batch_size]
+                for i in range(0, len(request.circuits), profile.max_batch_size)
+            ]
+            import numpy as np
+
+            seeds = (
+                [None] * len(chunks)
+                if options.seed is None
+                else [
+                    int(seed.generate_state(1)[0])
+                    for seed in np.random.SeedSequence(options.seed).spawn(len(chunks))
+                ]
+            )
+            gpu = None
+            from ..sim._cuda import CUDABackend
+
+            if isinstance(self.backend, CUDABackend):
+                import torch
+
+                gpu = torch.cuda.current_device()
+
+            def submit(index, chunk):
+                profile.check_fresh()
+                local = replace(options, seed=seeds[index])
+                with nullcontext() if gpu is None else torch.cuda.device(gpu):
+                    return getattr(self.backend, method)(chunk, *args[1:], options=local)
+
+            def combine(results):
+                return (
+                    np.concatenate(results, axis=0)
+                    if method == "expectations_batch"
+                    else [row for chunk in results for row in chunk]
+                )
+
+            calls = [
+                partial(copy_context().run, submit, i, chunk) for i, chunk in enumerate(chunks)
+            ]
+            pending = PendingBatch(calls, combine)
+            if profile.concurrency == 1:
+                for i, call in enumerate(calls):
+                    pending.take(i, call)
+            else:
+                pool = ThreadPoolExecutor(max_workers=min(profile.concurrency, len(chunks)))
+                try:
+                    futures = [pool.submit(pending.take, i, call) for i, call in enumerate(calls)]
+                    for future in futures:
+                        future.result()
+                finally:
+                    pool.shutdown(wait=True, cancel_futures=True)
+            result = pending.assemble()
+        else:
+            result = getattr(self.backend, method)(*args, options=options)
+        raw = estimate_cost(
+            profile,
+            request,
+            self.scheduler.policy,
+            exact=self.task in {"statevector", "density"}
+            or (self.task == "expectations" and self.backend.capabilities.exact_expectations),
+        )
+        self.scheduler.feedback.observe(key, raw.seconds, time.perf_counter() - start)
+        return result
+
+    def expectations_batch(self, circuits, observables, *, options):
+        return self._invoke("expectations_batch", circuits, circuits, observables, options=options)
+
+    def sample_batch(self, circuits, shots, *, options):
+        return self._invoke("sample_batch", circuits, circuits, shots, options=options)
+
+    def run(self, circuit, *, options):
+        return self._invoke("run", [circuit], circuit, options=options)
+
+    def run_density(self, circuit, *, options):
+        return self._invoke("run_density", [circuit], circuit, options=options)
+
+    def run_native(self, callback, circuit, rows, *, options):
+        return self._invoke(None, (circuit,) * rows, options=options, callback=callback)
+
+
+def configure_runtime(*, policy=None, workload=None, profiles=None, ledger=None):
+    """Install the process-local automatic policy; no credentials/jobs are accessed."""
+    from .backends import _LOCK, _REGISTRY
+
+    backend = CostAwareBackend(
+        policy=SchedulingPolicy() if policy is None else policy,
+        workload=TrainingWorkload() if workload is None else workload,
+        profiles={} if profiles is None else profiles,
+        ledger=ledger,
+    )
+    with _LOCK:
+        _REGISTRY["auto"] = backend
+    return backend
+
+
+@contextmanager
+def runtime_context(*, backend=None, policy=None, workload=None, profiles=None, ledger=None):
+    """Select a scheduler in one thread or async task without changing the registry."""
+    if backend is not None and any(v is not None for v in (policy, workload, profiles, ledger)):
+        raise ValidationError("Select an explicit backend or scheduler options.")
+    from .backends import get_backend
+
+    selected = (
+        get_backend(backend)
+        if backend is not None
+        else CostAwareBackend(
+            policy=SchedulingPolicy() if policy is None else policy,
+            workload=TrainingWorkload() if workload is None else workload,
+            profiles={} if profiles is None else profiles,
+            ledger=ledger,
+        )
+    )
+    token = _RUNTIME_CONTEXT.set(selected)
+    try:
+        yield selected
+    finally:
+        _RUNTIME_CONTEXT.reset(token)

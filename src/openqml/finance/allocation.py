@@ -14,7 +14,7 @@ import numpy as np
 from ..compute import _torch_compiling, compute_operation
 from ..errors import ValidationError
 from ..ir import integer
-from ..parameters import real
+from ..ir.parameters import real
 from ._array import Ops, admission, rows
 from ._linear import linear_solve, matmat
 from .projection import _prox

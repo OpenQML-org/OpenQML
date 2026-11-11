@@ -7,7 +7,7 @@ import numpy as np
 from ..compute import memory_budget
 from ..errors import ValidationError
 from ..ir import integer
-from ..models import Model
+from ..qml.models import Model
 from ._array import admission
 from .validation import PurgedWalkForward
 

@@ -65,7 +65,7 @@ def test_tied_dense_functions_execute_once_and_retain_every_source_group(blocks,
     np.testing.assert_allclose(
         values, np.stack((np.cos(angle) ** blocks, blocks * np.cos(angle)), -1)
     )
-    assert shapes == [(2, 4), (2, 4)]
+    assert shapes == [(2, 4)]  # One fused state pass for each unique function lane.
     report = json.loads(plan.to_json())
     assert report["dense_unique_lanes"] == 1
     assert report["dense_batches"][0]["source_groups"] == [list(range(blocks))]
@@ -88,7 +88,7 @@ def test_independent_parameters_pack_without_aliasing_or_losing_batch_dimensions
     expected = expectations(spec.circuit, spec.observables, values)
     shapes = count_kernels(monkeypatch)
     np.testing.assert_allclose(plan.evaluate(values), expected, atol=3e-14)
-    assert len(shapes) == 2 * math.ceil(5 / cap)
+    assert len(shapes) == math.ceil(5 / cap)
     assert len(plan.dense_batches) == 1
     assert len(plan.dense_batches[0].parameter_slots) == 5
     assert all(s[-3:] == (2, 3, 4) for s in shapes)
@@ -108,7 +108,7 @@ def test_templates_union_readouts_and_reuse_a_state_with_different_source_output
     expected = expectations(c, obs, {"x": 0.4})
     shapes = count_kernels(monkeypatch)
     np.testing.assert_allclose(plan.evaluate({"x": 0.4}), expected, atol=3e-14)
-    assert shapes == [(4,), (4,)]
+    assert shapes == [(4,)]
 
 
 def test_tied_and_untied_angle_occurrences_share_a_template_but_not_a_lane(monkeypatch):
@@ -129,7 +129,7 @@ def test_tied_and_untied_angle_occurrences_share_a_template_but_not_a_lane(monke
     expected = expectations(c, obs, {"x": 0.2, "y": -0.5})
     shapes = count_kernels(monkeypatch)
     np.testing.assert_allclose(plan.evaluate({"x": 0.2, "y": -0.5}), expected, atol=3e-14)
-    assert shapes == [(2, 4)] * 3
+    assert shapes == [(2, 4)]
 
 
 @pytest.mark.parametrize("difference", ["matrix", "operands", "gate", "order"])
@@ -183,7 +183,7 @@ def test_memory_budget_reduces_pack_width_before_allocating(monkeypatch):
     expected = expectations(spec.circuit, spec.observables, values)
     shapes = count_kernels(monkeypatch)
     np.testing.assert_allclose(plan.evaluate(values), expected, atol=3e-14)
-    assert len(shapes) == 6 and all(s == (2, rows, 4) for s in shapes)
+    assert len(shapes) == 3 and all(s == (2, rows, 4) for s in shapes)
     shapes.clear()
     with pytest.raises(ResourceError, match="max_memory_mb"):
         plan.evaluate({n: np.ones(rows * 20) for n in values})
@@ -307,7 +307,6 @@ def test_torch_packed_zero_factors_keep_cross_derivatives_and_compile():
 def test_jax_packed_jit_vmap_hessian_and_flax_generated_weights():
     jax = pytest.importorskip("jax")
     import jax.numpy as jnp
-
     from openqml.interfaces.jax import QuantumLayer
 
     spec = block_spec(3)
@@ -390,7 +389,6 @@ def test_sparse_readout_union_preserves_compiled_native_gradients(backend):
     else:
         jax = pytest.importorskip("jax")
         import jax.numpy as jnp
-
         from openqml.interfaces.jax import QuantumLayer
 
         planned = QuantumLayer.from_spec(spec, execution_method="planned")

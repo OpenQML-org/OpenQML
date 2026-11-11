@@ -49,6 +49,19 @@ def test_persistent_circuit_keeps_dataclass_and_deep_prefix_serialization_contra
     assert restored.operations[-1] == operation
 
 
+def test_pre_prefix_pickle_state_keeps_public_fields():
+    circuit = oq.Circuit(2).h(0).cx(0, 1)
+    restored = object.__new__(oq.Circuit)
+    restored.__setstate__(
+        {
+            name: getattr(circuit, name)
+            for name in ("num_qubits", "operations", "num_clbits", "global_phase")
+        }
+    )
+    assert restored == circuit
+    assert restored.x(1).operations[:-1] == circuit.operations
+
+
 @pytest.mark.parametrize("wires", [(0,), (3,), (0, 3), (3, 0), (1, 2)])
 def test_numpy_local_views_never_gather_input(wires, monkeypatch):
     import openqml.simulator as sim
@@ -121,3 +134,93 @@ def test_whole_graph_circuit_compilation_checks_results_and_derivatives(backend)
         run({"theta": float("nan")})
     with pytest.raises(oq.ValidationError):
         run({"missing": 0.2})
+
+
+@pytest.mark.parametrize("backend", ["torch", "jax"])
+@pytest.mark.parametrize(
+    "channel,expected,derivative",
+    [
+        ("amplitude_damping", np.sqrt(0.8), -0.5 / np.sqrt(0.8)),
+        ("phase_damping", np.sqrt(0.8), -0.5 / np.sqrt(0.8)),
+        ("depolarizing", 1 - 0.8 / 3, -4 / 3),
+        ("bit_flip", 1, 0),
+        ("phase_flip", 0.6, -2),
+    ],
+)
+def test_compiled_physical_channel_retains_domain_checks_and_native_gradients(
+    backend, channel, expected, derivative
+):
+    xp = pytest.importorskip(backend)
+    circuit = getattr(oq.Circuit(1).h(0), channel)(oq.Parameter("gamma"), 0)
+    options = {"compiler": "eager"} if backend == "torch" else {}
+    run = oq.compile_circuit(circuit, [oq.PauliString("X")], backend=backend, **options)
+    value = run({"gamma": 0.2})
+    value = value.detach().numpy() if backend == "torch" else np.asarray(value)
+    np.testing.assert_allclose(value, [expected], atol=2e-7)
+    transform = xp.func.jacrev if backend == "torch" else xp.jacrev
+    gradient = oq.compile_circuit(
+        circuit, [oq.PauliString("X")], backend=backend, transform=transform, **options
+    )({"gamma": 0.2})["gamma"]
+    gradient = gradient.detach().numpy() if backend == "torch" else np.asarray(gradient)
+    np.testing.assert_allclose(gradient, [derivative], atol=2e-7)
+    with pytest.raises(oq.ValidationError):
+        run({"gamma": 1.2})
+
+
+def test_compiled_batch_admission_precedes_input_conversion():
+    torch = pytest.importorskip("torch")
+    circuit = oq.Circuit(2).ry(oq.Parameter("theta"), 0)
+    run = oq.compile_circuit(
+        circuit,
+        [oq.PauliString("ZI")],
+        backend="torch",
+        compiler="eager",
+        max_memory_mb=256 / 2**20,
+    )
+    with pytest.raises(oq.ResourceError):
+        run({"theta": torch.ones(2)})
+    noisy = oq.Circuit(1).amplitude_damping(oq.Parameter("gamma"), 0)
+    run = oq.compile_circuit(
+        noisy, [oq.PauliString("Z")], backend="torch", compiler="eager", max_memory_mb=256 / 2**20
+    )
+    with pytest.raises(oq.ResourceError):
+        run({"gamma": torch.ones(2) * 0.2})
+
+
+def test_independent_checked_programs_do_not_share_recompilation_budget():
+    torch = pytest.importorskip("torch")
+    programs = [
+        oq.compile_compute(
+            lambda value, offset=index: value.square() + offset,
+            backend="torch",
+            compiler="eager",
+            fullgraph=True,
+        )
+        for index in range(12)
+    ]
+    for index, program in enumerate(programs):
+        torch.testing.assert_close(program(torch.tensor(2.0)), torch.tensor(4.0 + index))
+
+
+@pytest.mark.parametrize("backend", ["torch", "jax"])
+def test_compiled_classical_feedback_and_noise_match_density_execution(backend):
+    pytest.importorskip(backend)
+    theta = oq.Parameter("theta")
+    true = oq.Circuit(2).rx(theta / 2, 1).reset(0)
+    false = oq.Circuit(2).ry(theta, 1)
+    circuit = (
+        oq.Circuit(2)
+        .ry(theta, 0)
+        .measure(0, 0)
+        .if_else(oq.ClassicalCondition((0,)), true, false)
+        .phase_flip(0.1, 1)
+    )
+    observable = [oq.PauliString("IX"), oq.PauliString("IZ")]
+    options = {"compiler": "eager"} if backend == "torch" else {}
+    run = oq.compile_circuit(circuit, observable, backend=backend, **options)
+    values = {"theta": np.array([0.2, 0.7])}
+    actual = run(values)
+    actual = actual.detach().numpy() if backend == "torch" else np.asarray(actual)
+    np.testing.assert_allclose(
+        actual, oq.expectations(circuit, observable, values, backend="numpy"), atol=2e-7
+    )

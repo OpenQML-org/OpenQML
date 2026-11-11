@@ -8,7 +8,7 @@ import numpy as np
 from ..compute import compute_operation, memory_budget
 from ..errors import ValidationError
 from ..ir import integer
-from ..parameters import real
+from ..ir.parameters import real
 from ._array import Ops, admission, rows
 
 

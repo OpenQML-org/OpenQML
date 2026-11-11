@@ -5,7 +5,7 @@ from typing import NamedTuple
 import numpy as np
 
 from ..errors import ValidationError
-from ..parameters import real
+from ..ir.parameters import real
 from ._array import Ops, admission, rows
 from .risk import expected_shortfall
 

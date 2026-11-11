@@ -35,7 +35,27 @@ compatibility checks and output budgets use the same conversion pipeline.
 Use `plan_conversion` for repeated exports or partial binding; see
 [interoperability](interoperability.md).
 
-## Scope in 0.21
+## Package organization
+
+The implementation is grouped by responsibility. The root API remains the
+shortest entry point; published module import paths resolve lazily to the same
+canonical implementations.
+
+| Package | Responsibility |
+| --- | --- |
+| `ir` | Circuit construction, expressions, observables and compiler passes |
+| `compute` | Shared native primitives, contractions, admission and metadata caches |
+| `sim` | Dense/structured simulation, measurement, mitigation and execution plans |
+| `autodiff` | Differentiation, checked compilation, geometry and optimization |
+| `qml` | Hybrid architectures, layers, supervised training and framework interfaces |
+| `interop` | Conversion, semantics, SDK adapters and provider primitives |
+| `runtime` | Scheduling, backend capabilities, costs, configuration and job recovery |
+| `finance` | Financial objectives, allocations, risk and chronological evaluation |
+
+For example, `openqml.simulator` and `openqml.sim.dense` identify the same
+module. Compatibility does not create a second set of registries or classes.
+
+## Application scope
 
 The public package covers hybrid AI, quantitative research and circuit
 interoperability. RL/PPO and standalone tensor-network layers, compression and
@@ -43,6 +63,23 @@ plan APIs have been removed. Tensor contraction, compressed projections and MPS
 execution remain private implementations of the shared compute service.
 Imports and checkpoints belonging to the removed standalone models are no
 longer supported. The optional contraction-search extra is `openqml[compute]`.
+
+## Compiled circuits
+
+`compile_circuit(circuit,observables=None,backend="jax",...)` returns a callable
+accepting a parameter mapping. With observables it returns native expectation
+arrays; otherwise it returns a pure statevector. Use `backend="torch"` for
+TorchInductor or `backend="jax"` for XLA. Gate dispatch, evolution and readout
+are traced together. Compilation is explicit and the first invocation includes
+tracing/code generation.
+
+Pass `transform=jax.jacrev` or `transform=torch.func.jacrev` to compile a
+derivative before the checked result boundary. The returned mapping uses the
+input parameter names. The callable captures its compute policy, validates
+batch admission before conversion, and raises finite-result failures at the
+host boundary. Shapes are specialized by default; shape/dtype/device changes
+can trigger additional compilation under the native compiler's rules.
+See [execution lowering](compute.md#circuit-construction-and-execution-lowering).
 
 ## Supervised models
 

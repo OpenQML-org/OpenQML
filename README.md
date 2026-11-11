@@ -84,6 +84,12 @@ remain available. Shared caches hold bounded,
 immutable planning metadata; trainable tensors stay in each forward pass.
 [Compute policies and numerical contracts](https://github.com/OpenQML-org/OpenQML/blob/main/docs/compute.md).
 
+`Circuit.append` shares immutable prefix chunks. Local NumPy execution fuses
+single/two-wire gate groups and applies them through tensor views. Use
+`compile_circuit` to compile a complete native circuit and its declared readouts.
+Implementations are organized in responsibility packages; the root API and
+published module imports remain available.
+
 [API](https://github.com/OpenQML-org/OpenQML/blob/main/docs/api.md) · [Training and validation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md) · [Quantitative research](https://github.com/OpenQML-org/OpenQML/blob/main/docs/finance.md) · [Interoperability](https://github.com/OpenQML-org/OpenQML/blob/main/docs/interoperability.md) · [Runtime](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md)
 
 ## License

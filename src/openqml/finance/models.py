@@ -5,12 +5,12 @@ from typing import NamedTuple
 
 import numpy as np
 
-from .._hybrid_operators import OperatorSpec
-from ..architecture import HybridArchitecture, QuantumCellSpec
 from ..compute import get_compute_kernel, memory_budget
 from ..errors import ValidationError
 from ..ir import integer
-from ..parameters import real
+from ..ir.parameters import real
+from ..qml.architecture import HybridArchitecture, QuantumCellSpec
+from ..qml.operators import OperatorSpec
 from ._array import Ops, admission, rows
 from .risk import factor_risk, quantile_loss
 

@@ -4,11 +4,11 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..amplitude import AmplitudeEstimationPlan, AmplitudeOracle
 from ..compute import memory_budget
 from ..errors import ResourceError, ValidationError
 from ..ir import Circuit, CircuitBuilder, integer
-from ..parameters import real
+from ..ir.parameters import real
+from ..sim.amplitude import AmplitudeEstimationPlan, AmplitudeOracle
 from ._array import Ops, admission
 from ._results import PayoffEstimate
 from .quantum import _fixed
@@ -139,7 +139,7 @@ class PayoffOraclePlan:
         return self.discount * ops.sum(p * ops.array(self.payoffs))
 
     def estimate(self, plan=None, *, backend="auto", **options):
-        from ..adaptive_amplitude import AdaptiveAmplitudeEstimationPlan
+        from ..sim.adaptive_amplitude import AdaptiveAmplitudeEstimationPlan
 
         if plan is None:
             plan = AmplitudeEstimationPlan.geometric()

@@ -30,8 +30,8 @@ def resolve(name, package, exports, modules, namespace):
         expected = _DEPENDENCIES.get(name, ())
         if not expected or (exc.name is not None and exc.name not in expected):
             raise
-        from ._dependencies import install_hint
         from .errors import MissingDependencyError
+        from .runtime._dependencies import install_hint
 
         raise MissingDependencyError(f"Cannot load {name}. Run: {install_hint(name)}.") from exc
     value = loaded if symbol is None else getattr(loaded, symbol)
