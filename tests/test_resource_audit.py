@@ -179,7 +179,7 @@ def test_large_numpy_contraction_uses_bounded_tiles_and_preserves_batched_matric
 
     rng = np.random.default_rng(1)
     state = rng.normal(size=(2, 3, 2**14)).astype(complex)
-    matrix = rng.normal(size=(2, 1, 4, 4)).astype(complex)
+    matrix = rng.normal(size=(2, 1, 8, 8)).astype(complex)
     original, calls = np.matmul, []
 
     def checked(matrix, block, **kwargs):
@@ -188,11 +188,11 @@ def test_large_numpy_contraction_uses_bounded_tiles_and_preserves_batched_matric
         return original(matrix, block, **kwargs)
 
     monkeypatch.setattr(np, "matmul", checked)
-    result = sim._apply_matrix(state, matrix, (13, 3), 14, sim._TensorOps())
+    result = sim._apply_matrix(state, matrix, (13, 3, 7), 14, sim._TensorOps())
     assert len(calls) > 1 and max(calls) <= 1 << 20
     for i in range(2):
         for j in range(3):
-            expected = sim._apply_numpy(state[i, j], matrix[i, 0], (13, 3), 14)
+            expected = sim._apply_numpy(state[i, j], matrix[i, 0], (13, 3, 7), 14)
             np.testing.assert_allclose(result[i, j], expected, atol=1e-12)
 
 

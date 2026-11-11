@@ -4,7 +4,7 @@ from typing import NamedTuple
 
 import torch
 
-from .compute import ComputeKernel
+from .compute import ComputeKernel, _ByteBudget
 
 
 @torch._dynamo.assume_constant_result
@@ -24,6 +24,14 @@ def _policy_snapshot():
     )
 
 
+@torch._dynamo.assume_constant_result
+def _budget_snapshot(requested):
+    from .compute import _COMPUTE_CONTEXT, _KERNEL
+
+    kernel = _COMPUTE_CONTEXT.get() or _KERNEL
+    return tuple(kernel._prepare_budget(requested))
+
+
 class _GraphPolicy(NamedTuple):
     max_memory_mb: float | None
     cache_entries: int
@@ -39,6 +47,15 @@ class _GraphKernel(ComputeKernel):
         self._policy = _GraphPolicy(*snapshot[:5])
         self._memory_bytes = snapshot[5]
         self._source_id = snapshot[6]
+        self._default_budget = _ByteBudget(
+            min(256.0, self._policy.max_memory_mb)
+            if self._policy.max_memory_mb is not None
+            else 256.0,
+            min(256 << 20, self._memory_bytes) if self._memory_bytes is not None else 256 << 20,
+        )
+
+    def _prepare_budget(self, requested=256):
+        return _ByteBudget(*_budget_snapshot(requested))
 
 
 def captured_kernel():

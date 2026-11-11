@@ -54,6 +54,18 @@ _FIXED["ch"][2:, 2:] = _FIXED["h"]
 _FIXED["cswap"] = np.eye(8, dtype=complex)
 _FIXED["cswap"][4:, 4:] = _FIXED["swap"]
 _FIXED["iswap"] = np.array([[1, 0, 0, 0], [0, 0, 1j, 0], [0, 1j, 0, 0], [0, 0, 0, 1]])
+_FIXED_VALUES = {
+    name: tuple(tuple(complex(value) for value in row) for row in matrix)
+    for name, matrix in _FIXED.items()
+}
+_PAULI_PRODUCTS = {
+    name: np.kron(value, value) for name, value in (("rxx", _X), ("ryy", _Y), ("rzz", _Z))
+}
+_PAULI_VALUES = {
+    name: tuple(tuple(complex(value) for value in row) for row in matrix)
+    for name, matrix in _PAULI_PRODUCTS.items()
+}
+_IDENTITY4 = tuple(tuple(complex(value) for value in row) for row in np.eye(4))
 
 
 class _TensorOps(KernelOps):
@@ -127,8 +139,10 @@ class _TensorOps(KernelOps):
 def _gate_matrix(name, params, ops, matrix=None):
     if name == "unitary":
         return ops.array(matrix)
-    if name in _FIXED:
-        return ops.array(_FIXED[name])
+    if name in _FIXED_VALUES:
+        # Tensor factories from immutable scalars stay inside function transforms.
+        # A global NumPy -> Tensor alias gives Dynamo an invalid GradWrapper guard.
+        return ops.array(_FIXED_VALUES[name] if ops.backend == "torch" else _FIXED[name])
     angle = ops.array(params[0], real_value=True)
     c, s = ops.xp.cos(angle / 2), ops.xp.sin(angle / 2)
     if name == "rx":
@@ -162,20 +176,72 @@ def _gate_matrix(name, params, ops, matrix=None):
             ]
         )
     if name in {"rxx", "ryy", "rzz"}:
-        pauli = {"rxx": _X, "ryy": _Y, "rzz": _Z}[name]
-        return c[..., None, None] * ops.array(np.eye(4)) - 1j * s[..., None, None] * ops.array(
-            np.kron(pauli, pauli)
+        pauli = _PAULI_VALUES[name] if ops.backend == "torch" else _PAULI_PRODUCTS[name]
+        return c[..., None, None] * ops.array(_IDENTITY4) - 1j * s[..., None, None] * ops.array(
+            pauli
         )
     raise ValidationError(f"No matrix for gate {name!r}.")
 
 
 def _apply_numpy(state, matrix, qubits, num_qubits):
-    """Apply local matrices through bounded gather/matmul/scatter tiles.
+    """Use strided tensor views for one/two wires; tile larger local operators.
 
-    One output state is allocated. Work tiles target one MiB, with a minimum
-    of one local column; no whole-state permutation or index table is built.
-    Input/matrix storage and backend BLAS workspaces are separate.
+    Adjacent wires use batched GEMM views. Separated pairs use basic strided
+    slices and one reusable quarter-state product buffer, skipping scalar zero
+    coefficients. Larger local operators retain approximately one MiB tiles.
+    No one/two-wire input permutation or index table is materialized.
     """
+    if len(qubits) in (1, 2):
+        batch_shape = state.shape[:-1]
+        wires = sorted(qubits)
+        shape, previous = [], -1
+        for wire in wires:
+            shape.extend((1 << (wire - previous - 1), 2))
+            previous = wire
+        shape.append(1 << (num_qubits - previous - 1))
+        tensor = state.reshape(batch_shape + tuple(shape))
+        result = np.empty(state.shape, dtype=np.result_type(state, matrix))
+        target = result.reshape(batch_shape + tuple(shape))
+        if len(wires) == 2 and tuple(qubits) != tuple(wires):
+            rank = matrix.ndim - 2
+            local = matrix.reshape(matrix.shape[:-2] + (2, 2, 2, 2))
+            matrix = local.transpose(
+                tuple(range(rank)) + (rank + 1, rank, rank + 3, rank + 2)
+            ).reshape(matrix.shape)
+        if len(wires) == 1 or wires[1] == wires[0] + 1:
+            grouped = batch_shape + (shape[0], 1 << len(wires), shape[-1])
+            get_compute_kernel().matmul(
+                matrix[..., None, :, :], tensor.reshape(grouped), out=target.reshape(grouped)
+            )
+            return result
+        selectors = [
+            (..., slice(None), first, slice(None), second, slice(None))
+            for first in range(2)
+            for second in range(2)
+        ]
+        source = tuple(tensor[index] for index in selectors)
+        scratch = np.empty(source[0].shape, dtype=result.dtype)
+        scalar = matrix.ndim == 2
+        for row, index in enumerate(selectors):
+            destination, first = target[index], True
+            for column, value in enumerate(source):
+                coefficient = matrix[..., row, column]
+                if scalar and coefficient == 0:
+                    continue
+                output = destination if first else scratch
+                if scalar and coefficient == 1:
+                    np.copyto(output, value)
+                elif scalar and coefficient == -1:
+                    np.negative(value, out=output)
+                else:
+                    coefficient = coefficient.reshape(coefficient.shape + (1, 1, 1))
+                    np.multiply(value, coefficient, out=output)
+                if not first:
+                    np.add(destination, scratch, out=destination)
+                first = False
+            if first:
+                destination.fill(0)
+        return result
     dimension = 1 << len(qubits)
     columns = 1 << (num_qubits - len(qubits))
     batch = max(1, state.size // state.shape[-1])
@@ -210,10 +276,8 @@ def _apply_numpy(state, matrix, qubits, num_qubits):
 
 def _apply_matrix(state, matrix, qubits, num_qubits, ops):
     """Apply only a local 2**k matrix, without constructing a 2**n square unitary."""
-    if (
-        ops.backend == "numpy"
-        and state.size >= 65_536
-        and tuple(qubits) != tuple(range(len(qubits)))
+    if ops.backend == "numpy" and (
+        len(qubits) <= 2 or (state.size >= 65_536 and tuple(qubits) != tuple(range(len(qubits))))
     ):
         return _apply_numpy(state, matrix, qubits, num_qubits)
     batch_shape = tuple(state.shape[:-1])
@@ -231,18 +295,15 @@ def _apply_matrix(state, matrix, qubits, num_qubits, ops):
 def _resource_check(circuit, max_qubits, max_memory_mb, batch_size=1):
     if max_qubits is not None:
         integer(max_qubits, "max_qubits", 1)
-    budget = memory_budget(max_memory_mb)
-    if budget <= 0:
-        raise ValidationError("max_memory_mb must be positive.")
+    budget = get_compute_kernel()._prepare_budget(max_memory_mb)
     # Four state buffers; autodiff graphs may retain additional memory.
-    numerator, denominator = budget.as_integer_ratio()
-    capacity = ((numerator << 20) // denominator) >> (circuit.num_qubits + 6)
+    capacity = budget.max_bytes >> (circuit.num_qubits + 6)
     if max(1, batch_size) > capacity or (
         max_qubits is not None and circuit.num_qubits > max_qubits
     ):
         raise ResourceError(
             f"Dense simulation of {circuit.num_qubits} qubits exceeds "
-            f"max_qubits={max_qubits} or working budget={budget:g} MiB. "
+            f"max_qubits={max_qubits} or working budget={budget.memory_mb:g} MiB. "
             "Configure explicit limits or use a different simulator."
         )
 
@@ -258,7 +319,54 @@ def _checkpoint_interval(circuit, backend, value):
     return value
 
 
-def _evolve_unitary(state, operations, bindings, num_qubits, ops, checkpoint_interval):
+def _evolve_numpy_fused(state, operations, bindings, num_qubits, ops, max_memory_mb):
+    from ._gate_fusion import FixedMatrix, embed_numpy, fusion_program
+
+    kernel = get_compute_kernel()
+    budget = kernel._prepare_budget(max_memory_mb)
+    program = fusion_program(operations, num_qubits)
+    for group in program.groups:
+        shape = np.broadcast_shapes(*(bindings[name].shape for name in group.parameters))
+        matrix_rows = max(1, math.prod(shape))
+        dimension = 1 << len(group.qubits)
+        required = (2 * state.size + 3 * matrix_rows * dimension**2) * 16
+        if required > budget.max_bytes or len(group.qubits) > 2:
+            for operation in group.operations:
+                matrix = _gate_matrix(
+                    operation.name,
+                    [p.evaluate(bindings) for p in operation.params],
+                    ops,
+                    operation.matrix,
+                )
+                state = _apply_matrix(state, matrix, operation.qubits, num_qubits, ops)
+            continue
+        combined = None
+        for piece in group.pieces:
+            if isinstance(piece, FixedMatrix):
+                matrix = np.asarray(piece.values, dtype=complex)
+            else:
+                matrix = _gate_matrix(
+                    piece.name, [p.evaluate(bindings) for p in piece.params], ops, piece.matrix
+                )
+                matrix = embed_numpy(matrix, piece.qubits, group.qubits)
+            combined = matrix if combined is None else kernel.matmul(matrix, combined)
+        state = _apply_matrix(state, combined, group.qubits, num_qubits, ops)
+    return state
+
+
+def _evolve_unitary(
+    state,
+    operations,
+    bindings,
+    num_qubits,
+    ops,
+    checkpoint_interval,
+    *,
+    fusion=True,
+    max_memory_mb=256,
+):
+    if ops.backend == "numpy" and fusion:
+        return _evolve_numpy_fused(state, operations, bindings, num_qubits, ops, max_memory_mb)
     if checkpoint_interval is None:
         for operation in operations:
             if operation.name != "barrier":
@@ -338,6 +446,7 @@ def statevector(
     max_memory_mb: float = 256,
     batch_shape=None,
     checkpoint_interval=None,
+    fusion=True,
 ):
     """Return a pure state, q0-most-significant. Measurement requires sample/execute.
 
@@ -346,6 +455,8 @@ def statevector(
     checkpoint_interval recomputes native unitary gate segments during backward
     to retain fewer activations; it does not change the circuit or state.
     """
+    if type(fusion) is not bool:
+        raise ValidationError("fusion must be a boolean.")
     checkpoint_interval = _checkpoint_interval(circuit, backend, checkpoint_interval)
     _resource_check(circuit, max_qubits, max_memory_mb)
     if circuit.has_effects:
@@ -388,6 +499,7 @@ def statevector(
                         max_qubits=max_qubits,
                         max_memory_mb=max_memory_mb,
                         batch_shape=batch_shape,
+                        fusion=fusion,
                     )
 
                 result = (
@@ -430,7 +542,14 @@ def statevector(
     _resource_check(circuit, max_qubits, max_memory_mb, math.prod(shape))
     state = _initial_state(circuit.num_qubits, shape, ops)
     state = _evolve_unitary(
-        state, circuit.operations, bindings, circuit.num_qubits, ops, checkpoint_interval
+        state,
+        circuit.operations,
+        bindings,
+        circuit.num_qubits,
+        ops,
+        checkpoint_interval,
+        fusion=fusion,
+        max_memory_mb=max_memory_mb,
     )
     phase = ops.array(circuit.global_phase.evaluate(bindings), real_value=True)
     return state * ops.xp.exp(1j * phase)[..., None]

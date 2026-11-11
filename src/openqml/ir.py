@@ -8,6 +8,7 @@ from numbers import Integral
 
 import numpy as np
 
+from ._operation_buffer import OperationBuffer, OperationView
 from .errors import ValidationError
 from .parameters import Expression, expression
 
@@ -56,6 +57,7 @@ UNITARY_GATES = GATES_V3 - {"measure", "barrier"}
 GATES.update({name: (1, 1) for name in CHANNEL_GATES - {"kraus"}})
 GATES.update({"kraus": (None, 0), "reset": (1, 0), "if_else": (0, 0)})
 IR_VERSION = 4
+_ZERO_PHASE = Expression()
 GATES_V2 = GATES_V3 - {"unitary"}
 GATES_V1 = GATES_V2 - {"u", "sxdg", "cp", "crx", "cry", "crz", "ch", "cswap", "iswap"}
 
@@ -321,20 +323,45 @@ def _operation_items(operations):
         raise ValidationError("Operations require an iterable of Operation objects.") from exc
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class Circuit(_CircuitGates):
     num_qubits: int
-    operations: tuple[Operation, ...] = ()
+    operations: tuple[Operation, ...] = OperationView()
     num_clbits: int = 0
-    global_phase: Expression = Expression()
+    global_phase: Expression = _ZERO_PHASE
+
+    def __init__(self, num_qubits, operations=(), num_clbits=0, global_phase=_ZERO_PHASE):
+        object.__setattr__(self, "num_qubits", num_qubits)
+        object.__setattr__(self, "num_clbits", num_clbits)
+        object.__setattr__(self, "global_phase", global_phase)
+        object.__setattr__(
+            self, "_buffer", OperationBuffer.from_tuple(_operation_items(operations))
+        )
+        self.__post_init__()
 
     def __post_init__(self):
         object.__setattr__(self, "num_qubits", integer(self.num_qubits, "num_qubits", 1))
         object.__setattr__(self, "num_clbits", integer(self.num_clbits, "num_clbits"))
-        object.__setattr__(self, "operations", tuple(self.operations))
         object.__setattr__(self, "global_phase", expression(self.global_phase))
         for op in self.operations:
             _validate_operation(op, self.num_qubits, self.num_clbits)
+
+    def _spawn(self, buffer, *, num_clbits=None, global_phase=None):
+        width = self.num_clbits if num_clbits is None else num_clbits
+        phase = self.global_phase if global_phase is None else global_phase
+        if type(self) is not Circuit:
+            return replace(self, operations=buffer.as_tuple(), num_clbits=width, global_phase=phase)
+        result = object.__new__(Circuit)
+        object.__setattr__(result, "num_qubits", self.num_qubits)
+        object.__setattr__(result, "num_clbits", width)
+        object.__setattr__(result, "global_phase", phase)
+        object.__setattr__(result, "_buffer", buffer)
+        return result
+
+    def __reduce__(self):
+        # Serialize the flat public representation, without recursing through
+        # a potentially very long persistent prefix chain.
+        return type(self), (self.num_qubits, self.operations, self.num_clbits, self.global_phase)
 
     @property
     def parameters(self) -> tuple[str, ...]:
@@ -382,12 +409,16 @@ class Circuit(_CircuitGates):
         return replace(self, operations=tuple(operations))
 
     def append(self, operation: Operation) -> Circuit:
-        """Return an immutable copy in O(n); use CircuitBuilder for repeated appends."""
-        return replace(self, operations=self.operations + (operation,))
+        """Append in amortized O(1), sharing validated immutable prefix chunks."""
+        _validate_operation(operation, self.num_qubits, self.num_clbits)
+        return self._spawn(self._buffer.append(operation))
 
     def extend(self, operations) -> Circuit:
-        """Append an iterable in one immutable O(n + m) construction."""
-        return replace(self, operations=self.operations + _operation_items(operations))
+        """Validate and append m operations in O(m), sharing the existing prefix."""
+        operations = _operation_items(operations)
+        for operation in operations:
+            _validate_operation(operation, self.num_qubits, self.num_clbits)
+        return self._spawn(self._buffer.extend(operations))
 
     def if_else(self, condition, when_true, when_false=None):
         if not isinstance(condition, ClassicalCondition):
@@ -398,7 +429,7 @@ class Circuit(_CircuitGates):
         width = max(
             self.num_clbits, max(condition.bits) + 1, when_true.num_clbits, when_false.num_clbits
         )
-        return replace(self, num_clbits=width).append(
+        return self._spawn(self._buffer, num_clbits=width).append(
             Operation("if_else", (), condition=condition, blocks=(when_true, when_false))
         )
 
@@ -463,9 +494,10 @@ class Circuit(_CircuitGates):
             )
 
         mapped = tuple(remap(op) for op in other.operations)
-        return replace(
-            self,
-            operations=self.operations + mapped,
+        for operation in mapped:
+            _validate_operation(operation, self.num_qubits, width)
+        return self._spawn(
+            self._buffer.extend(mapped),
             num_clbits=width,
             global_phase=self.global_phase + other.global_phase,
         )
@@ -478,20 +510,17 @@ class Circuit(_CircuitGates):
 
     def measure(self, qubit: int, cbit: int | None = None) -> Circuit:
         cbit = integer(qubit if cbit is None else cbit, "classical bit")
-        return replace(self, num_clbits=max(self.num_clbits, cbit + 1)).append(
+        return self._spawn(self._buffer, num_clbits=max(self.num_clbits, cbit + 1)).append(
             Operation("measure", (qubit,), clbits=(cbit,))
         )
 
     def measure_all(self) -> Circuit:
-        return replace(
-            self,
-            num_clbits=max(self.num_clbits, self.num_qubits),
-            operations=self.operations
-            + tuple(Operation("measure", (q,), clbits=(q,)) for q in range(self.num_qubits)),
+        return self._spawn(self._buffer, num_clbits=max(self.num_clbits, self.num_qubits)).extend(
+            Operation("measure", (q,), clbits=(q,)) for q in range(self.num_qubits)
         )
 
     def with_global_phase(self, phase) -> Circuit:
-        return replace(self, global_phase=expression(phase))
+        return self._spawn(self._buffer, global_phase=expression(phase))
 
     def substitute(self, mapping) -> Circuit:
         """Replace named symbols simultaneously with real scalars or expressions.

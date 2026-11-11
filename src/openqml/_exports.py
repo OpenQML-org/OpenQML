@@ -1,6 +1,7 @@
 """Public APIs for hybrid AI, quantitative research and circuit conversion."""
 
 EXPORTS = {
+    "compile_circuit": ("._circuit_compile", "compile_circuit"),
     "ReadoutMitigation": (".mitigation", "ReadoutMitigation"),
     "MitigatedEstimate": (".mitigation", "MitigatedEstimate"),
     "ExtrapolationResult": (".mitigation", "ExtrapolationResult"),
@@ -262,6 +263,7 @@ MODULES = {
 }
 
 PUBLIC = [
+    "compile_circuit",
     "ReadoutMitigation",
     "MitigatedEstimate",
     "ExtrapolationResult",

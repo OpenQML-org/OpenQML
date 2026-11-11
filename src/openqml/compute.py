@@ -15,6 +15,7 @@ from dataclasses import dataclass, fields, is_dataclass
 from functools import wraps
 from numbers import Integral, Real
 from threading import RLock
+from typing import NamedTuple
 
 import numpy as np
 
@@ -138,6 +139,16 @@ class _PlanCache(SingleFlightCache):
         )
 
 
+class _ByteBudget(NamedTuple):
+    memory_mb: float
+    max_bytes: int
+
+    def check_bytes(self, required):
+        """Internal admission for already validated, concrete byte counts."""
+        if required > self.max_bytes:
+            raise ResourceError("Compute workspace exceeds the budget.")
+
+
 @dataclass(frozen=True)
 class _BinaryGEMM:
     left_axes: tuple
@@ -239,6 +250,12 @@ class ComputeKernel:
         else:
             numerator, denominator = self.policy.max_memory_mb.as_integer_ratio()
             self._memory_bytes = (numerator << 20) // denominator
+        self._default_budget = _ByteBudget(
+            min(256.0, self.policy.max_memory_mb)
+            if self.policy.max_memory_mb is not None
+            else 256.0,
+            min(256 << 20, self._memory_bytes) if self._memory_bytes is not None else 256 << 20,
+        )
         self._plans = _PlanCache(self.policy)
 
     @property
@@ -250,7 +267,33 @@ class ComputeKernel:
         cap = self.policy.max_memory_mb
         return requested if cap is None else min(requested, cap)
 
+    def _prepare_budget(self, requested=256):
+        if type(requested) in (int, float) and requested == 256:
+            return self._default_budget
+        budget = self.memory_budget(requested)
+        numerator, denominator = budget.as_integer_ratio()
+        return _ByteBudget(budget, (numerator << 20) // denominator)
+
     def admit(self, elements, max_memory_mb=256, *, itemsize=16, work=0, max_work=None):
+        # Common eager/static dimensions need neither ABC dispatch nor repeated
+        # float-to-byte conversion. Symbolic/native integers use the checked path.
+        if (
+            type(elements) is int
+            and type(itemsize) is int
+            and type(work) is int
+            and elements >= 0
+            and itemsize > 0
+            and work >= 0
+            and (max_work is None or (type(max_work) is int and max_work >= 0))
+            and (
+                (type(max_memory_mb) in (int, float) and max_memory_mb == 256)
+                or not _torch_compiling()
+            )
+        ):
+            budget = self._prepare_budget(max_memory_mb)
+            if elements * itemsize > budget.max_bytes or (max_work is not None and work > max_work):
+                raise ResourceError("Compute workspace or arithmetic estimate exceeds the budget.")
+            return budget.memory_mb
         for name, value in (("elements", elements), ("itemsize", itemsize), ("work", work)):
             if isinstance(value, bool) or not isinstance(value, Integral) or value < 0:
                 raise ValidationError(f"{name} must be a nonnegative integer.")

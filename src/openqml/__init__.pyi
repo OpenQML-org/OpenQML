@@ -504,6 +504,7 @@ __version__: str
 __all__: list[str]
 
 from . import adaptive_amplitude as adaptive_amplitude
+from ._circuit_compile import compile_circuit as compile_circuit
 from ._compiled import compile_compute as compile_compute
 from .compute import (
     ComputeKernel as ComputeKernel,
