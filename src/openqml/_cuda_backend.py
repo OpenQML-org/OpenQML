@@ -84,7 +84,7 @@ class CUDABackend:
             except ResourceError:
                 if prototype.has_effects:
                     raise
-                from .tensor_contraction import TensorNetworkPlan
+                from ._tensor_contraction import TensorNetworkPlan
 
                 return TensorNetworkPlan(
                     prototype, observables, max_memory_mb=options.max_memory_mb

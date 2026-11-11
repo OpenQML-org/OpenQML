@@ -5,11 +5,11 @@ from typing import NamedTuple
 
 import numpy as np
 
+from .._hybrid_operators import OperatorSpec
 from ..architecture import HybridArchitecture, QuantumCellSpec
 from ..compute import get_compute_kernel, memory_budget
 from ..errors import ValidationError
 from ..ir import integer
-from ..network_operators import OperatorSpec
 from ..parameters import real
 from ._array import Ops, admission, rows
 from .risk import factor_risk, quantile_loss

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openqml"
-version = "0.20.0"
+version = "0.21.0"
 description = "Quantum-classical hybrid AI, quantitative research and cross-framework quantum programming"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -42,7 +42,7 @@ aer = ["qiskit[qasm3-import]>=1.2", "qiskit-aer>=0.15", "sympy>=1.12"]
 qasm = ["qiskit[qasm3-import]>=1.2", "openqasm3[parser]>=1.0", "sympy>=1.12"]
 flax = ["jax>=0.4.30", "flax>=0.10", "optax>=0.2"]
 symbolic = ["sympy>=1.12"]
-tensor = [
+compute = [
   # Older PennyLane builds on Python 3.10 and Intel macOS require autoray 0.7.
   "cotengra>=0.7.5,<0.8; python_version < '3.11' or (platform_system == 'Darwin' and platform_machine == 'x86_64')",
   "autoray>=0.7.2,<0.8; python_version < '3.11' or (platform_system == 'Darwin' and platform_machine == 'x86_64')",

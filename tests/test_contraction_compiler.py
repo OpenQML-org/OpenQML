@@ -8,6 +8,7 @@ import pytest
 
 import openqml as q
 from openqml._contraction_program import ContractionKernel
+from openqml._tensor_contraction import TensorNetworkPlan
 from openqml.simulator import _TensorOps
 
 
@@ -34,14 +35,14 @@ def circuit(seed=1, n=6, depth=6):
 @pytest.mark.parametrize("seed", range(4))
 def test_portfolio_reduces_arithmetic_and_preserves_independent_dense_values(seed):
     c, obs = circuit(seed), (q.PauliString("ZZZZZZ"), q.PauliString("XYZXYZ"))
-    greedy = q.TensorNetworkPlan(c, obs)
-    optimized = q.TensorNetworkPlan(c, obs, optimizer="portfolio")
+    greedy = TensorNetworkPlan(c, obs)
+    optimized = TensorNetworkPlan(c, obs, optimizer="portfolio")
     before = sum(g[6] for g in greedy._graphs)
     after = sum(g[6] for g in optimized._graphs)
     assert after < before
     expected = q.expectations(c, obs, backend="numpy")
     np.testing.assert_allclose(optimized.evaluate(), expected, atol=3e-14)
-    assert optimized.to_dict() == q.TensorNetworkPlan(c, obs, optimizer="portfolio").to_dict()
+    assert optimized.to_dict() == TensorNetworkPlan(c, obs, optimizer="portfolio").to_dict()
     assert optimized.working_bytes <= optimized.max_memory_mb * 2**20
 
 
@@ -66,8 +67,8 @@ def shared_circuit():
 
 def test_demand_reuse_skips_subtrees_and_never_keeps_previous_bindings():
     c, obs = shared_circuit()
-    baseline = q.TensorNetworkPlan(c, obs)
-    reused = q.TensorNetworkPlan(c, obs, optimizer="portfolio", reuse_intermediates=True)
+    baseline = TensorNetworkPlan(c, obs)
+    reused = TensorNetworkPlan(c, obs, optimizer="portfolio", reuse_intermediates=True)
     for angle in (0.2, -0.4, 0.7):
         bindings = {"a": np.array([angle, angle + 0.1]), "b": 0.3}
         expected, first = baseline.evaluate(bindings, return_report=True)
@@ -82,9 +83,9 @@ def test_demand_reuse_skips_subtrees_and_never_keeps_previous_bindings():
 def test_portfolio_slicing_preserves_every_assignment_under_memory_pressure(reuse):
     c = circuit(0, n=10, depth=8)
     obs = (q.PauliString("Z" * 10), q.PauliString("X" + "Z" * 9))
-    whole = q.TensorNetworkPlan(c, obs, max_memory_mb=64, max_flops=10**11)
+    whole = TensorNetworkPlan(c, obs, max_memory_mb=64, max_flops=10**11)
     budget = (whole._metadata_bytes + 0.55 * (whole.working_bytes - whole._metadata_bytes)) / 2**20
-    sliced = q.TensorNetworkPlan(
+    sliced = TensorNetworkPlan(
         c,
         obs,
         optimizer="portfolio",
@@ -104,7 +105,7 @@ def test_portfolio_slicing_preserves_every_assignment_under_memory_pressure(reus
 def test_torch_reused_subtree_gradients_hessians_and_report_snapshot(rematerialize):
     torch = pytest.importorskip("torch")
     c, obs = shared_circuit()
-    plan = q.TensorNetworkPlan(
+    plan = TensorNetworkPlan(
         c,
         obs,
         optimizer="portfolio",
@@ -126,7 +127,7 @@ def test_torch_reused_subtree_gradients_hessians_and_report_snapshot(remateriali
     )
     snapshot = dict(report)
     gradient = torch.autograd.grad(actual.square().sum(), values)[0]
-    reference = q.TensorNetworkPlan(c, obs).evaluate(
+    reference = TensorNetworkPlan(c, obs).evaluate(
         {"a": values[0], "b": values[1]},
         backend="torch",
         like=values,
@@ -144,10 +145,10 @@ def test_jax_reuse_jit_vmap_hessian_and_rematerialization():
     jax = pytest.importorskip("jax")
     jnp = pytest.importorskip("jax.numpy")
     c, obs = shared_circuit()
-    plan = q.TensorNetworkPlan(
+    plan = TensorNetworkPlan(
         c, obs, optimizer="portfolio", reuse_intermediates=True, rematerialize=True
     )
-    dense = q.TensorNetworkPlan(c, obs)
+    dense = TensorNetworkPlan(c, obs)
 
     def evaluate(v, current):
         return current.evaluate({"a": v[0], "b": v[1]}, backend="jax", like=v).sum()
@@ -174,7 +175,7 @@ def test_cache_eviction_changes_work_only(monkeypatch):
     original = ContractionReuse.__init__
     monkeypatch.setattr(ContractionReuse, "__init__", lambda self, budget: original(self, 400))
     c, obs = shared_circuit()
-    plan = q.TensorNetworkPlan(c, obs, optimizer="portfolio", reuse_intermediates=True)
+    plan = TensorNetworkPlan(c, obs, optimizer="portfolio", reuse_intermediates=True)
     binding = {"a": 0.5, "b": -0.4}
     actual, report = plan.evaluate(binding, return_report=True)
     np.testing.assert_allclose(actual, q.expectations(c, obs, binding, backend="numpy"), atol=2e-14)
@@ -184,8 +185,8 @@ def test_cache_eviction_changes_work_only(monkeypatch):
 def test_portfolio_and_reporting_controls_are_admitted():
     c, obs = shared_circuit()
     with pytest.raises(q.ResourceError, match="max_work"):
-        q.TensorNetworkPlan(c, obs, optimizer="portfolio", max_work=20)
-    plan = q.TensorNetworkPlan(q.Circuit(1), (q.PauliString("I"),), optimizer="portfolio")
+        TensorNetworkPlan(c, obs, optimizer="portfolio", max_work=20)
+    plan = TensorNetworkPlan(q.Circuit(1), (q.PauliString("I"),), optimizer="portfolio")
     result, report = plan.evaluate(return_report=True)
     np.testing.assert_array_equal(result, [1])
     assert report["contractions_executed"] == 0

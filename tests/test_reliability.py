@@ -11,6 +11,7 @@ import pytest
 import openqml as oq
 from openqml import compute
 from openqml._native_training import solve_metric
+from openqml._tensor_contraction import TensorNetworkPlan
 from openqml.finance._array import Ops
 from openqml.finance._linear import linear_solve
 from openqml.recovery import CircuitBreaker, PendingBatch, PendingJob
@@ -380,7 +381,7 @@ def test_broadcast_contraction_avoids_unadmitted_reshape_copies(monkeypatch):
 
 def test_streaming_keeps_its_snapshot_without_leaking_it_to_the_consumer():
     p = oq.Parameter("angle")
-    plan = oq.TensorNetworkPlan(oq.Circuit(1).ry(p, 0), (oq.PauliString("Z"),))
+    plan = TensorNetworkPlan(oq.Circuit(1).ry(p, 0), (oq.PauliString("Z"),))
     stream = plan.iter_evaluate({"angle": np.array([0.1, 0.2, 0.3])}, batch_chunk_size=1)
     first = next(stream)
     changed = oq.configure_compute(policy=oq.ComputePolicy(max_memory_mb=1e-6))

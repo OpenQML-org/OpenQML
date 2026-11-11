@@ -6,12 +6,12 @@ from dataclasses import replace
 import jax
 import jax.numpy as jnp
 
+from .._hybrid_training import DepthSchedule, StagewiseOptimizer, _batch_rows, select_network_input
 from ..architecture import HybridArchitecture
 from ..architecture_runtime import reserve_native_cost
 from ..backends import get_backend
 from ..compute import _CHECKED_JAX_CONTEXT
 from ..errors import ValidationError
-from ..network_training import DepthSchedule, StagewiseOptimizer, _batch_rows, select_network_input
 from ..runtime import CostAwareBackend, PriorityBackend
 from ._jax_backend import JAXNativeBackend
 from ._jax_training import make_train_step

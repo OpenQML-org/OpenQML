@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 import openqml as oq
+from openqml._tensor_contraction import TensorNetworkPlan
 
 
 @pytest.fixture(autouse=True)
@@ -20,9 +21,9 @@ def release_compilations():
 def plans():
     c = oq.Circuit(3).ry(oq.Parameter("a"), 0).rxx(oq.Parameter("b"), 0, 1).cx(1, 2)
     obs = (oq.PauliString("ZZZ"), oq.PauliString("XII"))
-    base = oq.TensorNetworkPlan(c, obs)
+    base = TensorNetworkPlan(c, obs)
     budget = (base._metadata_bytes + 10 * (base.working_bytes - base._metadata_bytes)) / 2**20
-    return base, oq.TensorNetworkPlan(c, obs, max_memory_mb=budget)
+    return base, TensorNetworkPlan(c, obs, max_memory_mb=budget)
 
 
 def test_broadcast_grid_chunks_and_tail_match_dense_batch_without_grid_materialization():
@@ -40,7 +41,7 @@ def test_broadcast_grid_chunks_and_tail_match_dense_batch_without_grid_materiali
 
 
 def test_constant_scalar_and_empty_batch_streams():
-    p = oq.TensorNetworkPlan(oq.Circuit(1), (oq.PauliString("I"),))
+    p = TensorNetworkPlan(oq.Circuit(1), (oq.PauliString("I"),))
     value = p.evaluate(batch_shape=(3, 4), batch_chunk_size=5)
     np.testing.assert_array_equal(value, np.ones((3, 4, 1)))
     np.testing.assert_array_equal(p.evaluate(batch_chunk_size=2), [1])

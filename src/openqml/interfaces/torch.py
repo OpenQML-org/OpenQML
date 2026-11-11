@@ -33,12 +33,6 @@ from ._torch_hybrid import IQPQuantumLayer as IQPQuantumLayer
 from ._torch_hybrid import _quantum_precision
 from ._torch_network import HybridNetwork as HybridNetwork
 from ._torch_network import NetworkTrainer as NetworkTrainer
-from ._torch_ppo import PPOTrainer as PPOTrainer
-from ._torch_rl import QuantumActorCritic as QuantumActorCritic
-from ._torch_rl import QuantumSurrogate as QuantumSurrogate
-from ._torch_tensor import TensorNetworkAdapter as TensorNetworkAdapter
-from ._torch_tensor import TensorTrainLinear as TensorTrainLinear
-from ._torch_tensor import TreeQuantumLayer as TreeQuantumLayer
 from ._torch_training import HybridTrainer as HybridTrainer
 
 

@@ -257,24 +257,6 @@ def test_qasm2_phase_diagnostics_evaluate_raw_constants():
         assert ("GLOBAL_PHASE_UNSUPPORTED" in codes) == bool(value)
 
 
-@pytest.mark.parametrize("scale", [1e200, 1e-200, 0])
-def test_tensor_train_svd_bounds_remain_finite_at_wide_scales(scale):
-    matrix = np.diag([1.0, 2, 3, 4]) + np.random.default_rng(9).normal(size=(4, 4)) * 0.01
-    compressed = oq.TensorTrainMatrix.from_dense(
-        matrix * scale, input_modes=(2, 2), output_modes=(2, 2), relative_error=0.02
-    )
-    restored = compressed.to_dense()
-    if scale:
-        error = np.linalg.norm(restored / scale - matrix)
-        assert error <= compressed.error_bound / scale + 1e-12
-        assert error <= 0.02 * np.linalg.norm(matrix)
-        np.testing.assert_allclose(
-            compressed.source_norm / scale, np.linalg.norm(matrix), rtol=1e-14
-        )
-    else:
-        np.testing.assert_array_equal(restored, np.zeros((4, 4)))
-
-
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
 def test_channel_apply_accepts_array_like_density_with_resource_admission(backend):
     plan = oq.QuantumChannelPlan()

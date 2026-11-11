@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 import openqml as oq
+from openqml._mps import MPSBackend
 
 
 def nonclifford_chain(width, depth=4, seed=7):
@@ -54,7 +55,7 @@ def test_nonclifford_wide_chain_uses_mps_after_expansion_rejection(monkeypatch):
     assert plan.selected_method == "mps"
     assert any(not c.eligible and c.method == "pauli" for c in plan.candidates)
     assert plan.mps_profile["max_bond"] <= 256
-    assert isinstance(plan._runner, oq.MPSBackend)
+    assert isinstance(plan._runner, MPSBackend)
     assert plan.mps_profile["truncation"] == "none_full_SVD_columns_retained"
     values = plan.evaluate()
     assert np.isfinite(values).all() and (np.abs(values) <= 1 + 1e-12).all()
@@ -102,7 +103,7 @@ def test_mps_admission_rejects_deep_and_nonlocal_inputs_without_execution(monkey
     def fail(*a, **k):
         pytest.fail("An inadmissible circuit reached a simulator")
 
-    monkeypatch.setattr(oq.MPSBackend, "expectations_batch", fail)
+    monkeypatch.setattr(MPSBackend, "expectations_batch", fail)
     for circuit in (nonclifford_chain(80, 50), oq.Circuit(80).ry(0.3, 0).cx(0, 79)):
         plan = oq.plan_execution(
             circuit, (oq.PauliString("Z" * 80),), method="mps", max_memory_mb=16

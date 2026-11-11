@@ -13,16 +13,16 @@ from types import MappingProxyType
 
 import numpy as np
 
+from ._hybrid_operators import OperatorContext, OperatorSpec, input_metadata
+from ._tensor_train import TensorTrainPlan
 from .compute import memory_budget
 from .deep import DeepQuantumPlan
 from .errors import ResourceError, ValidationError
 from .ir import integer
 from .multiscale import MultiscalePlan
-from .network_operators import OperatorContext, OperatorSpec, input_metadata
 from .parameters import real
 from .quantum_cells import CustomCircuitPlan, FeatureCircuitPlan
 from .simulator import _TensorOps
-from .tensor_train import TensorTrainPlan
 
 
 def _constructor_admission(depth, visible_qubits, options):
@@ -699,7 +699,7 @@ class HybridArchitecture:
         inputs = self._masked(inputs, context, backend)
         ops = _TensorOps(backend, parameters["stem_weight"])
         if self.input_lift == "graph-pairs":
-            from .network_graph import lift_graph_pairs
+            from ._hybrid_graph import lift_graph_pairs
 
             metadata = self.input_metadata(context)
             ctx = OperatorContext(self, 0, parameters, inputs, context, backend, None)
@@ -724,7 +724,7 @@ class HybridArchitecture:
             ops = _TensorOps(backend, value)
             axes = tuple(range(1, value.ndim - 1))
             if self.readout_pooling == "pair-invariant":
-                from .network_graph import invariant_pair_readout
+                from ._hybrid_graph import invariant_pair_readout
 
                 value = invariant_pair_readout(value, context, backend)
             elif self.readout_pooling == "first":

@@ -82,7 +82,7 @@ def _cotengra(labels, trials, charge):
         import cotengra as ctg
     except ImportError as exc:
         raise MissingDependencyError(
-            'Install contraction search with: python -m pip install "openqml[tensor]".'
+            'Install contraction search with: python -m pip install "openqml[compute]".'
         ) from exc
     charge(trials * len(labels))
     optimizer = ctg.HyperOptimizer(

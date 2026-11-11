@@ -13,7 +13,6 @@ PyTorch scaled dot-product attention, continue to use their native kernels.
 | Statevectors, density matrices and quantum channels | Native arrays, local GEMMs, finite domain checks, memory ceiling |
 | Tensor networks and tensor trains | Shape-specialized GEMMs, shared structural plans, cached NumPy contraction paths, SVD |
 | Hybrid attention, graph, recurrent and generative networks | Native contractions, projections, arrays and workspace admission |
-| Reinforcement learning | Native array placement and the same compute bridge as quantum and financial objectives |
 | Financial risk, allocation and pricing | Native factor contractions, linear solves, scaled norms and memory/work admission |
 | Cross-framework programming | Unitary/Kraus checks and the same simulation primitives for numerical verification |
 | Runtime providers | Common workspace options and state, density and expectation validation |
@@ -36,7 +35,7 @@ print(kernel.cache_info())
 ```
 
 `get_compute_kernel()` returns the same service used by local quantum,
-reinforcement and financial array bridges. `configure_compute()` atomically
+hybrid and financial array bridges. `configure_compute()` atomically
 installs a new service with an empty cache. Global updates apply to new operations. Existing operations and native-array
 bridges retain their kernel snapshot. Use `compute_context(policy=...)` or
 `compute_context(kernel=...)` to isolate configuration in a thread or async task;

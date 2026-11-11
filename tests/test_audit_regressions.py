@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 import openqml as oq
+from openqml._tensor_contraction import TensorNetworkPlan
 
 
 @pytest.fixture(autouse=True)
@@ -282,7 +283,7 @@ def test_zero_mass_large_factors_keep_low_rank_solves_finite(backend, rank):
 def test_mixed_numpy_and_native_bindings_keep_torch_dtype_and_gradients(chunk_size):
     torch = pytest.importorskip("torch")
     alpha, weight = oq.Parameter("alpha"), oq.Parameter("weight")
-    plan = oq.TensorNetworkPlan(oq.Circuit(1).ry(alpha + weight, 0), (oq.PauliString("Z"),))
+    plan = TensorNetworkPlan(oq.Circuit(1).ry(alpha + weight, 0), (oq.PauliString("Z"),))
     source = np.array([0.1, 0.2, 0.3])[::-1]
     source.flags.writeable = False
     weight = torch.tensor(0.4, dtype=torch.float64, requires_grad=True)
@@ -301,7 +302,7 @@ def test_native_streaming_converts_only_the_current_host_chunk(monkeypatch):
 
     source = np.linspace(-0.3, 0.4, 100001)[::-1]
     alpha, weight = oq.Parameter("alpha"), oq.Parameter("weight")
-    plan = oq.TensorNetworkPlan(oq.Circuit(1).ry(alpha + weight, 0), (oq.PauliString("Z"),))
+    plan = TensorNetworkPlan(oq.Circuit(1).ry(alpha + weight, 0), (oq.PauliString("Z"),))
     original = _TensorOps.array
 
     def checked(self, value, **options):
@@ -322,7 +323,7 @@ def test_native_streaming_converts_only_the_current_host_chunk(monkeypatch):
 def test_numpy_streaming_checks_finiteness_per_chunk_without_a_full_grid_mask(monkeypatch):
     source = np.linspace(-0.2, 0.3, 100001)
     source[21] = np.nan
-    plan = oq.TensorNetworkPlan(oq.Circuit(1).ry(oq.Parameter("alpha"), 0), (oq.PauliString("Z"),))
+    plan = TensorNetworkPlan(oq.Circuit(1).ry(oq.Parameter("alpha"), 0), (oq.PauliString("Z"),))
     original = np.isfinite
 
     def checked(value, *args, **kwargs):

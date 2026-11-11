@@ -23,7 +23,7 @@ jobs:
         env:
           OPENQML_REQUIRE_CUDA: '1'
           OPENQML_HARDWARE_REPORT_DIR: ${{ runner.temp }}/openqml-hardware
-        run: python -m pytest -q tests/test_distributed_tensor.py -k physical_multi_gpu
+        run: python -m pytest -q tests/test_distributed_compute.py -k physical_multi_gpu
       - uses: actions/upload-artifact@v4
         if: always()
         with:

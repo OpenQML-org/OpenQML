@@ -566,7 +566,7 @@ def memory_budget(requested):
 
 
 class KernelOps:
-    """Native-array bridge shared by quantum, reinforcement and financial code."""
+    """Native-array bridge shared by quantum, hybrid-model and financial code."""
 
     @property
     def kernel(self):

@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import openqml as q
+from openqml._tensor_contraction import TensorNetworkPlan
 from openqml.ir import GATES, UNITARY_GATES
 
 
@@ -132,8 +133,8 @@ def test_readout_contraction_reuse_reduces_work_and_does_not_cache_new_bindings(
     c = q.Circuit(3).ry(q.Parameter("a"), 0).cx(0, 1).rx(0.4, 1).cx(1, 2)
     obs = tuple(q.PauliString("".join(p)) for p in product("IZ", repeat=3))
     plain, shared = (
-        q.TensorNetworkPlan(c, obs),
-        q.TensorNetworkPlan(c, obs, reuse_intermediates=True),
+        TensorNetworkPlan(c, obs),
+        TensorNetworkPlan(c, obs, reuse_intermediates=True),
     )
     expected, baseline = plain.evaluate(dict(a=0.3), return_report=True)
     actual, report = shared.evaluate(dict(a=0.3), return_report=True)
@@ -177,7 +178,7 @@ def test_shared_contraction_gradients_and_hessian_match_unshared():
     jnp = pytest.importorskip("jax.numpy")
     c = q.Circuit(2).ry(q.Parameter("a"), 0).cx(0, 1).rx(q.Parameter("a").sin(), 1)
     obs = (q.PauliString("ZZ"), q.PauliString("IZ"), q.PauliString("XX"))
-    plans = [q.TensorNetworkPlan(c, obs, reuse_intermediates=b) for b in (False, True)]
+    plans = [TensorNetworkPlan(c, obs, reuse_intermediates=b) for b in (False, True)]
     t = torch.tensor(0.31, dtype=torch.float64, requires_grad=True)
     results = [
         torch.autograd.functional.hessian(
@@ -277,7 +278,7 @@ def test_jitted_pair_graph_rejects_bad_active_edges_even_when_every_node_is_mask
 
 @pytest.mark.parametrize("causal", [False, True])
 def test_state_attention_matches_density_matrix_channel_kernel_and_uses_one_feature_bank(causal):
-    from openqml.network_operators import OperatorContext
+    from openqml._hybrid_operators import OperatorContext
 
     p = q.HybridArchitecture(
         2,

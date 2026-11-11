@@ -130,7 +130,7 @@ not reconciled cloud invoices.
 Block rematerialization reduces native activation storage. It is disabled for
 external QPU calls so backward does not resubmit stochastic jobs. A Torch
 `tensor_mesh` and calibrated `interconnect` connect admitted unitary cells to
-`DistributedTensorPlan`; mixed-state cells remain local. Tensor ranks share
+the internal contraction executor; mixed-state cells remain local. Tensor ranks share
 canonical parameters and use separate data-parallel groups. Tensor-parallel
 checkpoints use one file per global rank and require the matching topology.
 A pinned tensor mesh uses caller-owned distributed accounting. Automatic

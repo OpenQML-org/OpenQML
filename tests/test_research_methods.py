@@ -138,44 +138,6 @@ def random_local(seed, width=5):
     return builder.build()
 
 
-@pytest.mark.parametrize("seed", range(5))
-def test_canonical_truncation_error_reports_bound_independent_dense_readouts(seed):
-    circuit = random_local(seed)
-    observables = [oq.PauliString(w) for w in ("XYZIZ", "ZZIII", "IIXXI", "IIIII")]
-    backend = oq.TruncatedMPSBackend(max_bond_dimension=2, max_state_error=2)
-    report = backend.evaluate(circuit, observables)
-    expected = oq.expectations(circuit, observables)
-    assert np.all(np.abs(report.values - expected) <= report.observable_error_bounds + 1e-12)
-    assert report.max_bond_dimension <= 2 and not report.floating_point_error_included
-    assert all(0 <= weight <= 1 for weight in report.discarded_weights)
-    assert report.values[-1] == pytest.approx(1, abs=1e-12)
-
-
-def test_no_truncation_matches_dense_including_reversed_two_wire_order():
-    circuit = random_local(8).crx(0.7, 3, 2).iswap(1, 0)
-    observables = [oq.PauliString("XYZIX"), oq.PauliString("ZZIII")]
-    report = oq.TruncatedMPSBackend(max_bond_dimension=16, discarded_weight_tolerance=0).evaluate(
-        circuit, observables
-    )
-    np.testing.assert_allclose(report.values, oq.expectations(circuit, observables), atol=2e-14)
-    assert report.state_distance_bound == 0
-
-
-def test_truncation_budget_and_nonlinear_gradient_rejection():
-    circuit = oq.Circuit(2).h(0).cx(0, 1)
-    observables = [oq.PauliString("XX")]
-    with pytest.raises(oq.ResourceError, match="max_state_error"):
-        oq.TruncatedMPSBackend(max_bond_dimension=1).evaluate(circuit, observables)
-    with pytest.raises(oq.ResourceError, match="max_memory_mb"):
-        oq.TruncatedMPSBackend().evaluate(
-            circuit, observables, options=oq.ExecutionOptions(max_memory_mb=0.001)
-        )
-    with pytest.raises(oq.ValidationError, match="parameter-shift"):
-        oq.TruncatedMPSBackend().prepare_gradient_circuit(circuit)
-    with pytest.raises(oq.ValidationError, match="nearest-neighbor"):
-        oq.TruncatedMPSBackend().evaluate(oq.Circuit(3).cx(0, 2), [oq.PauliString("XXX")])
-
-
 def test_optimal_two_site_shadow_duals_are_unbiased_for_every_pauli_operator():
     from openqml.shadows import _dual, _frame, _pauli_basis
 

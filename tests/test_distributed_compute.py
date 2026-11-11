@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 
 import openqml as q
+from openqml._distributed_tensor import DistributedTensorPlan, Interconnect
+from openqml._tensor_contraction import TensorNetworkPlan
 
 
 def circuit():
@@ -24,27 +26,27 @@ def circuit():
 
 def hardware(latency=0):
     # Synthetic planning rates, not a claim about available hardware.
-    return q.Interconnect(1e10, 1e11, 1e13, latency)
+    return Interconnect(1e10, 1e11, 1e13, latency)
 
 
 def test_communication_cost_changes_layouts_and_search_is_bounded():
     c, obs = circuit(), (q.PauliString("XYZXZ"),)
-    fast = q.DistributedTensorPlan(c, obs, 4, hardware())
-    slow = q.DistributedTensorPlan(c, obs, 4, hardware(10))
+    fast = DistributedTensorPlan(c, obs, 4, hardware())
+    slow = DistributedTensorPlan(c, obs, 4, hardware(10))
     assert fast.to_dict()["distributed_contractions"] > 0
     assert slow.to_dict()["distributed_contractions"] == 0
     assert fast.working_bytes_per_rank < fast.max_memory_mb * 2**20
     assert fast.to_dict()["performance_evidence"] == "planning_estimates_only"
     with pytest.raises(q.ResourceError, match="max_layout_work"):
-        q.DistributedTensorPlan(c, obs, 4, hardware(), max_layout_work=1)
+        DistributedTensorPlan(c, obs, 4, hardware(), max_layout_work=1)
     with pytest.raises(q.ResourceError, match="memory"):
-        q.DistributedTensorPlan(c, obs, 4, hardware(), max_memory_mb=0.001)
+        DistributedTensorPlan(c, obs, 4, hardware(), max_memory_mb=0.001)
     with pytest.raises(q.ValidationError, match="power-of-two"):
-        q.DistributedTensorPlan(c, obs, 3, hardware())
+        DistributedTensorPlan(c, obs, 3, hardware())
 
 
 def test_partial_layouts_preserve_mesh_axes_and_charge_only_collective_moves():
-    from openqml.distributed_tensor import _layouts, _redistribution
+    from openqml._distributed_tensor import _layouts, _redistribution
 
     candidates = _layouts((0, 1), (1, 2), (1,), (None, 0), (None, 2), 2, 12)
     assert (None, 0) in candidates and (None, 2) in candidates
@@ -56,9 +58,9 @@ def test_partial_layouts_preserve_mesh_axes_and_charge_only_collective_moves():
 def test_latency_aware_search_keeps_replication_as_a_completion_candidate():
     c, obs = circuit(), (q.PauliString("XYZXZ"),)
     for beam in (1, 2):
-        plan = q.DistributedTensorPlan(c, obs, 4, hardware(10), beam_width=beam)
+        plan = DistributedTensorPlan(c, obs, 4, hardware(10), beam_width=beam)
         assert plan.to_dict()["distributed_contractions"] == 0
-    partial = q.DistributedTensorPlan(c, obs, 4, hardware(1e-9))
+    partial = DistributedTensorPlan(c, obs, 4, hardware(1e-9))
     assert partial.to_dict()["partially_sharded_contractions"] > 0
 
 
@@ -88,7 +90,7 @@ def _worker(rank, directory, size, cuda):
                 q.Hamiltonian((q.PauliString("ZZZZZ", 0.3), q.PauliString("XIIII", -0.2))),
             ),
         )
-        plan = q.DistributedTensorPlan(c, obs, size, hardware(), rematerialize=True)
+        plan = DistributedTensorPlan(c, obs, size, hardware(), rematerialize=True)
         assert plan.to_dict()["distributed_contractions"] > 0
         like = torch.empty((), device=device, dtype=torch.float64)
         bindings = {
@@ -97,7 +99,7 @@ def _worker(rank, directory, size, cuda):
         }
         if size == 4:
             bindings["x"] = bindings["x"].reshape(2, 1)
-        expected = q.TensorNetworkPlan(c, obs).evaluate(bindings, backend="torch", like=like)
+        expected = TensorNetworkPlan(c, obs).evaluate(bindings, backend="torch", like=like)
         actual, report = plan.evaluate(bindings, mesh=mesh, like=like, return_report=True)
         torch.testing.assert_close(actual, expected, atol=2e-12, rtol=2e-12)
         # A replicated loss must give one full gradient on each tensor rank,
@@ -107,7 +109,7 @@ def _worker(rank, directory, size, cuda):
         for got, wanted in zip(gradient, reference, strict=True):
             torch.testing.assert_close(got, wanted, atol=2e-11, rtol=2e-11)
         if size == 4:
-            mixed = q.DistributedTensorPlan(c, obs, size, hardware(1e-9), rematerialize=True)
+            mixed = DistributedTensorPlan(c, obs, size, hardware(1e-9), rematerialize=True)
             assert mixed.to_dict()["partially_sharded_contractions"] > 0
             mixed_bindings = {k: v.detach().clone().requires_grad_() for k, v in bindings.items()}
             mixed_result = mixed.evaluate(mixed_bindings, mesh=mesh, like=like)

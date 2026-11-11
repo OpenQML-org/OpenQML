@@ -1,9 +1,28 @@
 # Cross-framework quantum programming
 
 OpenQML imports Qiskit, Cirq, PennyLane and OpenQASM circuits into a shared IR.
-Conversion plans separate source import, target preparation and artifact export.
+Use `convert` to import, check compatibility and export in one call.
 JSON and IR targets work with the core installation. Install the corresponding
 extra when importing or exporting a native SDK object.
+
+## Convert a circuit
+
+```python
+import openqml as oq
+
+circuit = oq.Circuit(2).h(0).cx(0, 1)
+result = oq.convert(circuit, target="openqasm3")
+print(result.value)
+```
+
+`result.value` is the requested native object or text. `target="qiskit"`,
+`"cirq"` and `"pennylane"` require their SDKs; `"openqasm2"`, `"openqasm3"`,
+`"json"` and `"ir"` use the core. Native circuit objects can be passed directly.
+Pass `bindings={"angle": 0.2}` to bind parameters during conversion. Unsupported
+semantics raise `ConversionError` with structured diagnostics.
+
+`plan_conversion` is the advanced entry point for reusing one imported source
+across parameter sweeps, partial binding and verification.
 
 ## Dynamic control and compilation reuse
 
