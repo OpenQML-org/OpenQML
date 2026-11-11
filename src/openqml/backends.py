@@ -36,6 +36,7 @@ class BackendCapabilities:
     deterministic_expectations: bool = False
     device_type: str = "CPU"
     exact_expectations: bool = False
+    bounded_expectations: bool = True
 
     def __post_init__(self):
         if any(
@@ -51,9 +52,12 @@ class BackendCapabilities:
                 self.measurement_expectations,
                 self.deterministic_expectations,
                 self.exact_expectations,
+                self.bounded_expectations,
             )
         ):
             raise ValidationError("Backend capability flags must be booleans.")
+        if self.exact_expectations and not self.bounded_expectations:
+            raise ValidationError("Exact expectations must obey observable spectral bounds.")
         if not isinstance(self.device_type, str) or self.device_type not in {"QPU", "GPU", "CPU"}:
             raise ValidationError("Backend device_type must be QPU, GPU or CPU.")
         gates = frozenset(self.gates)

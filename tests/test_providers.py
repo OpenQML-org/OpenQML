@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -16,6 +18,64 @@ from openqml import (
     parameter_shift_jacobian,
     sample,
 )
+
+
+@pytest.mark.parametrize("value", [1.02, np.nan, np.inf, 1j])
+def test_mitigated_estimator_contract_only_relaxes_spectral_bounds(value):
+    pytest.importorskip("qiskit")
+    from openqml import BackendError, expectations
+
+    class Estimator:
+        def run(self, pubs, **options):
+            result = [SimpleNamespace(data=SimpleNamespace(evs=np.array([[value]])))]
+            return SimpleNamespace(result=lambda: result, job_id=lambda: "mitigated-test")
+
+    circuit, observables = Circuit(1), (PauliString("Z"),)
+    with pytest.raises(BackendError):
+        expectations_batch(circuit, observables, backend=QiskitEstimatorBackend(Estimator()))
+    backend = QiskitEstimatorBackend(Estimator(), mitigated=True)
+    if value == 1.02:
+        np.testing.assert_allclose(
+            expectations_batch(circuit, observables, backend=backend), [[value]]
+        )
+        np.testing.assert_allclose(expectations(circuit, observables, backend=backend), [value])
+        assert not backend.with_shots(100).capabilities.bounded_expectations
+    else:
+        with pytest.raises(BackendError):
+            expectations_batch(circuit, observables, backend=backend)
+
+
+def test_mitigated_receipt_recovery_preserves_estimate_contract_without_resubmission():
+    pytest.importorskip("qiskit")
+    from openqml import BackendJobError, RecoveryPolicy, recover_job
+
+    class Job:
+        ready = False
+
+        def job_id(self):
+            return "retained-mitigated-job"
+
+        def result(self):
+            if not self.ready:
+                raise TimeoutError("pending")
+            return [SimpleNamespace(data=SimpleNamespace(evs=np.array([[1.03]])))]
+
+    job = Job()
+    submissions = []
+
+    def submit(pubs, **options):
+        submissions.append(pubs)
+        return job
+
+    backend = QiskitEstimatorBackend(
+        SimpleNamespace(run=submit), mitigated=True, recovery=RecoveryPolicy(max_attempts=1)
+    )
+    with pytest.raises(BackendJobError) as failure:
+        expectations_batch(Circuit(1), (PauliString("Z"),), backend=backend)
+    receipt = failure.value.pending.to_dict()
+    job.ready = True
+    np.testing.assert_allclose(recover_job(receipt, lambda identifier: job), [[1.03]])
+    assert len(submissions) == 1
 
 
 def test_qiskit_v2_estimator_multiple_observables_layout_and_shift():

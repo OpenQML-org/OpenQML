@@ -76,7 +76,7 @@ def validate_states(values, circuits):
     return [validate_state(value, circuit) for value, circuit in zip(rows, circuits, strict=True)]
 
 
-def validate_expectations(value, batch_size, observables):
+def validate_expectations(value, batch_size, observables, *, bounded=True):
     try:
         output = np.asarray(value)
     except (TypeError, ValueError, OverflowError) as exc:
@@ -87,6 +87,8 @@ def validate_expectations(value, batch_size, observables):
         or not np.isfinite(output).all()
     ):
         raise BackendError("Backend returned invalid batched expectation data.")
+    if not bounded:
+        return output.astype(float, copy=False)
     bounds = np.asarray(
         [
             sum(abs(t.coefficient) for t in ob.terms)
