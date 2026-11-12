@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from ..errors import ValidationError
+from ..errors import ValidationError, _as_tuple, _require_choice, _require_mapping
 
 
 def real(value: Any) -> float:
@@ -253,9 +253,22 @@ class Expression:
 
     def __post_init__(self):
         if self.op is not None:
-            if self.op not in _ARITY or len(self.args) != _ARITY[self.op]:
+            _require_choice(self.op, _ARITY, "Expression op")
+        args = (
+            self.args if isinstance(self.args, tuple) else _as_tuple(self.args, "Expression args")
+        )
+        terms = (
+            self.terms
+            if isinstance(self.terms, tuple)
+            else _as_tuple(self.terms, "Expression terms")
+        )
+        object.__setattr__(self, "args", args)
+        object.__setattr__(self, "terms", terms)
+        object.__setattr__(self, "constant", real(self.constant))
+        if self.op is not None:
+            if len(args) != _ARITY[self.op]:
                 raise ValidationError("Unknown expression node or invalid arity.")
-            if self.terms or self.constant != 0:
+            if terms or self.constant != 0:
                 raise ValidationError("A nonlinear node cannot also contain affine terms.")
             object.__setattr__(self, "args", tuple(expression(v) for v in self.args))
             object.__setattr__(self, "_parameter_free", all(_constant(v) for v in self.args))
@@ -268,10 +281,15 @@ class Expression:
         if self.args:
             raise ValidationError("Affine expressions cannot contain graph arguments.")
         combined = {}
-        for name, coefficient in self.terms:
+        for term in terms:
+            pair = term if isinstance(term, tuple) else _as_tuple(term, "Expression term")
+            if len(pair) != 2:
+                raise ValidationError(
+                    "Expression terms require (parameter name, coefficient) pairs."
+                )
+            name, coefficient = pair
             name, coefficient = parameter_name(name), real(coefficient)
             combined[name] = combined.get(name, 0) + coefficient
-        object.__setattr__(self, "constant", real(self.constant))
         object.__setattr__(
             self, "terms", tuple((k, real(v)) for k, v in sorted(combined.items()) if v)
         )
@@ -341,6 +359,7 @@ class Expression:
         return self.op is None
 
     def evaluate(self, bindings: Mapping[str, Any]):
+        _require_mapping(bindings)
         if self.op is None:
             return _leaf_value(self, bindings)
         if all(arg.op is None for arg in self.args):
@@ -355,12 +374,14 @@ class Expression:
         return _evaluate(self, bindings)
 
     def bind(self, bindings):
+        _require_mapping(bindings)
         return _rewrite_expression(self, bindings)
 
     def derivative(self, name):
-        return _differentiate(self, name)
+        return _differentiate(self, parameter_name(name))
 
     def substitute(self, mapping):
+        _require_mapping(mapping, "substitutions")
         return _rewrite_expression(self, mapping, substitute=True)
 
     def to_dict(self):
@@ -459,7 +480,8 @@ class Expression:
 
 
 def node(op, *args):
-    if op not in _ARITY or len(args) != _ARITY[op]:
+    _require_choice(op, _ARITY, "Expression op")
+    if len(args) != _ARITY[op]:
         raise ValidationError("Unknown expression node or invalid arity.")
     args = tuple(expression(arg) for arg in args)
     if all(_constant(arg) for arg in args):
