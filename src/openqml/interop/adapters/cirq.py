@@ -302,8 +302,8 @@ def to_cirq(circuit: Circuit, bindings=None, *, max_operations=100_000, max_dept
     from ...ir.compiler import _check_circuit_limits, decompose
 
     _check_circuit_limits(circuit, max_operations=max_operations, max_depth=max_depth)
-    cirq = dependency("cirq", "cirq")
     circuit = bound_for_export(circuit, bindings)
+    cirq = dependency("cirq", "cirq")
     from ..conversion import diagnose
 
     diagnostics = diagnose(circuit, "cirq", max_operations=max_operations, max_depth=max_depth)

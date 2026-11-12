@@ -8,7 +8,7 @@ from numbers import Integral
 
 import numpy as np
 
-from ..errors import ValidationError
+from ..errors import ValidationError, _require_mapping
 from ._buffer import OperationBuffer, OperationView
 from .observables import Hamiltonian as Hamiltonian
 from .observables import PauliString as PauliString
@@ -69,6 +69,12 @@ def integer(value, label: str, minimum: int = 0) -> int:
     if isinstance(value, bool) or not isinstance(value, Integral) or value < minimum:
         raise ValidationError(f"{label} must be an integer >= {minimum}.")
     return int(value)
+
+
+def _require_circuit(value: object) -> Circuit:
+    if not isinstance(value, Circuit):
+        raise ValidationError(f"Expected an OpenQML Circuit; got {type(value).__name__}.")
+    return value
 
 
 @dataclass(frozen=True)
@@ -545,8 +551,7 @@ class Circuit(_CircuitGates):
         """
         from .parameters import _rewrite_expression, parameter_name
 
-        if not isinstance(mapping, Mapping):
-            raise ValidationError("Parameter substitutions require a name mapping.")
+        _require_mapping(mapping, "substitutions")
         names = {parameter_name(name) for name in mapping}
         unknown = names - set(self.parameters)
         if unknown:
@@ -584,8 +589,7 @@ class Circuit(_CircuitGates):
     def bind(self, bindings: Mapping[str, float], *, partial: bool = False) -> Circuit:
         from .parameters import _rewrite_expression, parameter_name, real
 
-        if not isinstance(bindings, Mapping):
-            raise ValidationError("Parameter bindings require a name mapping.")
+        _require_mapping(bindings)
         bindings = {parameter_name(name): real(value) for name, value in bindings.items()}
         parameters = set(self.parameters)
         unknown = set(bindings) - parameters

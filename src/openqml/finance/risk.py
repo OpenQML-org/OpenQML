@@ -5,7 +5,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from ..errors import ValidationError
+from ..errors import ValidationError, _require_instance
 from ..ir.parameters import real
 from ._array import Ops, admission, rows
 
@@ -33,7 +33,7 @@ def factor_risk(
     if not 0 <= shrinkage <= 1 or floor < 0:
         raise ValidationError("Shrinkage must lie in [0,1] and variance_floor be nonnegative.")
     p = ops.probabilities(probabilities, x.shape[-2])
-    shape = np.broadcast_shapes(x.shape[:-2], p.shape[:-1])
+    shape = ops.broadcast_shape(x.shape[:-2], p.shape[:-1])
     admission(8 * rows(shape) * x.shape[-2] * x.shape[-1], max_memory_mb)
     x = ops.broadcast(x, shape + x.shape[-2:])
     p = ops.broadcast(p, shape + (x.shape[-2],))
@@ -44,8 +44,9 @@ def factor_risk(
 
 
 def prepare_risk(risk, ops, shape):
-    if not isinstance(risk, FactorRisk):
-        raise ValidationError("Provide FactorRisk; use factor_risk on historical/scenario returns.")
+    _require_instance(risk, FactorRisk, "risk")
+    if not shape or shape[-1] < 1:
+        raise ValidationError("Financial vectors require a nonempty asset axis.")
     mean, factors, weights, diagonal = (ops.real(v) for v in risk)
     n = shape[-1]
     if (
@@ -56,7 +57,7 @@ def prepare_risk(risk, ops, shape):
         or mean.shape[-1:] != (n,)
     ):
         raise ValidationError("Factor risk dimensions differ from the asset universe.")
-    prefix = np.broadcast_shapes(
+    prefix = ops.broadcast_shape(
         shape[:-1], mean.shape[:-1], factors.shape[:-2], weights.shape[:-1], diagonal.shape[:-1]
     )
     mean = ops.broadcast(mean, prefix + (n,))
@@ -69,7 +70,8 @@ def prepare_risk(risk, ops, shape):
 
 
 def covariance_matvec(risk, vector):
-    ops = Ops(vector, *(risk if isinstance(risk, FactorRisk) else ()))
+    _require_instance(risk, FactorRisk, "risk")
+    ops = Ops(vector, *risk)
     vector = ops.real(vector)
     risk = prepare_risk(risk, ops, vector.shape)
     projected = ops.einsum("...rn,...n->...r", risk.factors, vector)
@@ -79,14 +81,16 @@ def covariance_matvec(risk, vector):
 
 
 def portfolio_variance(weights, risk):
-    ops = Ops(weights, *(risk if isinstance(risk, FactorRisk) else ()))
+    _require_instance(risk, FactorRisk, "risk")
+    ops = Ops(weights, *risk)
     weights = ops.real(weights)
     return ops.sum(weights * covariance_matvec(risk, weights))
 
 
 def dense_covariance(risk, *, max_memory_mb=256):
+    _require_instance(risk, FactorRisk, "risk")
     ops = Ops(*risk)
-    risk = prepare_risk(risk, ops, risk.mean.shape)
+    risk = prepare_risk(risk, ops, ops.real(risk.mean).shape)
     n = risk.mean.shape[-1]
     admission(4 * rows(risk.mean.shape[:-1]) * (n * n + risk.factors.shape[-2] * n), max_memory_mb)
     matrix = ops.einsum("...ri,...r,...rj->...ij", risk.factors, risk.factor_weights, risk.factors)
@@ -128,7 +132,7 @@ def expected_shortfall(losses, *, confidence=0.95, probabilities=None):
         interior = ops.xp.where(positions == index[..., None], 0, tail)
         return (ops.sum(interior) + (mass - (k - 1)) * boundary) / mass
     p = ops.probabilities(probabilities, losses.shape[-1])
-    shape = np.broadcast_shapes(losses.shape, p.shape)
+    shape = ops.broadcast_shape(losses.shape, p.shape)
     losses, p = ops.broadcast(losses, shape), ops.broadcast(p, shape)
     if confidence == 0:
         return ops.sum(p * losses)

@@ -6,12 +6,13 @@ from dataclasses import dataclass
 import numpy as np
 
 from ..compute.kernel import _broadcast_shape, compute_operation, get_compute_kernel, memory_budget
-from ..errors import ResourceError, ValidationError
-from ..ir.core import CHANNEL_GATES, UNITARY_GATES, integer
+from ..errors import ResourceError, ValidationError, _require_mapping
+from ..ir.core import CHANNEL_GATES, UNITARY_GATES, _require_circuit, integer
 from .planning import _record_plan
 
 
 def _resource_check(circuit, max_qubits, max_memory_mb, batch_size=1, branches=1):
+    _require_circuit(circuit)
     if max_qubits is not None:
         integer(max_qubits, "max_qubits", 1)
     budget = get_compute_kernel()._prepare_budget(max_memory_mb)
@@ -442,6 +443,9 @@ def density_matrix(
     Records are marginalized after their last read; no probability-based pruning
     changes the graph at zero-weight branches.
     """
+    _require_circuit(circuit)
+    if bindings is not None:
+        _require_mapping(bindings)
     integer(max_branches, "max_branches", 1)
     if not isinstance(backend, str):
         from ..runtime.backends import get_backend

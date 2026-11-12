@@ -1,24 +1,15 @@
 """Array-based supervised training over the existing native network trainers."""
 
 from copy import deepcopy
-from importlib import import_module
 
 import numpy as np
 
-from ..compute.kernel import compute_context, get_compute_kernel
-from ..errors import MissingDependencyError, ValidationError
+from ..compute.kernel import _array_backend, compute_context, get_compute_kernel
+from ..errors import ValidationError, _require_choice
 from ..ir.core import integer
 from ..ir.parameters import real
+from ..runtime._dependencies import load_dependency as _require
 from .architecture import HybridArchitecture, QuantumCellSpec
-
-
-def _require(name, extra):
-    try:
-        return import_module(name)
-    except ModuleNotFoundError as exc:
-        raise MissingDependencyError(
-            f"This operation needs {name}. Run: python -m pip install 'openqml[{extra}]'."
-        ) from exc
 
 
 def _numpy_chunks(value):
@@ -37,17 +28,20 @@ def _numpy_chunks(value):
 
 
 def _data(value, name, *, check_finite=True):
-    module = type(value).__module__.split(".")[0]
-    if module == "torch":
+    backend = _array_backend(value)
+    if backend == "torch":
         xp = _require("torch", "torch")
         valid = not value.is_complex() and (not check_finite or bool(xp.isfinite(value).all()))
-    elif module in {"jax", "jaxlib"}:
+    elif backend == "jax":
         xp = _require("jax.numpy", "jax")
         valid = not np.issubdtype(value.dtype, np.complexfloating) and (
             not check_finite or bool(xp.isfinite(value).all())
         )
     else:
-        value = np.asarray(value)
+        try:
+            value = np.asarray(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValidationError(f"{name} must be a nonempty finite real array.") from exc
         valid = value.dtype.kind in "fibu" and (
             not check_finite or all(np.isfinite(chunk).all() for chunk in _numpy_chunks(value))
         )
@@ -81,10 +75,8 @@ class Model:
         backend="auto",
         architecture=None,
     ):
-        if task not in {"regression", "classification", "forecast"}:
-            raise ValidationError("Model task must be regression, classification or forecast.")
-        if framework not in {"torch", "jax", "flax"}:
-            raise ValidationError("Model framework must be torch, jax or flax.")
+        _require_choice(task, ("regression", "classification", "forecast"), "Model task")
+        _require_choice(framework, ("torch", "jax", "flax"), "Model framework")
         if architecture is not None and not isinstance(architecture, HybridArchitecture):
             raise ValidationError("architecture must be a HybridArchitecture.")
         if architecture is not None and task == "forecast":

@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 from math import pi
 
 from ..errors import ConversionError, ValidationError, conversion_error
-from .core import GATES_V1, UNITARY_GATES, Circuit, Operation, integer
+from .core import GATES_V1, UNITARY_GATES, Circuit, Operation, _require_circuit, integer
 from .parameters import Expression, expression
 
 
@@ -176,10 +176,9 @@ def _operation_location(path):
 
 def _check_circuit_limits(circuit, *, max_operations=100_000, max_depth=64):
     """Bound work before recursive transforms or parameter traversal start."""
+    _require_circuit(circuit)
     integer(max_operations, "max_operations", 1)
     integer(max_depth, "max_depth")
-    if not isinstance(circuit, Circuit):
-        raise ValidationError("Expected an OpenQML Circuit.")
     pending, count = [(circuit, (), 0)], 0
     while pending:
         body, prefix, depth = pending.pop()

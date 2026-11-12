@@ -10,10 +10,12 @@ from ..errors import (
     Diagnostic,
     MissingDependencyError,
     ValidationError,
+    _require_instance,
+    _require_mapping,
     conversion_error,
 )
 from ..ir.compiler import _check_circuit_limits, _operation_location
-from ..ir.core import CHANNEL_GATES, UNITARY_GATES, Circuit, integer
+from ..ir.core import CHANNEL_GATES, UNITARY_GATES, Circuit, _require_circuit, integer
 from .frontends import BUILTIN_FORMATS, get_adapter, import_native, list_formats
 
 FORMATS = BUILTIN_FORMATS
@@ -33,9 +35,14 @@ _QASM_RESERVED.update(
 
 
 def _format(value):
+    _require_instance(value, str, "format")
     value = _ALIASES.get(value, value)
     if value not in list_formats():
-        raise conversion_error("UNKNOWN_FORMAT", f"Supported formats: {', '.join(list_formats())}.")
+        shown = repr(value[:80]) + ("..." if len(value) > 80 else "")
+        raise conversion_error(
+            "UNKNOWN_FORMAT",
+            f"Unsupported format {shown}. Supported formats: {', '.join(list_formats())}.",
+        )
     return value
 
 
@@ -66,8 +73,7 @@ def diagnose(
     max_output_bytes=2_000_000,
 ) -> tuple[Diagnostic, ...]:
     """Check representability without importing any optional framework."""
-    if not isinstance(circuit, Circuit):
-        raise ValidationError("diagnose requires an OpenQML Circuit.")
+    _require_circuit(circuit)
     target = _format(target)
     integer(max_output_statements, "max_output_statements", 1)
     integer(max_output_bytes, "max_output_bytes", 1)
@@ -404,6 +410,7 @@ class ConversionPlan:
         symbolic targets reuse their lowered topology and parameter aliases.
         Every bound artifact receives a fresh representability check.
         """
+        _require_mapping(bindings)
         if type(partial) is not bool:
             raise ValidationError("partial must be a boolean.")
         bound = self.circuit.bind(bindings, partial=partial)

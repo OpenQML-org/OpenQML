@@ -1,17 +1,10 @@
-import importlib
 import math
 from numbers import Real
 
-from ...errors import MissingDependencyError, ValidationError, conversion_error
+from ...errors import ValidationError, conversion_error
+from ...ir.core import _require_circuit
 from ...ir.parameters import Expression, Parameter, _postorder, expression, node, real
-from ...runtime._dependencies import install_hint
-
-
-def dependency(module, extra):
-    try:
-        return importlib.import_module(module)
-    except ImportError as exc:
-        raise MissingDependencyError(f"Cannot load {extra}. Run: {install_hint(extra)}.") from exc
+from ...runtime._dependencies import load_dependency as dependency
 
 
 def numeric(value, location="parameter"):
@@ -141,6 +134,7 @@ def reverse_local_basis(matrix):
 
 
 def bound_for_export(circuit, bindings):
+    _require_circuit(circuit)
     if bindings is not None:
         return circuit.bind(bindings)
     if circuit.global_phase._raw_constants or any(

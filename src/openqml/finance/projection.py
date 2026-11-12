@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from ..errors import ValidationError
+from ..errors import ConvergenceError, ValidationError
 from ._array import Ops, admission, rows
 
 
@@ -76,8 +76,8 @@ def cost_aware_projection(values, *, previous=None, caps=1, penalty=0, budget=1,
         raise ValidationError("Portfolio vectors require a nonempty asset axis.")
     previous = ops.real(0 if previous is None else previous)
     caps, penalty, budget = (ops.real(v) for v in (caps, penalty, budget))
-    shape = np.broadcast_shapes(values.shape, previous.shape, caps.shape, penalty.shape)
-    prefix = np.broadcast_shapes(shape[:-1], budget.shape)
+    shape = ops.broadcast_shape(values.shape, previous.shape, caps.shape, penalty.shape)
+    prefix = ops.broadcast_shape(shape[:-1], budget.shape)
     shape = prefix + (shape[-1],)
     admission(40 * rows(shape), max_memory_mb)
     values, previous, caps, penalty = (
@@ -109,5 +109,5 @@ def cost_aware_projection(values, *, previous=None, caps=1, penalty=0, budget=1,
         result,
         valid[..., None],
         "Projection exceeded its funding tolerance; increase numeric precision.",
-        resource=True,
+        error=ConvergenceError,
     )

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from importlib import import_module
 from threading import RLock
 
-from ..errors import ValidationError, conversion_error
+from ..errors import ValidationError, _require_instance, conversion_error
 from ..ir.core import Circuit
 
 BUILTIN_FORMATS = ("ir", "json", "qiskit", "pennylane", "cirq", "openqasm2", "openqasm3")
@@ -50,8 +50,7 @@ class FrameworkAdapter:
 
 def register_adapter(adapter, *, replace=False):
     """Register only an explicit instance; package discovery never executes third-party code."""
-    if not isinstance(adapter, FrameworkAdapter):
-        raise ValidationError("Expected a FrameworkAdapter instance.")
+    _require_instance(adapter, FrameworkAdapter, "adapter")
     with _LOCK:
         if adapter.name in BUILTIN_FORMATS or adapter.name in {"qasm2", "qasm3"}:
             raise ValidationError("Built-in format names are protected.")
@@ -61,6 +60,7 @@ def register_adapter(adapter, *, replace=False):
 
 
 def unregister_adapter(name):
+    _require_instance(name, str, "adapter name")
     with _LOCK:
         if name not in _REGISTRY:
             raise ValidationError("Only a registered custom adapter can be removed.")
@@ -73,6 +73,7 @@ def list_formats():
 
 
 def get_adapter(name):
+    _require_instance(name, str, "adapter name")
     with _LOCK:
         if name in _REGISTRY:
             return _REGISTRY[name]

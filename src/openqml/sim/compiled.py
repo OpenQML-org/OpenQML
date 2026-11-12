@@ -5,8 +5,8 @@ from collections.abc import Mapping
 import numpy as np
 
 from ..compute.kernel import get_compute_kernel
-from ..errors import ResourceError, ValidationError
-from ..ir.core import Circuit, integer
+from ..errors import ResourceError, ValidationError, _require_choice
+from ..ir.core import _require_circuit, integer
 
 
 def compile_circuit(
@@ -32,8 +32,8 @@ def compile_circuit(
     """
     from .dense import _resource_check, _TensorOps, expectations, statevector
 
-    if not isinstance(circuit, Circuit) or backend not in {"torch", "jax"}:
-        raise ValidationError("Provide a Circuit and a native torch/jax backend.")
+    _require_circuit(circuit)
+    _require_choice(backend, ("torch", "jax"), "Compiled circuit backend")
     if transform is not None and not callable(transform):
         raise ValidationError("transform must be callable.")
     if backend == "torch" and transform is not None:

@@ -190,7 +190,7 @@ def test_projection_removes_budget_constant_linear_fees(backend):
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
 def test_projection_rejects_unresolved_funding_instead_of_returning_an_invalid_portfolio(backend):
     values = native([0.1, -0.2, 0.3], backend)
-    with pytest.raises(oq.ResourceError, match="funding tolerance"):
+    with pytest.raises(oq.ConvergenceError, match="funding tolerance"):
         oq.finance.cost_aware_projection(values, previous=[0.1, 0.2, 0.3], penalty=1e20)
 
 

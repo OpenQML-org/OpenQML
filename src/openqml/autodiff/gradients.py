@@ -12,7 +12,7 @@ import numpy as np
 
 from ..compute.kernel import get_compute_kernel
 from ..errors import ValidationError
-from ..ir.core import Circuit, integer
+from ..ir.core import Circuit, _require_circuit, integer
 from ..ir.parameters import Expression, expression, real
 from ..runtime.backends import ExecutionOptions, get_backend
 from ..sim.batch import expectations_batch
@@ -86,8 +86,7 @@ class ShiftPlan:
     _execution_backend: object = field(init=False, repr=False)
 
     def __post_init__(self):
-        if not isinstance(self.circuit, Circuit):
-            raise ValidationError("Shift differentiation requires an OpenQML Circuit.")
+        _require_circuit(self.circuit)
         symbols = self.circuit.parameters
         names = _names(self.parameters, symbols)
         obs = _observables(self.observables, self.circuit.num_qubits, label="Shift")

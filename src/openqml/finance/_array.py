@@ -4,7 +4,7 @@ import math
 
 import numpy as np
 
-from ..compute.kernel import RealOps, floating_array, get_compute_kernel
+from ..compute.kernel import RealOps, _array_backend, floating_array, get_compute_kernel
 from ..errors import ValidationError
 
 
@@ -13,16 +13,14 @@ class Ops(RealOps):
         values = tuple(v for v in values if v is not None)
         if not values:
             raise ValidationError("Provide a financial array.")
-        native = [
-            v
-            for v in values
-            if not isinstance(v, (bool, int, float, complex, list, tuple, np.ndarray, np.generic))
-            and type(v).__module__.startswith(("torch", "jax", "jaxlib"))
-        ]
-        frameworks = {"torch" if type(v).__module__.startswith("torch") else "jax" for v in native}
+        native = [v for v in values if _array_backend(v) != "numpy"]
+        frameworks = {_array_backend(v) for v in native}
         if len(frameworks) > 1:
             raise ValidationError("Financial tensors must use one framework; convert explicitly.")
-        like = native[0] if native else np.asarray(values[0])
+        try:
+            like = native[0] if native else np.asarray(values[0])
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValidationError("Financial arrays must contain real numeric values.") from exc
         if "torch" in frameworks:
             import torch
 
@@ -111,7 +109,10 @@ class Ops(RealOps):
             raise ValidationError("Financial arrays must contain real numeric values.")
         dtype = getattr(value, "dtype", None)
         if dtype is None and not isinstance(value, (int, float)):
-            dtype = np.asarray(value).dtype
+            try:
+                dtype = np.asarray(value).dtype
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValidationError("Financial arrays must contain real numeric values.") from exc
         if getattr(dtype, "kind", None) in {"b", "c", "O", "U", "S", "V"} or str(dtype).startswith(
             ("torch.bool", "torch.complex")
         ):

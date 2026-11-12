@@ -17,7 +17,7 @@ from ..compute.kernel import compute_operation, get_compute_kernel, memory_budge
 from ..errors import ResourceError, ValidationError
 from ..ir._structure import split_circuit
 from ..ir.compiler import _check_circuit_limits
-from ..ir.core import Circuit, integer
+from ..ir.core import _require_circuit, integer
 from ..ir.observables import PauliString
 from ..ir.parameters import real
 from ._common import _binding_columns, _names, _real_array
@@ -54,8 +54,7 @@ class QuantumMetricPlan:
     _row_mib: float = field(init=False, repr=False)
 
     def __post_init__(self):
-        if not isinstance(self.circuit, Circuit):
-            raise ValidationError("Quantum geometry requires an OpenQML Circuit.")
+        _require_circuit(self.circuit)
         _check_circuit_limits(self.circuit)
         if self.circuit.has_effects:
             raise ValidationError("Quantum geometry requires a unitary pure-state circuit.")

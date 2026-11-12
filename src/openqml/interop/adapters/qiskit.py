@@ -419,10 +419,10 @@ def from_qiskit(
 
 
 def to_qiskit(circuit: Circuit, bindings=None, *, _symbols=None):
+    circuit = bound_for_export(circuit, bindings)
     qiskit = dependency("qiskit", "qiskit")
     from qiskit.circuit import Parameter
 
-    circuit = bound_for_export(circuit, bindings)
     native = qiskit.QuantumCircuit(circuit.num_qubits, circuit.num_clbits)
     symbols = (
         {name: Parameter(name) for name in circuit.parameters} if _symbols is None else _symbols

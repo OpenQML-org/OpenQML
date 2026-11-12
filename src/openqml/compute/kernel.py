@@ -28,6 +28,18 @@ def _torch_compiling():
     return torch is not None and torch._dynamo.is_compiling()
 
 
+def _array_backend(value):
+    """Recognize real native arrays without importing a framework for user data."""
+    torch = sys.modules.get("torch")
+    if torch is not None and isinstance(value, getattr(torch, "Tensor", ())):
+        return "torch"
+    if hasattr(value, "dtype") and type(value).__module__.startswith(("jax.", "jaxlib.")):
+        jax = sys.modules.get("jax")
+        if jax is not None and isinstance(value, (jax.Array, jax.core.Tracer)):
+            return "jax"
+    return "numpy"
+
+
 @lru_cache(maxsize=1)
 def _jax_asarray_device():
     """Observe the installed converter instead of assuming a newer JAX API."""
@@ -528,6 +540,49 @@ class ComputeKernel:
             raise NumericalError("Linear system is singular or its factorization failed.") from exc
         return self.finite(result, xp=xp, backend=backend)
 
+    def factorized_solve(self, matrix, *, xp=None, backend="numpy"):
+        """Reuse a native pivoted LU within one forward, never in a plan cache."""
+        xp = np if xp is None else xp
+        if backend == "numpy":
+            # NumPy exposes no reusable LU object. Keep its checked LAPACK solve.
+            return lambda rhs: self.solve(matrix, rhs, xp=xp, backend=backend)
+        if matrix.ndim < 2 or matrix.shape[-1] != matrix.shape[-2]:
+            raise ValidationError("Linear solves require square coefficient matrices.")
+        self._workspace((matrix,), tuple(matrix.shape), buffers=2)
+        matrix = self.finite(matrix, xp=xp, backend=backend)
+        if backend == "torch":
+            lu, pivots, info = xp.linalg.lu_factor_ex(matrix, check_errors=False)
+            valid = (info == 0) & xp.isfinite(lu).all(dim=(-1, -2))
+        elif backend == "jax":
+            from jax.scipy.linalg import lu_factor
+
+            lu, pivots = lu_factor(matrix)
+            valid = xp.all(xp.diagonal(lu, axis1=-2, axis2=-1) != 0, axis=-1)
+            valid = valid & xp.all(xp.isfinite(lu), axis=(-1, -2))
+        else:
+            raise ValidationError("Linear solve backend must be numpy, torch or jax.")
+        lu = self.check(
+            lu,
+            valid[..., None, None],
+            "Linear system is singular or its factorization failed.",
+            xp=xp,
+            backend=backend,
+            error=NumericalError,
+        )
+
+        def apply(rhs):
+            self._workspace((matrix, lu, pivots, rhs), tuple(rhs.shape), buffers=2)
+            rhs = self.finite(rhs, xp=xp, backend=backend)
+            if backend == "torch":
+                result = xp.linalg.lu_solve(lu, pivots, rhs)
+            else:
+                from jax.scipy.linalg import lu_solve
+
+                result = lu_solve((lu, pivots), rhs)
+            return self.finite(result, xp=xp, backend=backend)
+
+        return apply
+
     def svd(self, matrix, *, xp=None, backend="numpy", full_matrices=False):
         xp = np if xp is None else xp
         if backend == "numpy":
@@ -645,14 +700,17 @@ class KernelOps:
     def solve(self, matrix, rhs):
         return self.kernel.solve(matrix, rhs, xp=self.xp, backend=self.backend)
 
-    def check(self, value, valid, message, *, resource=False, error=None):
+    def broadcast_shape(self, *shapes):
+        return _broadcast_shape(shapes)
+
+    def check(self, value, valid, message, *, error=ValidationError):
         return self.kernel.check(
             value,
             valid,
             message,
             xp=self.xp,
             backend=self.backend,
-            error=error or (ResourceError if resource else ValidationError),
+            error=error,
         )
 
     def norm(self, value, axis=-1):
@@ -662,13 +720,13 @@ class KernelOps:
 class RealOps(KernelOps):
     def __init__(self, like):
         self._kernel = get_compute_kernel()
-        module = type(like).__module__
+        backend = _array_backend(like)
         self.like = like
-        if module.startswith("torch"):
+        if backend == "torch":
             import torch
 
             self.name, self.xp = "torch", torch
-        elif module.startswith(("jax", "jaxlib")):
+        elif backend == "jax":
             import jax.numpy as jnp
 
             self.name, self.xp = "jax", jnp
@@ -704,14 +762,15 @@ class RealOps(KernelOps):
 
 
 def floating_array(value):
-    module = type(value).__module__
-    if not module.startswith(("torch", "jax", "jaxlib")) and not isinstance(value, np.ndarray):
-        value = np.asarray(value, dtype=float)
+    backend = _array_backend(value)
+    if backend == "numpy" and not isinstance(value, np.ndarray):
+        try:
+            value = np.asarray(value, dtype=float)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValidationError("Inputs must be real floating tensors.") from exc
     if str(value.dtype).removeprefix("torch.") not in {"float16", "bfloat16", "float32", "float64"}:
         raise ValidationError("Inputs must be real floating tensors.")
     # Accumulate losses and traces in at least float32 under mixed precision.
     if str(value.dtype).removeprefix("torch.") in {"float16", "bfloat16"}:
-        return (
-            value.float() if type(value).__module__.startswith("torch") else value.astype("float32")
-        )
+        return value.float() if backend == "torch" else value.astype("float32")
     return value

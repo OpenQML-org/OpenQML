@@ -18,8 +18,15 @@ from ..compute.kernel import (
     get_compute_kernel,
     memory_budget,
 )
-from ..errors import BackendError, MissingDependencyError, ResourceError, ValidationError
-from ..ir.core import UNITARY_GATES, Circuit, integer
+from ..errors import (
+    BackendError,
+    MissingDependencyError,
+    ResourceError,
+    ValidationError,
+    _as_tuple,
+    _require_mapping,
+)
+from ..ir.core import UNITARY_GATES, Circuit, _require_circuit, integer
 
 _I = np.eye(2, dtype=complex)
 _X = np.array([[0, 1], [1, 0]], dtype=complex)
@@ -311,6 +318,7 @@ def _apply_matrix(state, matrix, qubits, num_qubits, ops):
 
 
 def _resource_check(circuit, max_qubits, max_memory_mb, batch_size=1):
+    _require_circuit(circuit)
     if max_qubits is not None:
         integer(max_qubits, "max_qubits", 1)
     budget = get_compute_kernel()._prepare_budget(max_memory_mb)
@@ -496,6 +504,9 @@ def statevector(
     checkpoint_interval recomputes native unitary gate segments during backward
     to retain fewer activations; it does not change the circuit or state.
     """
+    _require_circuit(circuit)
+    if bindings is not None:
+        _require_mapping(bindings)
     if type(fusion) is not bool:
         raise ValidationError("fusion must be a boolean.")
     checkpoint_interval = _checkpoint_interval(circuit, backend, checkpoint_interval)
@@ -719,6 +730,9 @@ def expectation(
     checkpoint_interval=None,
     **limits,
 ):
+    _require_circuit(circuit)
+    if bindings is not None:
+        _require_mapping(bindings)
     checkpoint_interval = _checkpoint_interval(circuit, backend, checkpoint_interval)
     if checkpoint_interval is not None:
         limits["checkpoint_interval"] = checkpoint_interval
@@ -793,11 +807,14 @@ def expectations(
     checkpoint_interval=None,
     **limits,
 ):
+    _require_circuit(circuit)
+    if bindings is not None:
+        _require_mapping(bindings)
     checkpoint_interval = _checkpoint_interval(circuit, backend, checkpoint_interval)
     if checkpoint_interval is not None:
         limits["checkpoint_interval"] = checkpoint_interval
     integer(max_branches, "max_branches", 1)
-    observables = tuple(observables)
+    observables = _as_tuple(observables, "observables")
     if not observables:
         raise ValidationError("At least one observable is required.")
     if circuit.has_effects and isinstance(backend, str) and backend in {"numpy", "torch", "jax"}:
@@ -951,6 +968,9 @@ def execute(
     returned, describe the final quantum computational basis; mixed execution
     can also return an unconditional density matrix.
     """
+    _require_circuit(circuit)
+    if bindings is not None:
+        _require_mapping(bindings)
     from ..runtime._validation import (
         invoke,
         project_counts,

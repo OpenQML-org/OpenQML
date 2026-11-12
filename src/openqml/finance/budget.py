@@ -47,12 +47,12 @@ def risk_budget_projection(
         raise ValidationError("Proposal and scenario asset axes must match and be nonempty.")
     bound, cash_rate, radius = (ops.real(v) for v in (budget, cash_return, radius))
     radius = ops.check(radius, radius >= 0, "Robust radii must be nonnegative.")
-    prefix = np.broadcast_shapes(
+    prefix = ops.broadcast_shape(
         w.shape[:-1], r.shape[:-2], bound.shape, cash_rate.shape, radius.shape
     )
     if probabilities is not None:
         p = ops.probabilities(probabilities, r.shape[-2])
-        prefix = np.broadcast_shapes(prefix, p.shape[:-1])
+        prefix = ops.broadcast_shape(prefix, p.shape[:-1])
     else:
         p = None
     admission(

@@ -5,7 +5,7 @@ from dataclasses import replace
 import numpy as np
 
 from ..compute.kernel import compute_operation, memory_budget
-from ..errors import BackendError, ResourceError, ValidationError
+from ..errors import BackendError, ResourceError, ValidationError, _as_tuple, _require_mapping
 from ..ir.core import Circuit
 from ..ir.observables import Hamiltonian, PauliString
 from ..ir.parameters import Parameter
@@ -13,13 +13,17 @@ from ..runtime.backends import ExecutionOptions, get_backend
 
 
 def _bound(circuits, bindings):
+    rows = None if bindings is None else _as_tuple(bindings, "batch bindings")
+    if rows is not None:
+        for index, row in enumerate(rows):
+            _require_mapping(row, f"bindings[{index}]")
     if isinstance(circuits, Circuit):
-        rows = [{}] if bindings is None else list(bindings)
+        rows = [{}] if rows is None else rows
         return [circuits.bind(row) for row in rows]
-    values = list(circuits)
+    values = _as_tuple(circuits, "circuits")
     if any(not isinstance(c, Circuit) for c in values):
         raise ValidationError("Circuit batches must contain Circuit objects.")
-    rows = [{} for _ in values] if bindings is None else list(bindings)
+    rows = [{} for _ in values] if rows is None else rows
     if len(values) != len(rows):
         raise ValidationError("Circuit/binding batch lengths differ.")
     return [c.bind(row) for c, row in zip(values, rows, strict=True)]
@@ -83,7 +87,7 @@ def _vectorized_states(circuits, options, *, backend="numpy", like=None):
 
 
 def _observables(observables, circuits):
-    observables = tuple(observables)
+    observables = _as_tuple(observables, "observables")
     if not observables:
         raise ValidationError("At least one observable is required.")
     for observable in observables:
@@ -244,6 +248,21 @@ def expectations_batch(
     from .dense import _expectations_from_state, _TensorOps
 
     options = ExecutionOptions(max_qubits, max_memory_mb, seed, max_branches)
+    if (
+        isinstance(circuits, Circuit)
+        and not circuits.has_effects
+        and isinstance(backend, str)
+        and backend == "numpy"
+    ):
+        from ..ir.core import UNITARY_GATES
+        from ..runtime.backends import _LocalBackend
+        from ._parameter_batch import numpy_expectations
+
+        device = get_backend("numpy")
+        if type(device) is _LocalBackend and device.capabilities.gates == UNITARY_GATES:
+            output = numpy_expectations(circuits, observables, bindings, options, device)
+            if output is not None:
+                return output
     values = _bound(circuits, bindings)
     observables = _observables(observables, values)
     tensor = isinstance(backend, str) and backend in {"torch", "jax"}
