@@ -4,9 +4,9 @@ from dataclasses import replace
 
 import numpy as np
 
-from ..compute import compute_operation, memory_budget
+from ..compute.kernel import compute_operation, memory_budget
 from ..errors import BackendError, ResourceError, ValidationError
-from ..ir import Circuit
+from ..ir.core import Circuit
 from ..ir.observables import Hamiltonian, PauliString
 from ..ir.parameters import Parameter
 from ..runtime.backends import ExecutionOptions, get_backend
@@ -251,7 +251,7 @@ def expectations_batch(
     if not values:
         return np.empty((0, len(observables)))
     if not tensor:
-        from ..runtime import resolve_backend
+        from ..runtime.scheduler import resolve_backend
 
         device = resolve_backend(device, "expectations", values, observables, options=options)
     if tensor:
@@ -348,7 +348,7 @@ def execute_batch(
     device = get_backend(backend)
     if not values:
         return []
-    from ..runtime import resolve_backend
+    from ..runtime.scheduler import resolve_backend
 
     task = (
         "sampling"

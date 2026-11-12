@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, field, replace
 from functools import partial
 from types import MappingProxyType
 
-from ..compute import compute_operation, memory_budget
+from ..compute.kernel import compute_operation, memory_budget
 from ..errors import (
     BackendError,
     ConversionError,
@@ -194,8 +194,8 @@ class PriorityBackend:
         _collect=False,
     ):
         """Inspect an automatic route without executing a circuit or cloud job."""
-        from ..ir import Circuit
         from ..ir.compiler import decompose
+        from ..ir.core import Circuit
         from .backends import _LOCK, _REGISTRY, check_effects, get_backend
 
         methods = {
@@ -529,7 +529,7 @@ class CostAwareBackend(PriorityBackend):
         allowed_devices=None,
         _alternatives=False,
     ):
-        from ..ir import Circuit, integer
+        from ..ir.core import Circuit, integer
 
         circuits = (circuits,) if isinstance(circuits, Circuit) else tuple(circuits)
         observables = tuple(observables)

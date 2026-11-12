@@ -6,10 +6,10 @@ from dataclasses import replace
 import jax
 import jax.numpy as jnp
 
-from ...compute import _CHECKED_JAX_CONTEXT
+from ...compute.kernel import _CHECKED_JAX_CONTEXT
 from ...errors import ValidationError
-from ...runtime import CostAwareBackend, PriorityBackend
 from ...runtime.backends import get_backend
+from ...runtime.scheduler import CostAwareBackend, PriorityBackend
 from ..architecture import HybridArchitecture
 from ..execution import reserve_native_cost
 from ..training import DepthSchedule, StagewiseOptimizer, _batch_rows, select_network_input

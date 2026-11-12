@@ -8,9 +8,9 @@ from typing import NamedTuple
 
 import numpy as np
 
-from ..compute import get_compute_kernel, memory_budget
+from ..compute.kernel import get_compute_kernel, memory_budget
 from ..errors import ResourceError, ValidationError
-from ..ir import CircuitBuilder, integer
+from ..ir.core import CircuitBuilder, integer
 from ..ir.observables import Hamiltonian, PauliString
 from ..ir.parameters import Parameter, real
 from ..qml.layers import LayerSpec

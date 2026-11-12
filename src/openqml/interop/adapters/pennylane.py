@@ -1,7 +1,7 @@
 """PennyLane tape conversion; return measurements remain separate from IR storage writes."""
 
 from ...errors import ConversionError, conversion_error
-from ...ir import CHANNEL_GATES, Circuit, Operation
+from ...ir.core import CHANNEL_GATES, Circuit, Operation
 from ._common import bound_for_export, dependency, numeric
 
 _NAMES = {
@@ -50,7 +50,7 @@ def from_pennylane(
     max_operations=100_000,
     max_matrix_qubits=10,
 ) -> Circuit:
-    from ...ir import integer
+    from ...ir.core import integer
     from ._common import check_matrix_width
 
     integer(max_operations, "max_operations")

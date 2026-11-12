@@ -10,7 +10,7 @@ from ..errors import ResourceError, ValidationError
 
 
 def check_npz_payload(payload, maximum):
-    from ..ir import integer
+    from ..ir.core import integer
 
     maximum = integer(maximum, "max_bytes", 1)
     try:

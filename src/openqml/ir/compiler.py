@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 from math import pi
 
 from ..errors import ConversionError, ValidationError, conversion_error
-from . import GATES_V1, UNITARY_GATES, Circuit, Operation, integer
+from .core import GATES_V1, UNITARY_GATES, Circuit, Operation, integer
 from .parameters import Expression, expression
 
 
@@ -381,7 +381,7 @@ def circuit_stats(circuit: Circuit) -> CircuitStats:
     A classical decision adds one layer. Barriers synchronize without a gate
     layer. Sparse index maps avoid allocating storage for unused wire/register bits.
     """
-    from . import CHANNEL_GATES
+    from .core import CHANNEL_GATES
 
     counts = dict(gates=0, multi=0, measurements=0, channels=0, resets=0, conditionals=0)
 

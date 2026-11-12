@@ -1,7 +1,7 @@
 """Qiskit QuantumCircuit <-> IR, preserving wire indices, angles and global phase."""
 
 from ...errors import ConversionError, ValidationError, conversion_error
-from ...ir import CHANNEL_GATES, Circuit, ClassicalCondition, Operation
+from ...ir.core import CHANNEL_GATES, Circuit, ClassicalCondition, Operation
 from ...ir.parameters import Expression
 from ._common import bound_for_export, dependency, numeric, reverse_local_basis, sympy_expression
 
@@ -23,7 +23,7 @@ def from_qiskit(
     _loop_budget=None,
     _context=None,
 ) -> Circuit:
-    from ...ir import integer
+    from ...ir.core import integer
     from ._common import check_matrix_width
 
     integer(max_operations, "max_operations")
@@ -128,7 +128,7 @@ def from_qiskit(
         used += cost
 
     phase = angle(native.global_phase, "global_phase")
-    from ...ir import GATES
+    from ...ir.core import GATES
 
     for index, item in enumerate(native.data):
         op, location = item.operation, f"operations[{index}]"

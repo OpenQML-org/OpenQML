@@ -123,7 +123,7 @@ class Operation:
             dimension = 2 ** len(qubits)
             if value.shape != (dimension, dimension) or not np.all(np.isfinite(value)):
                 raise ValidationError("Unitary matrix dimensions or entries are invalid.")
-            from ..compute import get_compute_kernel
+            from ..compute.kernel import get_compute_kernel
 
             if not np.allclose(
                 get_compute_kernel().matmul(value.conj().T, value),
@@ -147,7 +147,7 @@ class Operation:
                 or not np.isfinite(value).all()
             ):
                 raise ValidationError("Kraus operators need finite, matching square matrices.")
-            from ..compute import get_compute_kernel
+            from ..compute.kernel import get_compute_kernel
 
             completeness = (
                 get_compute_kernel().matmul(value.conj().transpose(0, 2, 1), value).sum(axis=0)

@@ -8,11 +8,11 @@ entangled input states and full-state outputs use their dedicated executors.
 from dataclasses import dataclass, field
 
 from ..autodiff._common import _observables
-from ..compute import memory_budget
+from ..compute.kernel import memory_budget
 from ..errors import ResourceError, ValidationError
-from ..ir import integer
 from ..ir._structure import split_circuit
 from ..ir.compiler import _check_circuit_limits
+from ..ir.core import integer
 from ..ir.observables import Hamiltonian, PauliString
 
 

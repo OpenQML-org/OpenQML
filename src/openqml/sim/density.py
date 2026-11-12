@@ -5,9 +5,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..compute import compute_operation, get_compute_kernel, memory_budget
+from ..compute.kernel import compute_operation, get_compute_kernel, memory_budget
 from ..errors import ResourceError, ValidationError
-from ..ir import CHANNEL_GATES, UNITARY_GATES, integer
+from ..ir.core import CHANNEL_GATES, UNITARY_GATES, integer
 from .planning import _record_plan
 
 
@@ -232,6 +232,7 @@ class _DensityProgram:
     instructions: tuple[_DensityInstruction, ...]
     outputs: tuple[int, ...]
     slots: int
+    peak_branches: int
 
 
 def _density_program(circuit, records):
@@ -309,15 +310,17 @@ def _density_program(circuit, records):
         tuple(replace(step, drops=tuple(drops.get(i, ()))) for i, step in enumerate(instructions)),
         outputs,
         count,
+        records.peak_branches,
     )
 
 
-def _compiled_density(circuit, program, bindings, ops):
+def _compiled_density(circuit, program, bindings, ops, max_qubits, max_memory_mb):
     """Trace a static register program; no classical sets or generators in the graph."""
     from .dense import _apply_matrix, _gate_matrix, _initial_state
 
     n = circuit.num_qubits
     shape = np.broadcast_shapes(*(ops.parameter_shape(value) for value in bindings.values()))
+    _resource_check(circuit, max_qubits, max_memory_mb, math.prod(shape), program.peak_branches)
     slots = [None] * program.slots
     slots[0] = _initial_state(2 * n, shape, ops)
     for step in program.instructions:
@@ -370,7 +373,6 @@ def _simulate(
     max_branches=256,
     retain_classical=False,
     classical_bits=None,
-    _records=None,
 ):
     from .dense import _TensorOps
 
@@ -396,20 +398,15 @@ def _simulate(
         )
     except ValueError as exc:
         raise ValidationError("Parameter batch shapes cannot be broadcast together.") from exc
-    if _records is None:
-        branch_limit = _planning_limit(
-            circuit, max_qubits, max_memory_mb, math.prod(shape), max_branches
-        )
-        try:
-            records = _record_plan(circuit, retain_classical, classical_bits, branch_limit)
-        except ResourceError as exc:
-            if branch_limit < max_branches:
-                raise ResourceError(
-                    "Density live branches exceed the working-memory budget."
-                ) from exc
-            raise
-    else:
-        records = _records
+    branch_limit = _planning_limit(
+        circuit, max_qubits, max_memory_mb, math.prod(shape), max_branches
+    )
+    try:
+        records = _record_plan(circuit, retain_classical, classical_bits, branch_limit)
+    except ResourceError as exc:
+        if branch_limit < max_branches:
+            raise ResourceError("Density live branches exceed the working-memory budget.") from exc
+        raise
     peak = records.peak_branches
     _resource_check(circuit, max_qubits, max_memory_mb, math.prod(shape), peak)
     size = 4**circuit.num_qubits
@@ -452,9 +449,9 @@ def density_matrix(
         if backend is get_backend("numpy"):
             backend = "numpy"
     if not (isinstance(backend, str) and backend in {"numpy", "torch", "jax"}):
-        from ..runtime import CostAwareBackend, PriorityBackend, _ObservedBackend
         from ..runtime._validation import invoke, validate_density
         from ..runtime.backends import ExecutionOptions, get_backend
+        from ..runtime.scheduler import CostAwareBackend, PriorityBackend, _ObservedBackend
 
         device = get_backend(backend)
         if isinstance(device, PriorityBackend):
@@ -505,7 +502,7 @@ def density_matrix(
         ):
             raise ResourceError("Circuit exceeds backend qubit limit.")
         bound = circuit.bind({} if bindings is None else bindings)
-        from ..runtime import resolve_backend
+        from ..runtime.scheduler import resolve_backend
 
         device = resolve_backend(device, "density", [bound], options=options)
         from ..runtime.backends import check_effects
@@ -523,7 +520,7 @@ def density_matrix(
             # Discarded records require the nonselective projective channel.
             from dataclasses import replace
 
-            from ..ir import Operation
+            from ..ir.core import Operation
 
             projectors = ([[1, 0], [0, 0]], [[0, 0], [0, 1]])
             bound = replace(
@@ -565,7 +562,7 @@ def _density_pauli_expectation(rho, paulis, num_qubits, ops):
     from .dense import _native_pauli_plan, _pauli_plan, _torch_pauli_plan
 
     if ops.backend == "torch":
-        from ..compute import _torch_compiling
+        from ..compute.kernel import _torch_compiling
 
         source, phase = (
             _native_pauli_plan(paulis, ops)

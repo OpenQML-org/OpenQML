@@ -11,10 +11,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..compute import memory_budget
+from ..compute.kernel import memory_budget
 from ..errors import ResourceError, ValidationError
-from ..ir import integer
 from ..ir.compiler import _check_circuit_limits, decompose
+from ..ir.core import integer
 from ..ir.observables import Hamiltonian, PauliString
 from ..ir.parameters import expression
 from .pauli import (

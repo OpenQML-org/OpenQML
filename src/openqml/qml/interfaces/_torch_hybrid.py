@@ -7,7 +7,7 @@ import torch
 from torch import nn
 
 from ...errors import ValidationError
-from ...ir import integer
+from ...ir.core import integer
 from ...ir.parameters import real
 from ...sim.dense import _TensorOps
 from .._native_training import solve_metric

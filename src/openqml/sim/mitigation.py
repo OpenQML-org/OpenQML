@@ -11,9 +11,9 @@ from itertools import islice
 
 import numpy as np
 
-from ..compute import compute_operation, get_compute_kernel
+from ..compute.kernel import compute_operation, get_compute_kernel
 from ..errors import NumericalError, ResourceError, ValidationError
-from ..ir import integer
+from ..ir.core import integer
 from ..ir.observables import Hamiltonian, PauliString
 from ..ir.parameters import real
 

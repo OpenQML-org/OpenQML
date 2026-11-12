@@ -8,7 +8,7 @@ import tokenize
 from dataclasses import asdict, dataclass
 
 from ..errors import ConversionError, Diagnostic, ValidationError
-from ..ir import integer
+from ..ir.core import integer
 
 
 @dataclass(frozen=True)

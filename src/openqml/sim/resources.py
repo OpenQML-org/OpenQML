@@ -4,10 +4,10 @@ import json
 import math
 from dataclasses import asdict, dataclass
 
-from ..compute import memory_budget
+from ..compute.kernel import memory_budget
 from ..errors import Diagnostic, ResourceError
-from ..ir import integer
 from ..ir.compiler import _check_circuit_limits
+from ..ir.core import integer
 from ..runtime.backends import ExecutionOptions
 
 

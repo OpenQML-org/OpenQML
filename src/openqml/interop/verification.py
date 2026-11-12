@@ -17,10 +17,10 @@ from dataclasses import asdict, dataclass
 
 import numpy as np
 
-from ..compute import memory_budget
+from ..compute.kernel import memory_budget
 from ..errors import ConversionError, Diagnostic, ResourceError, ValidationError
-from ..ir import integer
 from ..ir.compiler import _check_circuit_limits
+from ..ir.core import integer
 from ..ir.parameters import real
 
 

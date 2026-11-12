@@ -143,11 +143,6 @@ class _ByteBudget(NamedTuple):
     memory_mb: float
     max_bytes: int
 
-    def check_bytes(self, required):
-        """Internal admission for already validated, concrete byte counts."""
-        if required > self.max_bytes:
-            raise ResourceError("Compute workspace exceeds the budget.")
-
 
 @dataclass(frozen=True)
 class _BinaryGEMM:

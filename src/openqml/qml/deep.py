@@ -12,7 +12,7 @@ from dataclasses import dataclass, field, replace
 import numpy as np
 
 from ..errors import ResourceError, ValidationError
-from ..ir import CircuitBuilder, integer
+from ..ir.core import CircuitBuilder, integer
 from ..ir.observables import PauliString
 from ..ir.parameters import Parameter, real
 from .layers import LayerCheckpoint, LayerSpec

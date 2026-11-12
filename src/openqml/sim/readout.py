@@ -5,8 +5,8 @@ from collections.abc import Mapping, Set
 from dataclasses import asdict, dataclass, replace
 
 from ..errors import Diagnostic, ValidationError, conversion_error
-from ..ir import Circuit
 from ..ir.compiler import CircuitStats, _check_circuit_limits, circuit_stats
+from ..ir.core import Circuit
 from ..ir.observables import Hamiltonian, PauliString
 
 

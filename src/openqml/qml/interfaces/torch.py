@@ -83,7 +83,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
         super().__init__()
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
-        from ...ir import integer
+        from ...ir.core import integer
 
         integer(max_branches, "max_branches", 1)
         self.source_circuit = circuit
@@ -411,7 +411,7 @@ class QuantumConv2d(nn.Module):
         super().__init__()
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
-        from ...ir import integer
+        from ...ir.core import integer
 
         self.in_channels = integer(in_channels, "in_channels", 1)
         self.out_channels = integer(out_channels, "out_channels", 1)

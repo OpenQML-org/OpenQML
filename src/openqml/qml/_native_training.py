@@ -2,10 +2,10 @@
 
 from typing import NamedTuple
 
-from ..compute import _torch_compiling
 from ..compute._norms import global_norm, stop
+from ..compute.kernel import _torch_compiling
 from ..errors import ConvergenceError, ValidationError
-from ..ir import integer
+from ..ir.core import integer
 from ..ir.parameters import real
 
 

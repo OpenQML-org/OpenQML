@@ -12,8 +12,8 @@ from dataclasses import asdict, dataclass
 from fractions import Fraction
 
 from ..errors import ConversionError, Diagnostic, ResourceError, ValidationError
-from ..ir import integer
 from ..ir.compiler import _check_circuit_limits
+from ..ir.core import integer
 from .verification import _expression_work
 
 _CLIFFORD = frozenset("id x y z h s sdg sx sxdg cx cy cz swap iswap".split())
@@ -300,7 +300,7 @@ def _word(circuit, max_terms, max_work):
     A token chain on each wire is a canonical representation of a partially
     commutative word. This is deliberately not a complete universal normal form.
     """
-    from ..ir import Operation
+    from ..ir.core import Operation
 
     pending = list(reversed(circuit.operations))
     tokens, stacks, phase, work = [], {}, _angle(circuit.global_phase), 0
@@ -597,7 +597,7 @@ def semantic_coverage():
     These rows cover the displayed IR features, not every dialect or arbitrary
     native object. Runtime and algebraic verification remain independent layers.
     """
-    from ..ir import Circuit, ClassicalCondition
+    from ..ir.core import Circuit, ClassicalCondition
     from ..ir.parameters import Parameter
     from .conversion import diagnose
 

@@ -3,10 +3,10 @@
 from dataclasses import dataclass, replace
 
 from ..errors import ResourceError, ValidationError
-from ..ir import integer
-from ..runtime import CostAwareBackend
+from ..ir.core import integer
 from ..runtime.backends import ExecutionOptions, get_backend
 from ..runtime.costs import ExecutionCost, TrainingWorkload, check_cost, select_cost
+from ..runtime.scheduler import CostAwareBackend
 
 
 @dataclass(frozen=True)

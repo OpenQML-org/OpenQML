@@ -10,9 +10,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..compute import memory_budget
+from ..compute.kernel import memory_budget
 from ..errors import ResourceError, ValidationError
-from ..ir import Circuit, integer
+from ..ir.core import Circuit, integer
 from ..ir.observables import PauliString
 from ..ir.parameters import real
 from ..sim.dense import _apply_matrix, _gate_matrix, _TensorOps

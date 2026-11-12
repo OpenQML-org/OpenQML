@@ -14,10 +14,10 @@ from itertools import product
 
 import numpy as np
 
-from ..compute import get_compute_kernel, memory_budget
+from ..compute.kernel import get_compute_kernel, memory_budget
 from ..errors import Diagnostic, ResourceError, ValidationError, conversion_error
-from ..ir import Circuit, integer
 from ..ir.compiler import _check_circuit_limits, circuit_stats, decompose
+from ..ir.core import Circuit, integer
 from ..ir.observables import Hamiltonian, PauliString
 from ..ir.parameters import real
 from .dense import _FIXED, _I, _X, _Y, _Z, _TensorOps

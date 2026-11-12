@@ -10,10 +10,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..compute import get_compute_kernel, memory_budget
+from ..compute.kernel import get_compute_kernel, memory_budget
 from ..errors import ResourceError, ValidationError
-from ..ir import integer
 from ..ir.compiler import _check_circuit_limits
+from ..ir.core import integer
 from ..ir.observables import Hamiltonian
 from ..runtime.backends import BackendCapabilities
 

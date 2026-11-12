@@ -9,9 +9,9 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
-from ..compute import memory_budget
+from ..compute.kernel import memory_budget
 from ..errors import ResourceError, ValidationError
-from ..ir import UNITARY_GATES, Circuit, integer
+from ..ir.core import UNITARY_GATES, Circuit, integer
 
 
 @dataclass(frozen=True)
@@ -150,7 +150,7 @@ class DensityMatrixBackend(Protocol):
 
 
 def check_effects(circuit, device, *, expectation=False):
-    from ..ir import CHANNEL_GATES
+    from ..ir.core import CHANNEL_GATES
 
     if (
         expectation
@@ -298,7 +298,7 @@ def list_backends() -> tuple[str, ...]:
 
 def get_backend(backend: str | StatevectorBackend) -> StatevectorBackend:
     if isinstance(backend, str) and backend == "auto":
-        from . import _RUNTIME_CONTEXT
+        from .scheduler import _RUNTIME_CONTEXT
 
         scoped = _RUNTIME_CONTEXT.get()
         if scoped is not None:
@@ -311,7 +311,7 @@ def get_backend(backend: str | StatevectorBackend) -> StatevectorBackend:
 
             _REGISTRY[backend] = MPSBackend()
         elif backend not in _REGISTRY and backend == "auto":
-            from . import CostAwareBackend
+            from .scheduler import CostAwareBackend
 
             _REGISTRY[backend] = CostAwareBackend()
         elif backend not in _REGISTRY and backend == "cpu":

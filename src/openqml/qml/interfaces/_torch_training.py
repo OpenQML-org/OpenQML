@@ -9,7 +9,7 @@ import torch
 
 from ...compute._norms import global_norm
 from ...errors import ValidationError
-from ...ir import integer
+from ...ir.core import integer
 from ...ir.parameters import real
 
 

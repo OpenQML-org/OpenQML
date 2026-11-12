@@ -5,9 +5,9 @@ from itertools import islice
 
 import numpy as np
 
-from ..compute import get_compute_kernel
+from ..compute.kernel import get_compute_kernel
 from ..errors import BackendError, OpenQMLError, ValidationError
-from ..ir import integer
+from ..ir.core import integer
 from ..ir.observables import Hamiltonian
 
 

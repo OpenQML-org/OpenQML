@@ -4,9 +4,9 @@ from collections.abc import Mapping
 
 import numpy as np
 
-from ..compute import get_compute_kernel
+from ..compute.kernel import get_compute_kernel
 from ..errors import ResourceError, ValidationError
-from ..ir import Circuit, integer
+from ..ir.core import Circuit, integer
 
 
 def compile_circuit(
@@ -36,6 +36,14 @@ def compile_circuit(
         raise ValidationError("Provide a Circuit and a native torch/jax backend.")
     if transform is not None and not callable(transform):
         raise ValidationError("transform must be callable.")
+    if backend == "torch" and transform is not None:
+        import torch
+
+        if tuple(int(part) for part in torch.__version__.split(".")[:2]) < (2, 4):
+            raise ValidationError(
+                "Compiled Torch transforms require PyTorch >= 2.4. "
+                "Ordinary autograd through a compiled circuit remains available."
+            )
     if observables is not None:
         from .batch import _observables
 
@@ -75,7 +83,7 @@ def compile_circuit(
             from .density import _compiled_density, _expectations_from_density
 
             native = _TensorOps(backend, native_limits["like"])
-            rho = _compiled_density(circuit, records, bindings, native)
+            rho = _compiled_density(circuit, records, bindings, native, max_qubits, max_memory_mb)
             return _expectations_from_density(rho, observables, circuit.num_qubits, native)
         return expectations(
             circuit, observables, bindings, max_branches=max_branches, **native_limits

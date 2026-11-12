@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from functools import lru_cache
 
 from ..errors import ResourceError, ValidationError
-from ..ir import Circuit, integer
+from ..ir.core import Circuit, integer
 
 
 @dataclass(frozen=True)

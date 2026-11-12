@@ -9,8 +9,8 @@ from pathlib import Path
 import numpy as np
 
 from ..errors import ResourceError, ValidationError
-from ..ir import integer
 from ..ir._serialization import load_json
+from ..ir.core import integer
 from ._archive import check_npz_payload
 from .architecture import HybridArchitecture
 

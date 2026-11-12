@@ -4,9 +4,9 @@ from contextlib import nullcontext
 
 import numpy as np
 
-from ..compute import memory_budget
+from ..compute.kernel import memory_budget
 from ..errors import ResourceError, ValidationError
-from ..ir import integer
+from ..ir.core import integer
 from ..sim.dense import _TensorOps
 from .channels import _checked
 from .generative import shifted_tokens

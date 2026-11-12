@@ -8,8 +8,8 @@ state, binding, tensor or approximate threshold is consulted.
 from dataclasses import dataclass, replace
 
 from ..errors import Diagnostic, ValidationError, conversion_error
-from ..ir import Circuit, ClassicalCondition, Operation, integer
 from ..ir.compiler import CircuitStats, _sum_angles, circuit_stats, simplify
+from ..ir.core import Circuit, ClassicalCondition, Operation, integer
 
 
 class _Facts:

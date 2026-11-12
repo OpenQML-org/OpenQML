@@ -13,9 +13,9 @@ from itertools import product
 
 import numpy as np
 
-from ..compute import get_compute_kernel, memory_budget
+from ..compute.kernel import get_compute_kernel, memory_budget
 from ..errors import BackendError, ResourceError, ValidationError
-from ..ir import Circuit, integer
+from ..ir.core import Circuit, integer
 from ..ir.observables import Hamiltonian
 from ..ir.parameters import real
 from ..runtime.backends import ExecutionOptions

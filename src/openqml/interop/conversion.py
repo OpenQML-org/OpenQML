@@ -12,8 +12,8 @@ from ..errors import (
     ValidationError,
     conversion_error,
 )
-from ..ir import CHANNEL_GATES, UNITARY_GATES, Circuit, integer
 from ..ir.compiler import _check_circuit_limits, _operation_location
+from ..ir.core import CHANNEL_GATES, UNITARY_GATES, Circuit, integer
 from .frontends import BUILTIN_FORMATS, get_adapter, import_native, list_formats
 
 FORMATS = BUILTIN_FORMATS

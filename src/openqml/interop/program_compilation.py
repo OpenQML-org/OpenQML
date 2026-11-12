@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass
 
 from ..errors import ConversionError, MissingDependencyError, conversion_error
-from ..ir import integer
+from ..ir.core import integer
 
 
 @dataclass(frozen=True)
@@ -191,7 +191,7 @@ def _import_structured_qasm(
     from openqasm3 import ast
     from qiskit.circuit import Parameter
 
-    from ..ir import CircuitBuilder
+    from ..ir.core import CircuitBuilder
     from ._qasm import clean_source
     from .adapters.openqasm import _angle
     from .adapters.qiskit import to_qiskit

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from ..errors import ValidationError
 from ..qml.layers import LayerSpec
-from . import CircuitBuilder, integer
+from .core import CircuitBuilder, integer
 from .parameters import Parameter
 
 

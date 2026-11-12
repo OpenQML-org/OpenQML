@@ -11,10 +11,10 @@ import math
 from collections.abc import Mapping, Set
 from dataclasses import asdict, dataclass, field, replace
 
-from ..compute import memory_budget
+from ..compute.kernel import memory_budget
 from ..errors import ConversionError, Diagnostic, ResourceError, ValidationError, conversion_error
-from ..ir import Circuit, integer
 from ..ir.compiler import _check_circuit_limits, circuit_stats
+from ..ir.core import Circuit, integer
 from ..ir.observables import Hamiltonian, PauliString
 from ..ir.parameters import Parameter, real
 from ..runtime._scheduling import _evaluate_dense, _schedule_dense

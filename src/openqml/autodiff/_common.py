@@ -5,7 +5,7 @@ from collections.abc import Mapping, Set
 import numpy as np
 
 from ..errors import ValidationError
-from ..ir import integer
+from ..ir.core import integer
 from ..ir.observables import Hamiltonian, PauliString
 from ..ir.parameters import parameter_name, real
 

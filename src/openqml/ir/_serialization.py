@@ -6,7 +6,7 @@ from ..errors import ValidationError
 
 
 def load_json(text, max_bytes, *, label="IR"):
-    from . import integer
+    from .core import integer
 
     max_bytes = integer(max_bytes, "max_bytes", 1)
     if not isinstance(text, str):
@@ -61,7 +61,7 @@ def check_expression_payload(value, location="expression"):
 
 
 def check_ir_payload(payload, *, max_operations, max_depth, max_matrix_qubits, max_matrix_entries):
-    from . import integer
+    from .core import integer
 
     max_operations = integer(max_operations, "max_operations")
     max_depth = integer(max_depth, "max_depth")
@@ -127,7 +127,7 @@ def check_ir_payload(payload, *, max_operations, max_depth, max_matrix_qubits, m
 
 def bounded_circuit_json(circuit, maximum, *, indent=2, collect=True):
     """Admit expanded IR output before constructing nested dictionaries."""
-    from . import integer
+    from .core import integer
     from .parameters import _postorder, _tree_profile
 
     maximum = integer(maximum, "max_bytes", 1)

@@ -4,10 +4,10 @@ from dataclasses import replace
 
 import numpy as np
 
-from ..compute import memory_budget
 from ..compute._cache import SingleFlightCache
+from ..compute.kernel import memory_budget
 from ..errors import ResourceError
-from ..ir import UNITARY_GATES, integer
+from ..ir.core import UNITARY_GATES, integer
 from ..ir.parameters import Expression, Parameter, expression
 
 

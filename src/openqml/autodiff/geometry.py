@@ -13,11 +13,11 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..compute import compute_operation, get_compute_kernel, memory_budget
+from ..compute.kernel import compute_operation, get_compute_kernel, memory_budget
 from ..errors import ResourceError, ValidationError
-from ..ir import Circuit, integer
 from ..ir._structure import split_circuit
 from ..ir.compiler import _check_circuit_limits
+from ..ir.core import Circuit, integer
 from ..ir.observables import PauliString
 from ..ir.parameters import real
 from ._common import _binding_columns, _names, _real_array

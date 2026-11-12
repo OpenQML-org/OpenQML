@@ -4,8 +4,8 @@ from dataclasses import dataclass, replace
 
 from ..errors import ResourceError, ValidationError
 from ..sim.pauli import _CLIFFORD, _ROTATIONS, _clifford, _clifford_table
-from . import integer
 from .compiler import _check_circuit_limits, _sum_angles, circuit_stats, simplify
+from .core import integer
 from .parameters import expression
 
 _GADGETS = frozenset({"rx", "ry", "rz", "rxx", "ryy", "rzz"})

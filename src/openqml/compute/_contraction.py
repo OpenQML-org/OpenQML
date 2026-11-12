@@ -11,11 +11,11 @@ from dataclasses import dataclass, field
 
 from ..autodiff._common import _observables
 from ..errors import MissingDependencyError, ResourceError, ValidationError
-from ..ir import integer
 from ..ir.compiler import _check_circuit_limits
+from ..ir.core import integer
 from ..ir.observables import Hamiltonian, PauliString
 from ..sim.pauli import _prepare_bindings
-from . import compute_context, compute_operation, memory_budget
+from .kernel import compute_context, compute_operation, memory_budget
 
 
 def _step(left, right):

@@ -49,6 +49,10 @@ JAX uses [XLA through jit](https://docs.jax.dev/en/latest/jit-compilation.html).
 Put transforms inside this boundary with `transform=...`; the returned callable
 checks admission and result errors at its host boundary. Native shape/dtype/
 device specialization can trigger additional compilation.
+Classical branch bookkeeping for density execution is resolved into a static
+register program before tracing. Compiled Torch transforms require PyTorch
+2.4 or later; ordinary autograd through compiled circuit values works on the
+base Torch version. OpenQML does not change process-global compiler settings.
 
 Compilation has an initial cost, and small circuits can remain faster eagerly.
 TorchInductor can delegate unsupported complex operators to native kernels.

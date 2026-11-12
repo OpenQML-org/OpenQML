@@ -7,6 +7,18 @@ import pytest
 import openqml as oq
 
 
+def compiled_derivative(xp, backend, circuit, observable, run, name, options):
+    transform = xp.func.jacrev if backend == "torch" else xp.jacrev
+    if backend == "torch" and tuple(int(v) for v in xp.__version__.split(".")[:2]) < (2, 4):
+        with pytest.raises(oq.ValidationError, match="PyTorch >= 2.4"):
+            oq.compile_circuit(circuit, observable, backend=backend, transform=transform, **options)
+        value = xp.tensor(0.2, requires_grad=True)
+        return xp.autograd.grad(run({name: value}).sum(), value)[0].reshape(1)
+    return oq.compile_circuit(circuit, observable, backend=backend, transform=transform, **options)(
+        {name: 0.2}
+    )[name]
+
+
 def test_persistent_append_validates_only_new_operations_and_preserves_forks(monkeypatch):
     import openqml.ir as ir
 
@@ -124,10 +136,9 @@ def test_whole_graph_circuit_compilation_checks_results_and_derivatives(backend)
     value = run({"theta": 0.2})
     result = value.detach().numpy() if backend == "torch" else np.asarray(value)
     np.testing.assert_allclose(result, [np.cos(0.2)], atol=2e-7)
-    transform = xp.func.jacrev if backend == "torch" else xp.jacrev
-    gradient = oq.compile_circuit(
-        circuit, [oq.PauliString("ZI")], backend=backend, transform=transform, **options
-    )({"theta": 0.2})["theta"]
+    gradient = compiled_derivative(
+        xp, backend, circuit, [oq.PauliString("ZI")], run, "theta", options
+    )
     gradient = gradient.detach().numpy() if backend == "torch" else np.asarray(gradient)
     np.testing.assert_allclose(gradient, [-np.sin(0.2)], atol=2e-7)
     with pytest.raises(oq.NumericalError):
@@ -157,10 +168,9 @@ def test_compiled_physical_channel_retains_domain_checks_and_native_gradients(
     value = run({"gamma": 0.2})
     value = value.detach().numpy() if backend == "torch" else np.asarray(value)
     np.testing.assert_allclose(value, [expected], atol=2e-7)
-    transform = xp.func.jacrev if backend == "torch" else xp.jacrev
-    gradient = oq.compile_circuit(
-        circuit, [oq.PauliString("X")], backend=backend, transform=transform, **options
-    )({"gamma": 0.2})["gamma"]
+    gradient = compiled_derivative(
+        xp, backend, circuit, [oq.PauliString("X")], run, "gamma", options
+    )
     gradient = gradient.detach().numpy() if backend == "torch" else np.asarray(gradient)
     np.testing.assert_allclose(gradient, [derivative], atol=2e-7)
     with pytest.raises(oq.ValidationError):

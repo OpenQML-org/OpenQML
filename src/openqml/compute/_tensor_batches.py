@@ -5,7 +5,7 @@ import math
 import numpy as np
 
 from ..errors import ResourceError
-from . import memory_budget
+from .kernel import memory_budget
 
 
 def chunk_capacity(plan, values, shape, output_bytes=0):

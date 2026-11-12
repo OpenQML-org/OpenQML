@@ -13,10 +13,10 @@ from types import MappingProxyType
 
 import numpy as np
 
-from ..compute import memory_budget
 from ..compute._tensor_train import TensorTrainPlan
+from ..compute.kernel import memory_budget
 from ..errors import ResourceError, ValidationError
-from ..ir import integer
+from ..ir.core import integer
 from ..ir.parameters import real
 from ..sim.dense import _TensorOps
 from .cells import CustomCircuitPlan, FeatureCircuitPlan

@@ -12,10 +12,10 @@ import time
 from dataclasses import dataclass, field
 
 from ..errors import MissingDependencyError, ResourceError, ValidationError
-from ..ir import integer
+from ..ir.core import integer
 from ..ir.parameters import real
-from . import memory_budget
 from ._contraction import TensorNetworkPlan
+from .kernel import memory_budget
 
 
 @dataclass(frozen=True)

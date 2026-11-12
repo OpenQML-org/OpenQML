@@ -4,7 +4,7 @@ from functools import wraps
 
 import numpy as np
 
-from ..compute import _checked_jax_context, compute_context, get_compute_kernel
+from ..compute.kernel import _checked_jax_context, compute_context, get_compute_kernel
 from ..errors import ConvergenceError, NumericalError, ResourceError, ValidationError
 
 _ERRORS = {

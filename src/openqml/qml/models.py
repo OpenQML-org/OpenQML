@@ -5,9 +5,9 @@ from importlib import import_module
 
 import numpy as np
 
-from ..compute import compute_context, get_compute_kernel
+from ..compute.kernel import compute_context, get_compute_kernel
 from ..errors import MissingDependencyError, ValidationError
-from ..ir import integer
+from ..ir.core import integer
 from ..ir.parameters import real
 from .architecture import HybridArchitecture, QuantumCellSpec
 

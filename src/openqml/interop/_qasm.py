@@ -3,7 +3,7 @@
 import re
 
 from ..errors import conversion_error
-from ..ir import integer
+from ..ir.core import integer
 
 
 def clean_source(text, max_source_bytes=2_000_000):

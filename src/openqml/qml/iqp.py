@@ -13,9 +13,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..compute import memory_budget
+from ..compute.kernel import memory_budget
 from ..errors import ResourceError, ValidationError
-from ..ir import CircuitBuilder, integer
+from ..ir.core import CircuitBuilder, integer
 from ..ir.parameters import Parameter
 from ..sim.dense import _TensorOps
 

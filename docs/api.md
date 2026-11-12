@@ -79,6 +79,9 @@ input parameter names. The callable captures its compute policy, validates
 batch admission before conversion, and raises finite-result failures at the
 host boundary. Shapes are specialized by default; shape/dtype/device changes
 can trigger additional compilation under the native compiler's rules.
+Compiling a Torch transform requires PyTorch 2.4 or later. On PyTorch 2.2/2.3,
+compiled circuit values still support ordinary autograd; supplying `transform`
+raises `ValidationError` without changing global compiler settings.
 See [execution lowering](compute.md#circuit-construction-and-execution-lowering).
 
 ## Supervised models

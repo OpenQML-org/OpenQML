@@ -14,9 +14,9 @@ from types import MappingProxyType
 
 import numpy as np
 
-from ..compute import get_compute_kernel
+from ..compute.kernel import get_compute_kernel
 from ..errors import ValidationError
-from ..ir import integer
+from ..ir.core import integer
 
 _OPERATORS = {}
 _LOCK = RLock()

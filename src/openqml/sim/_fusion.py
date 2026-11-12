@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..compute import get_compute_kernel
+from ..compute.kernel import get_compute_kernel
 from ..errors import ResourceError
 
 

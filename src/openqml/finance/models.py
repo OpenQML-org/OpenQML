@@ -5,9 +5,9 @@ from typing import NamedTuple
 
 import numpy as np
 
-from ..compute import get_compute_kernel, memory_budget
+from ..compute.kernel import get_compute_kernel, memory_budget
 from ..errors import ValidationError
-from ..ir import integer
+from ..ir.core import integer
 from ..ir.parameters import real
 from ..qml.architecture import HybridArchitecture, QuantumCellSpec
 from ..qml.operators import OperatorSpec

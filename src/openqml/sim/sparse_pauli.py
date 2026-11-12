@@ -15,11 +15,11 @@ from itertools import product
 import numpy as np
 
 from ..autodiff._common import _binding_columns
-from ..compute import get_compute_kernel, memory_budget
+from ..compute.kernel import get_compute_kernel, memory_budget
 from ..errors import ResourceError, ValidationError
-from ..ir import CHANNEL_GATES, integer
 from ..ir._structure import compact_pair
 from ..ir.compiler import _check_circuit_limits
+from ..ir.core import CHANNEL_GATES, integer
 from ..ir.observables import Hamiltonian, PauliString, SparseHamiltonian, SparsePauliString
 from ..ir.parameters import real
 from .dense import _I, _X, _Y, _Z, _gate_matrix, _TensorOps

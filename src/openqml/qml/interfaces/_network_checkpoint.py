@@ -9,8 +9,8 @@ import jax
 import numpy as np
 
 from ...errors import ValidationError
-from ...ir import integer
 from ...ir._serialization import load_json
+from ...ir.core import integer
 from .._archive import check_npz_payload
 from ..training import DepthSchedule
 

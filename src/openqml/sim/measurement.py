@@ -4,9 +4,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..compute import get_compute_kernel
+from ..compute.kernel import get_compute_kernel
 from ..errors import BackendError, ValidationError
-from ..ir import integer
+from ..ir.core import integer
 from ..ir.observables import Hamiltonian, PauliString
 from ..ir.parameters import real
 from ..runtime.backends import BackendCapabilities, ExecutionOptions, get_backend

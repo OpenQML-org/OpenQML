@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from ...autodiff.compilation import compile_compute
 from ...compute._norms import global_norm
 from ...errors import ValidationError
-from ...ir import integer
+from ...ir.core import integer
 from ...ir.parameters import real
 
 

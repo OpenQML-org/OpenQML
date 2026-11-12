@@ -4,12 +4,12 @@ from typing import NamedTuple
 
 import torch
 
-from . import ComputeKernel, _ByteBudget
+from .kernel import ComputeKernel, _ByteBudget
 
 
 @torch._dynamo.assume_constant_result
 def _policy_snapshot():
-    from . import _COMPUTE_CONTEXT, _KERNEL
+    from .kernel import _COMPUTE_CONTEXT, _KERNEL
 
     kernel = _COMPUTE_CONTEXT.get() or _KERNEL
     policy = kernel.policy
@@ -26,7 +26,7 @@ def _policy_snapshot():
 
 @torch._dynamo.assume_constant_result
 def _budget_snapshot(requested):
-    from . import _COMPUTE_CONTEXT, _KERNEL
+    from .kernel import _COMPUTE_CONTEXT, _KERNEL
 
     kernel = _COMPUTE_CONTEXT.get() or _KERNEL
     return tuple(kernel._prepare_budget(requested))

@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from . import Circuit, ClassicalCondition
+from .core import Circuit, ClassicalCondition
 
 
 def operation_resources(op):

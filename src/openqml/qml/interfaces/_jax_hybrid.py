@@ -5,9 +5,9 @@ import math
 import jax
 import jax.numpy as jnp
 
-from ...compute import get_compute_kernel
+from ...compute.kernel import get_compute_kernel
 from ...errors import ValidationError
-from ...ir import integer
+from ...ir.core import integer
 from ...ir.parameters import real
 from ...sim.dense import _TensorOps
 from .._native_training import solve_metric

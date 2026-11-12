@@ -6,9 +6,9 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ..errors import ResourceError, ValidationError
-from ..ir import integer
+from ..ir.core import integer
 from ..sim.dense import _TensorOps
-from . import compute_operation, memory_budget
+from .kernel import compute_operation, memory_budget
 
 
 def _modes(values, name):

@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass
 from threading import RLock
 
 from ..errors import ResourceError, ValidationError
-from ..ir import integer
+from ..ir.core import integer
 from ..ir.parameters import real
 
 

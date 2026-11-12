@@ -4,7 +4,7 @@ import math
 
 import numpy as np
 
-from ..compute import RealOps, floating_array, get_compute_kernel
+from ..compute.kernel import RealOps, floating_array, get_compute_kernel
 from ..errors import ValidationError
 
 

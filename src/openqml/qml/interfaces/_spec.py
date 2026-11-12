@@ -25,8 +25,8 @@ def default_layer_backend(
         return native
     from dataclasses import replace
 
-    from ...runtime import CostAwareBackend
     from ...runtime.costs import TrainingWorkload
+    from ...runtime.scheduler import CostAwareBackend
 
     runtime = get_backend("auto")
     work = None
@@ -311,7 +311,7 @@ def prepare_execution(
     if checkpoint_interval is not None:
         raise ValidationError("checkpoint_interval requires the default dense execution method.")
     from ...errors import ResourceError
-    from ...ir import integer
+    from ...ir.core import integer
     from ...sim.pauli import PauliPlan
 
     if limits["max_qubits"] is not None:

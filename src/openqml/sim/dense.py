@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from ..compute import (
+from ..compute.kernel import (
     KernelOps,
     _torch_compiling,
     compute_operation,
@@ -18,7 +18,7 @@ from ..compute import (
     memory_budget,
 )
 from ..errors import BackendError, MissingDependencyError, ResourceError, ValidationError
-from ..ir import UNITARY_GATES, Circuit, integer
+from ..ir.core import UNITARY_GATES, Circuit, integer
 
 _I = np.eye(2, dtype=complex)
 _X = np.array([[0, 1], [1, 0]], dtype=complex)
@@ -477,8 +477,8 @@ def statevector(
         )
     native = isinstance(backend, str) and backend in {"numpy", "torch", "jax"}
     if not native:
-        from ..runtime import CostAwareBackend, PriorityBackend, _ObservedBackend
         from ..runtime.backends import ExecutionOptions, get_backend
+        from ..runtime.scheduler import CostAwareBackend, PriorityBackend, _ObservedBackend
 
         if like is not None:
             raise ValidationError(
@@ -708,7 +708,7 @@ def expectation(
 
         device = get_backend(backend)
         if device.capabilities.native_expectations:
-            from ..runtime import PriorityBackend
+            from ..runtime.scheduler import PriorityBackend
 
             if isinstance(device, PriorityBackend) and any(
                 np.ndim(v) for v in (bindings or {}).values()
@@ -783,7 +783,7 @@ def expectations(
 
         device = get_backend(backend)
         if device.capabilities.native_expectations:
-            from ..runtime import PriorityBackend
+            from ..runtime.scheduler import PriorityBackend
             from .batch import expectations_batch
 
             if isinstance(device, PriorityBackend) and any(
@@ -939,7 +939,7 @@ def execute(
     if circuit.has_measurements and shots is None:
         raise ValidationError("Set shots for a measured circuit.")
     bound = circuit.bind({} if bindings is None else bindings)
-    from ..runtime import resolve_backend
+    from ..runtime.scheduler import resolve_backend
 
     task = "sampling" if shots is not None else "density" if bound.has_effects else "statevector"
     device = resolve_backend(

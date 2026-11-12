@@ -39,7 +39,7 @@ class AerBackend:
     )
 
     def __post_init__(self):
-        from ..ir import integer
+        from ..ir.core import integer
         from ..ir.parameters import real
 
         integer(self.compile_cache_size, "compile_cache_size", 1)
@@ -105,7 +105,7 @@ class AerBackend:
             else:
                 from qiskit import transpile
 
-                from ..ir import Circuit
+                from ..ir.core import Circuit
                 from ..ir.parameters import Parameter, expression
                 from .adapters.qiskit import to_qiskit
 

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from ..errors import ValidationError
-from ..ir import Circuit, integer
+from ..ir.core import Circuit, integer
 from ..ir.observables import Hamiltonian, PauliString, z_observables
 from ..ir.parameters import parameter_name, real
 

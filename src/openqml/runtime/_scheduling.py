@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
-from ..ir import Circuit
+from ..ir.core import Circuit
 from ..ir.observables import PauliString
 from ..ir.parameters import Parameter
 

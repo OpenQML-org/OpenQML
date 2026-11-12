@@ -5,9 +5,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..compute import memory_budget
+from ..compute.kernel import memory_budget
 from ..errors import ResourceError, ValidationError
-from ..ir import integer
+from ..ir.core import integer
 from ..ir.observables import PauliString
 from ..ir.parameters import real
 from ..sim.dense import _TensorOps

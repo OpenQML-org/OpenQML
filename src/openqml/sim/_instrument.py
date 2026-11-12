@@ -17,7 +17,7 @@ from math import isqrt
 
 from ..errors import ResourceError
 from ..interop.semantics import _PI, _angle, _bounded_coefficient
-from ..ir import CHANNEL_GATES, Operation
+from ..ir.core import CHANNEL_GATES, Operation
 
 # zeta = exp(i*pi/4), zeta**4 = -1. Unique rational coordinates make comparison
 # exact. In particular named H/T gates never acquire floating-point entries.

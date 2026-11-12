@@ -2,7 +2,7 @@
 
 import torch
 
-from ..compute import _torch_compiling
+from ..compute.kernel import _torch_compiling
 from ._array import Ops
 from ._linear import _solve, linear_solve
 

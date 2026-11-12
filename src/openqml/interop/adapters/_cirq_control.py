@@ -9,7 +9,7 @@ from itertools import product
 from math import prod
 
 from ...errors import conversion_error
-from ...ir import Circuit, ClassicalCondition, Operation
+from ...ir.core import Circuit, ClassicalCondition, Operation
 from ._common import dependency
 
 

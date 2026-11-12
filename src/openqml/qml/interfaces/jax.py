@@ -79,7 +79,7 @@ class QuantumLayer(LayerSpecMixin):
         planning_options=None,
         tensor_options=None,
     ):
-        from ...ir import integer
+        from ...ir.core import integer
 
         integer(max_branches, "max_branches", 1)
         self.source_circuit = circuit

@@ -6,11 +6,11 @@ from pathlib import Path
 
 import numpy as np
 
-from ..compute import memory_budget
+from ..compute.kernel import memory_budget
 from ..errors import ConversionError, ResourceError, ValidationError
 from ..interop.semantics import _CLIFFORD
-from ..ir import integer
 from ..ir.compiler import _check_circuit_limits
+from ..ir.core import integer
 from ..ir.parameters import real
 from ..runtime.backends import BackendCapabilities
 

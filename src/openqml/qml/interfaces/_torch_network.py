@@ -10,8 +10,8 @@ from torch import nn
 from ...compute._distributed import DistributedTensorPlan
 from ...compute._norms import global_norm
 from ...errors import ValidationError
-from ...runtime import CostAwareBackend, PriorityBackend
 from ...runtime.backends import get_backend
+from ...runtime.scheduler import CostAwareBackend, PriorityBackend
 from ..architecture import HybridArchitecture
 from ..execution import reserve_native_cost
 from ..training import DepthSchedule, _batch_rows, select_network_input

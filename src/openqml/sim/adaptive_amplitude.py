@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ..errors import BackendError, ResourceError, ValidationError
-from ..ir import integer
+from ..ir.core import integer
 from ..ir.parameters import real
 from .amplitude import (
     AmplitudeEstimate,

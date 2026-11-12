@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from ..errors import ValidationError
-from ..ir import integer
+from ..ir.core import integer
 
 
 def select_network_input(batch, input_features, selector=None):

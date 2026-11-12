@@ -8,9 +8,9 @@ from inspect import signature
 from sys import modules
 from threading import RLock
 
-from ..compute import compute_context, get_compute_kernel
+from ..compute.kernel import compute_context, get_compute_kernel
 from ..errors import BackendError, ValidationError
-from ..ir import integer
+from ..ir.core import integer
 from ..ir.parameters import real
 
 _RECOVERY_CONTEXT = ContextVar("openqml_job_recovery", default=None)

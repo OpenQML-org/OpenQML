@@ -42,7 +42,7 @@ class SparsePauliString:
     def __post_init__(self):
         from collections.abc import Mapping
 
-        from . import integer
+        from .core import integer
 
         width = integer(self.num_qubits, "num_qubits", 1)
         raw = self.sites.items() if isinstance(self.sites, Mapping) else self.sites

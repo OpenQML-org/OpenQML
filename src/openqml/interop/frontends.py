@@ -6,7 +6,7 @@ from importlib import import_module
 from threading import RLock
 
 from ..errors import ValidationError, conversion_error
-from ..ir import Circuit
+from ..ir.core import Circuit
 
 BUILTIN_FORMATS = ("ir", "json", "qiskit", "pennylane", "cirq", "openqasm2", "openqasm3")
 _REGISTRY = {}

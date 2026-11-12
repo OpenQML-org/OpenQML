@@ -1,7 +1,7 @@
 """Atomic switch lowering with grouped labels, default branches and bounded expansion."""
 
 from ...errors import conversion_error
-from ...ir import Circuit, ClassicalCondition, Operation
+from ...ir.core import Circuit, ClassicalCondition, Operation
 
 
 def lower_switch(

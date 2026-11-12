@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from . import get_compute_kernel
+from .kernel import get_compute_kernel
 
 
 @dataclass(frozen=True)

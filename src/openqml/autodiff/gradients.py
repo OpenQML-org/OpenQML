@@ -10,9 +10,9 @@ from itertools import islice
 
 import numpy as np
 
-from ..compute import get_compute_kernel
+from ..compute.kernel import get_compute_kernel
 from ..errors import ValidationError
-from ..ir import Circuit, integer
+from ..ir.core import Circuit, integer
 from ..ir.parameters import Expression, expression, real
 from ..runtime.backends import ExecutionOptions, get_backend
 from ..sim.batch import expectations_batch
@@ -96,11 +96,11 @@ class ShiftPlan:
         tensor = isinstance(self.backend, str) and self.backend in {"torch", "jax"}
         backend = self.backend if tensor else get_backend(self.backend)
         if not tensor:
-            from ..runtime import PriorityBackend, resolve_backend
+            from ..runtime.scheduler import PriorityBackend, resolve_backend
 
             if isinstance(backend, PriorityBackend):
-                from ..runtime import CostAwareBackend
                 from ..runtime.costs import TrainingWorkload
+                from ..runtime.scheduler import CostAwareBackend
 
                 work = None
                 if isinstance(backend, CostAwareBackend):

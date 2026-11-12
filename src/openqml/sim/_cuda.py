@@ -5,7 +5,7 @@ from importlib.util import find_spec
 
 import numpy as np
 
-from ..compute import memory_budget
+from ..compute.kernel import memory_budget
 from ..errors import ConversionError, ResourceError
 from ..interop._parameter_batches import CircuitCache, parameter_batches
 from ..runtime.backends import BackendCapabilities

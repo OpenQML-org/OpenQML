@@ -153,7 +153,7 @@ def bound_for_export(circuit, bindings):
 
 
 def check_matrix_width(width, limit, location):
-    from ...ir import integer
+    from ...ir.core import integer
 
     integer(limit, "max_matrix_qubits", 1)
     if width > limit:

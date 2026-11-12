@@ -5,7 +5,7 @@ from threading import RLock
 
 import numpy as np
 
-from ..compute import get_compute_kernel
+from ..compute.kernel import get_compute_kernel
 from ..errors import BackendError, ResourceError, ValidationError
 from ..ir.observables import Hamiltonian
 from ..runtime.backends import BackendCapabilities
@@ -14,7 +14,7 @@ from ._parameter_batches import CircuitCache, parameter_batches
 
 
 def _layout(metadata):
-    from ..ir import integer
+    from ..ir.core import integer
 
     rows, columns = (integer(n, "provider result dimension") for n in metadata["shape"])
     get_compute_kernel().admit(rows * max(1, columns), metadata["max_memory_mb"])
@@ -47,7 +47,7 @@ def _estimator_result(results, metadata):
 
 
 def _sampler_result(results, metadata):
-    from ..ir import integer
+    from ..ir.core import integer
 
     rows, _, layouts = _layout(metadata)
     if len(results) != len(layouts):
@@ -93,7 +93,7 @@ def recover_job(receipt, loader, *, recovery=None):
             if bounds.shape != (columns,) or np.any(np.isnan(bounds) | (bounds < 0)):
                 raise ValueError("Invalid observable bounds.")
         else:
-            from ..ir import integer
+            from ..ir.core import integer
 
             integer(metadata["shots"], "receipt shots", 1)
             if len(metadata["widths"]) != rows:
@@ -180,7 +180,7 @@ class QiskitEstimatorBackend:
         V2 estimators accept precision; providers may allocate additional shots
         for randomization/mitigation. Quote callbacks must include that overhead.
         """
-        from ..ir import integer
+        from ..ir.core import integer
 
         shots = integer(shots, "shots", 1)
         configured = replace(self, precision=shots**-0.5)
@@ -459,7 +459,7 @@ class CirqDensityBackend:
                 elif op.name != "barrier":
                     operations.append(op)
             if not events:
-                from ..ir import Operation
+                from ..ir.core import Operation
 
                 for q in range(circuit.num_qubits):
                     operations.append(Operation("measure", (q,), clbits=(q,)))

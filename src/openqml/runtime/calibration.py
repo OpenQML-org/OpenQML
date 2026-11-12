@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from ..errors import ValidationError
-from ..ir import Circuit, integer
+from ..ir.core import Circuit, integer
 from ..ir.observables import Hamiltonian
 from ..ir.parameters import real
 from .costs import ExecutionProfile

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ..errors import ConversionError, MissingDependencyError, conversion_error
-from ..ir import Circuit
+from ..ir.core import Circuit
 
 
 def detect_framework(value):
@@ -63,7 +63,7 @@ class QuantumProgram:
         max_matrix_qubits=10,
         max_include_depth=16,
     ):
-        from ..ir import integer
+        from ..ir.core import integer
         from ._qasm import check_literal_registers, clean_source, expand_includes, validate_header
         from .adapters._common import dependency
 

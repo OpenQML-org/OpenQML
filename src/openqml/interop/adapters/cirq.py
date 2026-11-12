@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 import numpy as np
 
 from ...errors import ConversionError, ValidationError, conversion_error
-from ...ir import CHANNEL_GATES, Circuit, Operation
+from ...ir.core import CHANNEL_GATES, Circuit, Operation
 from ...ir.parameters import Expression
 from ._common import bound_for_export, dependency, sympy_expression, to_sympy
 
@@ -22,7 +22,7 @@ def from_cirq(
     max_depth=64,
     max_condition_bits=10,
 ) -> Circuit:
-    from ...ir import integer
+    from ...ir.core import integer
     from ._common import check_matrix_width
 
     integer(max_matrix_qubits, "max_matrix_qubits", 1)

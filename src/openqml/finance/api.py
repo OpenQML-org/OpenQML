@@ -1,6 +1,6 @@
 """Small financial entry points; policies and native results stay explicit."""
 
-from ..compute import compute_operation
+from ..compute.kernel import compute_operation
 from ..errors import ResourceError, ValidationError
 from ..ir.parameters import real
 from ._array import Ops
@@ -13,8 +13,8 @@ def _exact_coherent(payoff, oracle, offset, scale, discount, backend, memory):
 
     import numpy as np
 
-    from ..runtime import PriorityBackend, resolve_backend
     from ..runtime.backends import ExecutionOptions, get_backend
+    from ..runtime.scheduler import PriorityBackend, resolve_backend
     from ..sim.dense import expectation, statevector
 
     source = payoff.preparation if payoff is not None else oracle.preparation

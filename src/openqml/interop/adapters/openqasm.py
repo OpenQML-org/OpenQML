@@ -8,7 +8,7 @@ import re
 from dataclasses import replace
 
 from ...errors import ConversionError, ValidationError, conversion_error
-from ...ir import GATES_V3, Circuit, ClassicalCondition, Operation, integer
+from ...ir.core import GATES_V3, Circuit, ClassicalCondition, Operation, integer
 from ...ir.parameters import Expression, Parameter, _postorder, expression, parameter_name
 from .._qasm import clean_source
 from ._common import bound_for_export

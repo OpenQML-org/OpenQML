@@ -9,7 +9,7 @@ coarse blocks; evaluation therefore uses a general circuit execution engine.
 from dataclasses import dataclass, field
 
 from ..errors import ResourceError, ValidationError
-from ..ir import CircuitBuilder, integer
+from ..ir.core import CircuitBuilder, integer
 from ..ir.observables import PauliString
 from ..ir.parameters import Parameter
 from .layers import LayerSpec
