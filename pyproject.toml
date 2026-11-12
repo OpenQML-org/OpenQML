@@ -39,6 +39,10 @@ torch = ["torch>=2.2"]
 jax = ["jax>=0.4.30", "optax>=0.2"]
 qiskit = ["qiskit[qasm3-import]>=1.2", "sympy>=1.12"]
 aer = ["qiskit[qasm3-import]>=1.2", "qiskit-aer>=0.15", "sympy>=1.12"]
+aer-gpu = [
+  "qiskit[qasm3-import]>=1.2", "sympy>=1.12",
+  "qiskit-aer-gpu>=0.17; platform_system == 'Linux' and platform_machine == 'x86_64'",
+]
 qasm = ["qiskit[qasm3-import]>=1.2", "openqasm3[parser]>=1.0", "sympy>=1.12"]
 flax = ["jax>=0.4.30", "flax>=0.10", "optax>=0.2"]
 symbolic = ["sympy>=1.12"]

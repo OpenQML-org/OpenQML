@@ -227,6 +227,12 @@ class PriorityBackend:
             raise ResourceError("Circuit exceeds the requested qubit limit.")
         with _LOCK:
             devices = [d for d in _REGISTRY.values() if d.capabilities.device_type == "QPU"]
+            configured_gpu = tuple(
+                sorted(
+                    (d for d in _REGISTRY.values() if d.capabilities.device_type == "GPU"),
+                    key=lambda d: d.name,
+                )
+            )
             names = set(_REGISTRY) | {"gpu", "cpu"}
         native_candidates = tuple(native_candidates)
         for device in native_candidates:
@@ -248,7 +254,10 @@ class PriorityBackend:
         native_cpu = tuple(d for d in native_candidates if d.capabilities.device_type == "CPU")
         # A framework-native candidate replaces the generic implementation for
         # its platform, so its quote is applied to the engine actually used.
-        for device in (*devices, *(native_gpu or ("gpu",)), *(native_cpu or ("cpu",))):
+        gpu_defaults = configured_gpu + (
+            () if any(d.name == "gpu" for d in configured_gpu) else ("gpu",)
+        )
+        for device in (*devices, *(native_gpu or gpu_defaults), *(native_cpu or ("cpu",))):
             if isinstance(device, str):
                 device = get_backend(device)
             try:
@@ -692,7 +701,7 @@ class _ObservedBackend:
             if isinstance(self.backend, CUDABackend):
                 import torch
 
-                gpu = torch.cuda.current_device()
+                gpu = self.backend.device or torch.cuda.current_device()
 
             def submit(index, chunk):
                 profile.check_fresh()

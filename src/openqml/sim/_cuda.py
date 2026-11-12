@@ -1,19 +1,33 @@
 """Lazy CUDA readouts with shared topologies and bounded native tensor batches."""
 
+import re
 from dataclasses import dataclass, field, replace
 from importlib.util import find_spec
 
 import numpy as np
 
 from ..compute.kernel import memory_budget
-from ..errors import ConversionError, ResourceError
-from ..interop._parameter_batches import CircuitCache, parameter_batches
+from ..errors import ConversionError, ResourceError, ValidationError, _require_choice
+from ..interop._parameter_batches import CircuitCache, binding_matrix, parameter_batches
 from ..runtime.backends import BackendCapabilities
+
+
+def _native_parameters(bindings, start, stop, like):
+    """Stage one packed host buffer per chunk instead of one transfer per gate."""
+    if not bindings:
+        return {}
+    import torch
+
+    host = torch.from_numpy(np.ascontiguousarray(binding_matrix(bindings)[start:stop]))
+    packed = host.to(device=like.device, dtype=like.dtype, non_blocking=True)
+    return {name: packed[:, i] for i, name in enumerate(bindings)}
 
 
 @dataclass(frozen=True)
 class CUDABackend:
     name: str = "gpu"
+    precision: str = "float64"
+    device: str | None = None
     capabilities: BackendCapabilities = field(
         default_factory=lambda: BackendCapabilities(
             native_expectations=True,
@@ -31,6 +45,19 @@ class CUDABackend:
     )
     _cache: object = field(default_factory=lambda: CircuitCache(16), repr=False, compare=False)
 
+    def __post_init__(self):
+        _require_choice(self.precision, ("float32", "float64"), "precision")
+        if self.device is not None and (
+            not isinstance(self.device, str)
+            or re.fullmatch(r"cuda(?::[0-9]+)?", self.device) is None
+        ):
+            raise ValidationError("device must be None, 'cuda' or 'cuda:<index>'.")
+
+    def _like(self):
+        import torch
+
+        return torch.empty((), device=self.device or "cuda", dtype=getattr(torch, self.precision))
+
     def is_available(self):
         try:
             if find_spec("torch") is None:
@@ -39,7 +66,11 @@ class CUDABackend:
         except (ImportError, OSError):
             return False
 
-        return bool(torch.cuda.is_available())
+        return bool(torch.cuda.is_available()) and (
+            self.device is None
+            or ":" not in self.device
+            or int(self.device.split(":")[1]) < torch.cuda.device_count()
+        )
 
     def _options(self, options):
         if not self.is_available():
@@ -47,7 +78,7 @@ class CUDABackend:
         import torch
 
         try:
-            free, _ = torch.cuda.mem_get_info()
+            free, _ = torch.cuda.mem_get_info(self.device)
         except (RuntimeError, AssertionError) as exc:
             raise ResourceError("CUDA memory admission is unavailable.") from exc
         budget = min(options.max_memory_mb, free / (2 * 2**20))
@@ -119,7 +150,7 @@ class CUDABackend:
         options = self._options(options)
         if 8 * len(circuits) * len(observables) > memory_budget(options.max_memory_mb) * 2**20:
             raise ResourceError("GPU readout output exceeds max_memory_mb.")
-        like = torch.empty((), device="cuda", dtype=torch.float64)
+        like = self._like()
         output = np.empty((len(circuits), len(observables)))
         with torch.no_grad():
             for rows, prototype, bindings in parameter_batches(circuits, options.max_memory_mb):
@@ -133,12 +164,7 @@ class CUDABackend:
                 )
                 for start in range(0, len(rows), chunk):
                     selected = rows[start : start + chunk]
-                    parameters = {
-                        k: torch.as_tensor(
-                            v[start : start + chunk], device="cuda", dtype=like.dtype
-                        )
-                        for k, v in bindings.items()
-                    }
+                    parameters = _native_parameters(bindings, start, start + chunk, like)
                     values = plan.evaluate(
                         parameters, backend="torch", like=like, batch_shape=(len(selected),)
                     )
@@ -155,7 +181,7 @@ class CUDABackend:
             state = statevector(
                 circuit,
                 backend="torch",
-                like=torch.empty((), dtype=torch.float64, device="cuda"),
+                like=self._like(),
                 max_qubits=options.max_qubits,
                 max_memory_mb=options.max_memory_mb,
             )
@@ -170,13 +196,21 @@ class CUDABackend:
         width = max(c.num_qubits for c in circuits)
         chunk = max(1, int(memory_budget(options.max_memory_mb) * 2**20) // (64 * (1 << width)))
         output = []
-        like = torch.empty((), dtype=torch.float64, device="cuda")
+        like = self._like()
         with torch.no_grad():
             for start in range(0, len(circuits), chunk):
                 states = _vectorized_states(
                     circuits[start : start + chunk], options, backend="torch", like=like
                 )
-                output.extend(state.cpu().numpy() for state in states)
+                if isinstance(states, torch.Tensor):
+                    output.extend(states.cpu().numpy())
+                else:
+                    sizes = [state.numel() for state in states]
+                    packed = torch.cat([state.reshape(-1) for state in states]).cpu().numpy()
+                    offset = 0
+                    for state, size in zip(states, sizes, strict=True):
+                        output.append(packed[offset : offset + size].reshape(state.shape))
+                        offset += size
         return output
 
     def run_density(self, circuit, *, options):
@@ -189,7 +223,7 @@ class CUDABackend:
             rho = density_matrix(
                 circuit,
                 backend="torch",
-                like=torch.empty((), dtype=torch.float64, device="cuda"),
+                like=self._like(),
                 max_qubits=options.max_qubits,
                 max_memory_mb=options.max_memory_mb,
                 max_branches=options.max_branches,
@@ -203,10 +237,10 @@ class CUDABackend:
 
         options = self._options(options)
         self.admit("sampling", circuits, (), options=options)
-        generator = torch.Generator(device="cuda")
+        like = self._like()
+        generator = torch.Generator(device=like.device)
         generator.seed() if options.seed is None else generator.manual_seed(options.seed)
         output = [None] * len(circuits)
-        like = torch.empty((), dtype=torch.float64, device="cuda")
         pure = [c.unitary_part() for c in circuits]
         with torch.no_grad():
             for rows, prototype, bindings in parameter_batches(pure, options.max_memory_mb):
@@ -223,12 +257,7 @@ class CUDABackend:
                 chunk = max(1, int(memory_budget(options.max_memory_mb) * 2**20) // per_row)
                 for start in range(0, len(rows), chunk):
                     selected = rows[start : start + chunk]
-                    parameters = {
-                        k: torch.as_tensor(
-                            v[start : start + chunk], dtype=like.dtype, device="cuda"
-                        )
-                        for k, v in bindings.items()
-                    }
+                    parameters = _native_parameters(bindings, start, start + chunk, like)
                     state = statevector(
                         prototype,
                         parameters,
@@ -241,13 +270,13 @@ class CUDABackend:
                     indices = torch.multinomial(
                         state.abs().square(), shots, replacement=True, generator=generator
                     )
-                    encoded = indices + states * torch.arange(len(selected), device="cuda")[:, None]
+                    encoded = (
+                        indices + states * torch.arange(len(selected), device=like.device)[:, None]
+                    )
                     unique, counts = torch.unique(encoded, return_counts=True)
                     for row in selected:
                         output[row] = {}
-                    for index, count in zip(
-                        unique.cpu().tolist(), counts.cpu().tolist(), strict=True
-                    ):
+                    for index, count in torch.stack((unique, counts), dim=-1).cpu().tolist():
                         local, index = divmod(index, states)
                         row = selected[local]
                         circuit = circuits[row]

@@ -1,5 +1,6 @@
 """Group readout workloads by structure while keeping stochastic rows distinct."""
 
+from collections.abc import Mapping
 from dataclasses import replace
 
 import numpy as np
@@ -9,6 +10,31 @@ from ..compute.kernel import memory_budget
 from ..errors import ResourceError
 from ..ir.core import UNITARY_GATES, integer
 from ..ir.parameters import Expression, Parameter, expression
+
+
+class _Bindings(Mapping):
+    """Column views backed by one contiguous row-major parameter matrix."""
+
+    def __init__(self, names, values):
+        self.matrix = values
+        self._columns = {name: values[:, i] for i, name in enumerate(names)}
+
+    def __getitem__(self, name):
+        return self._columns[name]
+
+    def __iter__(self):
+        return iter(self._columns)
+
+    def __len__(self):
+        return len(self._columns)
+
+
+def binding_matrix(bindings, names=None, *, rows=0):
+    """Reuse the packed buffer when a native engine uses canonical control order."""
+    names = tuple(bindings) if names is None else tuple(names)
+    if isinstance(bindings, _Bindings) and names == tuple(bindings):
+        return bindings.matrix
+    return np.stack([bindings[name] for name in names], axis=-1) if names else np.empty((rows, 0))
 
 
 def parameter_batches(circuits, max_memory_mb=256):
@@ -43,39 +69,38 @@ def parameter_batches(circuits, max_memory_mb=256):
     for rows in groups.values():
         first = circuits[rows[0]]
         controls = [
-            (path, j)
-            for path, op in first.walk_operations()
+            (path, j, f"_oq_{i:08d}_{j:04d}")
+            for i, (path, op) in enumerate(first.walk_operations())
             if op.name in UNITARY_GATES
             for j in range(len(op.params))
         ]
         if 8 * len(rows) * len(controls) > memory_budget(max_memory_mb) * 2**20:
             raise ResourceError("Batched parameter values exceed max_memory_mb.")
-        prototype, bindings = first, {}
-        for i, (path, op) in enumerate(first.walk_operations()):
-            if op.name not in UNITARY_GATES or not op.params:
-                continue
-            parameters = []
-            for j in range(len(op.params)):
-                name = f"_oq_{i:08d}_{j:04d}"
-                parameters.append(expression(Parameter(name)))
-                bindings[name] = np.asarray(
-                    [circuits[r].operation_at(path).params[j].constant for r in rows], dtype=float
-                )
-            prototype = prototype.replace_operation(path, replace(op, params=tuple(parameters)))
+        values = np.empty((len(rows), len(controls)), dtype=float)
+        for column, (path, j, _) in enumerate(controls):
+            for row, original in enumerate(rows):
+                values[row, column] = circuits[original].operation_at(path).params[j].constant
+        names = tuple(name for _, _, name in controls)
+        occurrences = iter(names)
 
-        def clear_phase(block):
+        def prepare(block, occurrences=occurrences):
+            operations = []
+            for op in block.operations:
+                if op.name in UNITARY_GATES and op.params:
+                    op = replace(
+                        op,
+                        params=tuple(expression(Parameter(next(occurrences))) for _ in op.params),
+                    )
+                if op.blocks:
+                    op = replace(op, blocks=tuple(prepare(child) for child in op.blocks))
+                operations.append(op)
             return replace(
                 block,
                 global_phase=Expression(),
-                operations=tuple(
-                    replace(op, blocks=tuple(clear_phase(b) for b in op.blocks))
-                    if op.blocks
-                    else op
-                    for op in block.operations
-                ),
+                operations=tuple(operations),
             )
 
-        yield tuple(rows), clear_phase(prototype), bindings
+        yield tuple(rows), prepare(first), _Bindings(names, values)
 
 
 class CircuitCache:

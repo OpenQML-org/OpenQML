@@ -6,11 +6,29 @@ from threading import RLock
 import numpy as np
 
 from ..compute.kernel import get_compute_kernel
-from ..errors import BackendError, ResourceError, ValidationError
+from ..errors import BackendError, ResourceError, ValidationError, _as_tuple, _require_instance
+from ..ir.core import Circuit, _require_circuit
 from ..ir.observables import Hamiltonian
-from ..runtime.backends import BackendCapabilities
+from ..runtime.backends import BackendCapabilities, ExecutionOptions, check_effects
 from ..runtime.recovery import BackendJobError, PendingJob, RecoveryPolicy
-from ._parameter_batches import CircuitCache, parameter_batches
+from ._parameter_batches import CircuitCache, binding_matrix, parameter_batches
+
+
+def _submission(circuits, backend, options, *, expectation=False):
+    options = ExecutionOptions() if options is None else options
+    _require_instance(options, ExecutionOptions, "options")
+    circuits = (circuits,) if isinstance(circuits, Circuit) else _as_tuple(circuits, "circuits")
+    if not circuits:
+        raise ValidationError("At least one circuit is required.")
+    for circuit in circuits:
+        _require_circuit(circuit)
+        if circuit.parameters:
+            raise ValidationError("Provider submission requires fully bound circuits.")
+        check_effects(circuit, backend, expectation=expectation)
+    from ..sim.batch import _limits
+
+    _limits(circuits, backend, options.max_qubits)
+    return circuits, options
 
 
 def _layout(metadata):
@@ -82,7 +100,17 @@ def recover_job(receipt, loader, *, recovery=None):
         raise ValidationError("Provide a provider job receipt with a job ID.")
     metadata = receipt.get("metadata", {})
     decoders = {"estimator-v2": _estimator_result, "sampler-v2": _sampler_result}
-    if not isinstance(metadata, dict) or metadata.get("kind") not in decoders:
+    if (
+        not isinstance(receipt.get("backend"), str)
+        or not receipt["backend"]
+        or not callable(loader)
+    ):
+        raise ValidationError("Provide a receipt backend and a callable job loader.")
+    if (
+        not isinstance(metadata, dict)
+        or not isinstance(metadata.get("kind"), str)
+        or metadata["kind"] not in decoders
+    ):
         raise ValidationError("Unknown provider result decoder.")
     try:
         rows, columns, _ = _layout(metadata)
@@ -114,7 +142,7 @@ def recover_job(receipt, loader, *, recovery=None):
     return pending.result()
 
 
-def _provider_job(submit, decoder, metadata, backend, recovery):
+def _submit_job(submit, decoder, metadata, backend, recovery):
     try:
         job = submit()
     except Exception as exc:
@@ -124,7 +152,7 @@ def _provider_job(submit, decoder, metadata, backend, recovery):
             f"reconcile provider status before resubmitting: {exc}",
             stage="submission",
         ) from exc
-    return PendingJob(job, decoder, backend=backend, metadata=metadata, policy=recovery).result()
+    return PendingJob(job, decoder, backend=backend, metadata=metadata, policy=recovery)
 
 
 @dataclass(frozen=True)
@@ -145,6 +173,7 @@ class QiskitEstimatorBackend:
     cache_size: int = 16
     recovery: RecoveryPolicy | None = None
     _cache: object = field(init=False, repr=False, compare=False)
+    _readouts: object = field(init=False, repr=False, compare=False)
     _transpiler_lock: object = field(init=False, repr=False, compare=False)
     capabilities: BackendCapabilities = field(
         default_factory=lambda: BackendCapabilities(native_expectations=True)
@@ -159,6 +188,7 @@ class QiskitEstimatorBackend:
                 self, "capabilities", replace(self.capabilities, bounded_expectations=False)
             )
         object.__setattr__(self, "_cache", CircuitCache(self.cache_size))
+        object.__setattr__(self, "_readouts", CircuitCache(self.cache_size))
         object.__setattr__(self, "_transpiler_lock", RLock())
         if self.recovery is not None and not isinstance(self.recovery, RecoveryPolicy):
             raise ValidationError("recovery must be RecoveryPolicy.")
@@ -173,6 +203,7 @@ class QiskitEstimatorBackend:
     def clear_cache(self):
         """Invalidate ISA circuits after changing a caller-owned pass manager/target."""
         self._cache.clear()
+        self._readouts.clear()
 
     def with_shots(self, shots):
         """Request equivalent statistical precision, not a provider billing cap.
@@ -185,23 +216,26 @@ class QiskitEstimatorBackend:
         shots = integer(shots, "shots", 1)
         configured = replace(self, precision=shots**-0.5)
         object.__setattr__(configured, "_cache", self._cache)
+        object.__setattr__(configured, "_readouts", self._readouts)
         object.__setattr__(configured, "_transpiler_lock", self._transpiler_lock)
         return configured
 
     def expectations_batch(self, circuits, observables, *, options):
+        return self.submit_expectations(circuits, observables, options=options).result()
+
+    def submit_expectations(self, circuits, observables, *, options=None):
+        """Submit bound circuit rows once and return a recoverable provider handle."""
+        from ..sim.batch import _observables
         from .adapters._common import dependency
 
+        circuits, options = _submission(circuits, self, options, expectation=True)
+        observables = _observables(observables, circuits)
+        get_compute_kernel().admit(len(circuits) * len(observables), options.max_memory_mb)
         dependency("qiskit", "qiskit")
         from qiskit.quantum_info import SparsePauliOp
 
         from .adapters.qiskit import to_qiskit
 
-        operators = []
-        for observable in observables:
-            terms = observable.terms if isinstance(observable, Hamiltonian) else (observable,)
-            operators.append(
-                SparsePauliOp.from_list([(t.paulis[::-1], t.coefficient) for t in terms])
-            )
         pubs, layouts = [], []
         for rows, prototype, bindings in parameter_batches(circuits, options.max_memory_mb):
 
@@ -213,17 +247,29 @@ class QiskitEstimatorBackend:
                     return self.pass_manager.run(native)
 
             native = self._cache.get(prototype, compile_circuit)
-            mapped = operators
-            if self.pass_manager is not None:
-                if native.layout is None:
-                    if native.num_qubits != prototype.num_qubits:
-                        raise BackendError(
-                            "Transpilation changed width without providing a layout."
-                        )
-                else:
-                    mapped = [operator.apply_layout(native.layout) for operator in operators]
-            parameters = [bindings[p.name] for p in native.parameters]
-            values = np.stack(parameters, axis=-1) if parameters else np.empty((len(rows), 0))
+
+            def compile_readouts(native=native, prototype=prototype):
+                operators = []
+                for observable in observables:
+                    terms = (
+                        observable.terms if isinstance(observable, Hamiltonian) else (observable,)
+                    )
+                    operators.append(
+                        SparsePauliOp.from_list([(t.paulis[::-1], t.coefficient) for t in terms])
+                    )
+                if self.pass_manager is not None:
+                    if native.layout is None:
+                        if native.num_qubits != prototype.num_qubits:
+                            raise BackendError(
+                                "Transpilation changed width without providing a layout."
+                            )
+                    else:
+                        operators = [operator.apply_layout(native.layout) for operator in operators]
+                # Retain native with its ID key, including across concurrent cache clears.
+                return native, tuple(operators)
+
+            _, mapped = self._readouts.get((id(native), observables), compile_readouts)
+            values = binding_matrix(bindings, (p.name for p in native.parameters), rows=len(rows))
             # Observable (M,1) and parameter (B,) shapes broadcast to (M,B).
             pubs.append((native, [[operator] for operator in mapped], values))
             layouts.append(rows)
@@ -240,7 +286,7 @@ class QiskitEstimatorBackend:
                 for o in observables
             ],
         }
-        return _provider_job(
+        return _submit_job(
             lambda: self.estimator.run(pubs, precision=self.precision),
             _estimator_result,
             metadata,
@@ -279,8 +325,15 @@ class QiskitSamplerBackend:
         self._cache.clear()
 
     def sample_batch(self, circuits, shots, *, options):
+        return self.submit_samples(circuits, shots, options=options).result()
+
+    def submit_samples(self, circuits, shots, *, options=None):
+        """Submit one V2 sampler job; retain its receipt before waiting for results."""
+        from ..runtime._validation import validate_shots
         from .adapters.qiskit import to_qiskit
 
+        circuits, options = _submission(circuits, self, options)
+        shots = validate_shots(shots)
         measured = [
             c if c.has_measurements else replace(c, num_clbits=0).measure_all() for c in circuits
         ]
@@ -295,8 +348,7 @@ class QiskitSamplerBackend:
                     return self.pass_manager.run(native)
 
             native = self._cache.get(prototype, compile_circuit)
-            parameters = [bindings[p.name] for p in native.parameters]
-            values = np.stack(parameters, axis=-1) if parameters else np.empty((len(rows), 0))
+            values = binding_matrix(bindings, (p.name for p in native.parameters), rows=len(rows))
             jobs.append((native, values))
             layouts.append(rows)
         metadata = {
@@ -307,7 +359,7 @@ class QiskitSamplerBackend:
             "shots": shots,
             "widths": [c.num_clbits for c in measured],
         }
-        return _provider_job(
+        return _submit_job(
             lambda: self.sampler.run(jobs, shots=shots),
             _sampler_result,
             metadata,

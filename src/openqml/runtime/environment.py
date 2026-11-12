@@ -22,6 +22,7 @@ _INTEGRATIONS = {
     "optax": "optax",
     "qiskit": "qiskit",
     "qiskit-aer": "qiskit_aer",
+    "qiskit-aer-gpu": "qiskit_aer",
     "pennylane": "pennylane",
     "cirq-core": "cirq",
     "openqasm3": "openqasm3",
