@@ -28,6 +28,8 @@ python -m pip install -U openqml
 
 The core depends on NumPy, packaging and psutil. Training frameworks, quantum SDKs and execution engines load on demand. Install the integrations you use, such as `openqml[torch]`, `openqml[jax]`, `openqml[flax]` or `openqml[qiskit,cirq]`.
 
+For NVIDIA GPU simulation, `openqml[aer-gpu]` on supported Linux systems connects the shared IR and scheduler to Aer's C++/CUDA engine, including optional cuStateVec and cuTensorNet paths. Native PyTorch/JAX training keeps tensors and gradients on the selected GPU. Caller-initialized Qiskit V2 primitives support asynchronous QPU submission with recoverable job receipts. See [GPU and QPU execution](docs/runtime.md).
+
 ## Quick start
 
 Allocate from observed returns:

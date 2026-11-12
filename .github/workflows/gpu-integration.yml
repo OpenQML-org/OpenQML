@@ -1,25 +1,42 @@
-name: CUDA NCCL integration
+name: Native GPU integration
 on:
   workflow_dispatch:
+    inputs:
+      distributed:
+        description: Also require two physical GPUs and NCCL
+        type: boolean
+        default: false
+      aer_gpu:
+        description: Also install and verify the native Aer GPU engine
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
   cuda:
     runs-on: [self-hosted, linux, x64, gpu]
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install core and functional test runner
         run: python -m pip install . pytest
+      - name: Install the requested native GPU integration
+        if: inputs.aer_gpu
+        run: python -m pip install ".[aer-gpu]"
       - name: Require real CUDA devices
         run: |
           python - <<'PY'
           import torch
-          assert torch.cuda.device_count() >= 2, 'Two physical CUDA devices are required'
-          assert torch.distributed.is_nccl_available(), 'NCCL is required'
-          from torch.distributed.tensor import DTensor
+          assert torch.cuda.is_available(), 'A physical CUDA GPU is required'
           PY
+      - name: Verify CUDA execution and resident financial gradients
+        env:
+          OPENQML_REQUIRE_CUDA: '1'
+          OPENQML_REQUIRE_AER_GPU: ${{ inputs.aer_gpu && '1' || '0' }}
+          OPENQML_HARDWARE_REPORT_DIR: ${{ runner.temp }}/openqml-hardware
+        run: python -m pytest -q tests/test_accelerators.py -k physical_cuda
       - name: Verify distributed values and gradients on CUDA
+        if: inputs.distributed
         env:
           OPENQML_REQUIRE_CUDA: '1'
           OPENQML_HARDWARE_REPORT_DIR: ${{ runner.temp }}/openqml-hardware
@@ -27,6 +44,6 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: cuda-nccl-execution-${{ github.sha }}
+          name: native-gpu-execution-${{ github.sha }}
           path: ${{ runner.temp }}/openqml-hardware/*.json
           if-no-files-found: error

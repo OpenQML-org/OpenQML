@@ -45,6 +45,32 @@ establish a measured large-scale speedup or multi-GPU/MPI execution result.
 See [Aer GPU options](https://qiskit.github.io/qiskit-aer/stubs/qiskit_aer.AerSimulator.html)
 and [NVIDIA cuQuantum integrations](https://docs.nvidia.com/cuda/cuquantum/latest/getting-started/index.html).
 
+## Native tensor GPU execution
+
+`CUDABackend(precision="float32", device="cuda:0")` explicitly selects native
+Torch CUDA readouts. Float64 remains the default; single precision trades
+accuracy for reduced tensor storage and hardware-dependent arithmetic speed.
+Admission remains conservative and validation tolerances do not silently relax.
+Select tolerances appropriate to the task through `ComputePolicy`.
+
+Readout and sampling sweeps prepare each IR block once and pack occurrence
+parameters into one contiguous matrix. Each GPU chunk transfers one packed
+buffer, with device-side column views, instead of transferring every rotation
+separately. Batched state output and encoded sampling counts likewise use
+combined downloads. Device selection is preserved in concurrent workers.
+These changes reduce transfer calls; measured end-to-end speed depends on the
+device, workload and native compiler.
+
+For training, use native `backend="torch"` tensors on CUDA or JAX's configured
+GPU placement. These paths retain device arrays and autodiff. The numeric
+`CUDABackend` adapter returns host readouts and is intended for numeric dispatch.
+The manual GPU workflow requires real devices, checks float32/float64 readouts,
+sampling, resident gradients and financial factor solves, and optionally checks
+native Aer GPU execution and two-GPU NCCL execution. It fails when required
+hardware is absent; CPU checks do not establish accelerator performance.
+
+## Shared dispatch
+
 Local numerical engines share `ComputeKernel` for native arrays, matrix
 products, contractions, linear solves and numerical admission. Use
 `configure_compute` to establish workspace, validation and metadata-cache
@@ -268,6 +294,21 @@ recovery. This SDK integration is covered with local primitive/job tests,
 not a claim of completed live-hardware or multi-QPU validation.
 
 ## Scoped configuration and job recovery
+
+`QiskitEstimatorBackend.submit_expectations(bound_circuits, observables)` and
+`QiskitSamplerBackend.submit_samples(bound_circuits, shots)` return a pending
+handle immediately after one V2 submission. `handle.to_dict()` retains the
+receipt before polling; `handle.result()` waits and validates the result. The
+ordinary batch methods retain their synchronous behavior. Parameters must
+already be bound, and optional `options=ExecutionOptions(...)` applies the same
+input and qubit limits before submission.
+
+The supplied primitive may use the caller's IBM Runtime Session or Batch.
+The adapter adds no automatic job fan-out. Transpiled circuit caches and mapped
+observable caches are instance-local and bounded; `clear_cache()` invalidates
+both after a target or pass manager changes. Different parameter rows always
+submit new work. Concurrent readers of a pending handle share its completed
+decode, without repeating retrieval or submission.
 
 `runtime_context(backend=...)` or `runtime_context(policy=..., profiles=...)`
 selects the automatic scheduler for one thread/async task without changing the
