@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..compute.kernel import compute_operation, get_compute_kernel, memory_budget
+from ..compute.kernel import _broadcast_shape, compute_operation, get_compute_kernel, memory_budget
 from ..errors import ResourceError, ValidationError
 from ..ir.core import CHANNEL_GATES, UNITARY_GATES, integer
 from .planning import _record_plan
@@ -319,7 +319,7 @@ def _compiled_density(circuit, program, bindings, ops, max_qubits, max_memory_mb
     from .dense import _apply_matrix, _gate_matrix, _initial_state
 
     n = circuit.num_qubits
-    shape = np.broadcast_shapes(*(ops.parameter_shape(value) for value in bindings.values()))
+    shape = _broadcast_shape(tuple(ops.parameter_shape(value) for value in bindings.values()))
     _resource_check(circuit, max_qubits, max_memory_mb, math.prod(shape), program.peak_branches)
     slots = [None] * program.slots
     slots[0] = _initial_state(2 * n, shape, ops)
@@ -392,9 +392,9 @@ def _simulate(
         like = next((v for v in bindings.values() if hasattr(v, "dtype")), None)
     ops = _TensorOps(backend, like)
     try:
-        inferred = np.broadcast_shapes(*(ops.parameter_shape(v) for v in bindings.values()))
+        inferred = _broadcast_shape(tuple(ops.parameter_shape(v) for v in bindings.values()))
         shape = (
-            inferred if batch_shape is None else np.broadcast_shapes(inferred, tuple(batch_shape))
+            inferred if batch_shape is None else _broadcast_shape((inferred, tuple(batch_shape)))
         )
     except ValueError as exc:
         raise ValidationError("Parameter batch shapes cannot be broadcast together.") from exc

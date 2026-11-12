@@ -37,6 +37,26 @@ jobs:
       - run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: python -m pip install . pytest
       - run: python -m pytest -q tests/test_contraction_compiler.py tests/test_distributed_compute.py
+  public-types:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install . mypy
+      - name: Check typed root and namespace imports
+        run: |
+          python -m mypy --ignore-missing-imports --follow-imports=silent -c '
+          from typing import assert_type
+          import openqml as oq
+          from openqml.ir import Circuit
+          from openqml.compute import ComputeKernel
+          from openqml.runtime import PriorityBackend
+          assert_type(oq.Circuit(2), Circuit)
+          assert_type(oq.get_compute_kernel(), ComputeKernel)
+          assert_type(oq.PriorityBackend(), PriorityBackend)
+          '
   core:
     strategy:
       fail-fast: false

@@ -536,7 +536,7 @@ _CHECKED_JAX_CONTEXT = ContextVar("openqml_checked_jax", default=False)
 _CONFIG_LOCK = RLock()
 
 
-def get_compute_kernel():
+def get_compute_kernel() -> ComputeKernel:
     """Return the shared process-local kernel without discovering devices."""
     if _torch_compiling():
         from ._torch import captured_kernel
@@ -554,7 +554,7 @@ def _checked_jax_context():
         _CHECKED_JAX_CONTEXT.reset(token)
 
 
-def configure_compute(*, policy=None):
+def configure_compute(*, policy=None) -> ComputeKernel:
     """Atomically install a new policy and empty shared metadata cache.
 
     Configure before starting worker threads or compiling native graphs. Existing
