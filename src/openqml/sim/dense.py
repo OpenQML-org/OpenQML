@@ -155,25 +155,30 @@ def _gate_matrix(name, params, ops, matrix=None):
         return ops.array(_FIXED[name])
     angle = ops.array(params[0], real_value=True)
     c, s = ops.xp.cos(angle / 2), ops.xp.sin(angle / 2)
+    # Older native compiler transforms can differentiate a complex multiplier
+    # only when it is a tensor, rather than a captured Python complex scalar.
+    unit = ops.array(1j) if ops.backend == "torch" else 1j
     if name == "rx":
-        return ops.matrix([[c, -1j * s], [-1j * s, c]])
+        return ops.matrix([[c, -unit * s], [-unit * s, c]])
     if name == "ry":
         return ops.matrix([[c, -s], [s, c]])
     if name == "rz":
-        return ops.matrix([[ops.xp.exp(-0.5j * angle), 0], [0, ops.xp.exp(0.5j * angle)]])
+        return ops.matrix(
+            [[ops.xp.exp(-0.5 * unit * angle), 0], [0, ops.xp.exp(0.5 * unit * angle)]]
+        )
     if name == "p":
-        return ops.matrix([[1, 0], [0, ops.xp.exp(1j * angle)]])
+        return ops.matrix([[1, 0], [0, ops.xp.exp(unit * angle)]])
     if name == "u":
         phi, lam = (ops.array(p, real_value=True) for p in params[1:])
         return ops.matrix(
             [
-                [c, -ops.xp.exp(1j * lam) * s],
-                [ops.xp.exp(1j * phi) * s, ops.xp.exp(1j * (phi + lam)) * c],
+                [c, -ops.xp.exp(unit * lam) * s],
+                [ops.xp.exp(unit * phi) * s, ops.xp.exp(unit * (phi + lam)) * c],
             ]
         )
     if name == "cp":
         return ops.matrix(
-            [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, ops.xp.exp(1j * angle)]]
+            [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, ops.xp.exp(unit * angle)]]
         )
     if name in {"crx", "cry", "crz"}:
         local = _gate_matrix(name[1:], params, ops)
@@ -191,7 +196,7 @@ def _gate_matrix(name, params, ops, matrix=None):
             pauli = ops.array(real) + 1j * ops.array(imaginary)
         else:
             pauli = ops.array(_PAULI_PRODUCTS[name])
-        return c[..., None, None] * ops.array(_IDENTITY4) - 1j * s[..., None, None] * pauli
+        return c[..., None, None] * ops.array(_IDENTITY4) - unit * s[..., None, None] * pauli
     raise ValidationError(f"No matrix for gate {name!r}.")
 
 
@@ -332,18 +337,31 @@ def _checkpoint_interval(circuit, backend, value):
     return value
 
 
-def _evolve_numpy_fused(state, operations, bindings, num_qubits, ops, max_memory_mb):
-    from ._fusion import FixedMatrix, embed_numpy, fusion_program
+def _evolve_fused(state, operations, bindings, num_qubits, ops, max_memory_mb):
+    from ._fusion import FixedMatrix, embed_native, embed_numpy, fusion_program
 
     kernel = get_compute_kernel()
     budget = kernel._prepare_budget(max_memory_mb)
     program = fusion_program(operations, num_qubits)
     for group in program.groups:
-        shape = np.broadcast_shapes(*(np.shape(bindings[name]) for name in group.parameters))
-        matrix_rows = max(1, math.prod(shape))
+        if ops.backend == "numpy":
+            shape = np.broadcast_shapes(*(np.shape(bindings[name]) for name in group.parameters))
+            matrix_rows = max(1, math.prod(shape))
+        else:
+            # Bound all local matrix batches by the admitted state batch. This
+            # also works while tracing, without inspecting live tensor values.
+            matrix_rows = max(1, math.prod(state.shape[:-1]))
         dimension = 1 << len(group.qubits)
-        required = (2 * state.size + 3 * matrix_rows * dimension**2) * 16
-        if required > budget.max_bytes or len(group.qubits) > 2:
+        required = (2 * math.prod(state.shape) + 3 * matrix_rows * dimension**2) * 16
+        # Small native states can cost less than the additional matrix products.
+        # Preserve the inexpensive original graph in that regime. Pre-folded
+        # fixed groups still need only one application, at any register width.
+        small_native = (
+            ops.backend != "numpy"
+            and state.shape[-1] < 8 * dimension
+            and not (len(group.pieces) == 1 and isinstance(group.pieces[0], FixedMatrix))
+        )
+        if required > budget.max_bytes or len(group.qubits) > 2 or small_native:
             for operation in group.operations:
                 matrix = _gate_matrix(
                     operation.name,
@@ -356,13 +374,17 @@ def _evolve_numpy_fused(state, operations, bindings, num_qubits, ops, max_memory
         combined = None
         for piece in group.pieces:
             if isinstance(piece, FixedMatrix):
-                matrix = np.asarray(piece.values, dtype=complex)
+                matrix = ops.array(piece.values)
             else:
                 matrix = _gate_matrix(
                     piece.name, [p.evaluate(bindings) for p in piece.params], ops, piece.matrix
                 )
-                matrix = embed_numpy(matrix, piece.qubits, group.qubits)
-            combined = matrix if combined is None else kernel.matmul(matrix, combined)
+                matrix = (
+                    embed_numpy(matrix, piece.qubits, group.qubits)
+                    if ops.backend == "numpy"
+                    else embed_native(matrix, piece.qubits, group.qubits, ops)
+                )
+            combined = matrix if combined is None else ops.matmul(matrix, combined)
         state = _apply_matrix(state, combined, group.qubits, num_qubits, ops)
     return state
 
@@ -378,9 +400,9 @@ def _evolve_unitary(
     fusion=True,
     max_memory_mb=256,
 ):
-    if ops.backend == "numpy" and fusion:
-        return _evolve_numpy_fused(state, operations, bindings, num_qubits, ops, max_memory_mb)
     if checkpoint_interval is None:
+        if fusion and (ops.backend == "numpy" or num_qubits >= 3):
+            return _evolve_fused(state, operations, bindings, num_qubits, ops, max_memory_mb)
         for operation in operations:
             if operation.name != "barrier":
                 matrix = _gate_matrix(
@@ -392,23 +414,29 @@ def _evolve_unitary(
                 state = _apply_matrix(state, matrix, operation.qubits, num_qubits, ops)
         return state
 
-    gates = tuple(op for op in operations if op.name != "barrier")
+    # Keep scheduling barriers inside segments so fusion cannot cross them.
+    gates = tuple(operations)
     for start in range(0, len(gates), checkpoint_interval):
         segment = gates[start : start + checkpoint_interval]
-        names = tuple(sorted(set().union(*(p.parameters for op in segment for p in op.params))))
+        names = (
+            tuple(bindings)
+            if _torch_compiling()
+            else tuple(sorted(set().union(*(p.parameters for op in segment for p in op.params))))
+        )
         values = tuple(bindings[name] for name in names)
 
         def evolve(current, *args, segment=segment, names=names):
             local = dict(zip(names, args, strict=True))
-            for operation in segment:
-                matrix = _gate_matrix(
-                    operation.name,
-                    [p.evaluate(local) for p in operation.params],
-                    ops,
-                    operation.matrix,
-                )
-                current = _apply_matrix(current, matrix, operation.qubits, num_qubits, ops)
-            return current
+            return _evolve_unitary(
+                current,
+                segment,
+                local,
+                num_qubits,
+                ops,
+                None,
+                fusion=fusion,
+                max_memory_mb=max_memory_mb,
+            )
 
         if ops.backend == "jax":
             import jax
@@ -565,7 +593,8 @@ def statevector(
         max_memory_mb=max_memory_mb,
     )
     phase = ops.array(circuit.global_phase.evaluate(bindings), real_value=True)
-    return state * ops.xp.exp(1j * phase)[..., None]
+    unit = ops.array(1j) if ops.backend == "torch" else 1j
+    return state * ops.xp.exp(unit * phase)[..., None]
 
 
 @lru_cache(maxsize=32)

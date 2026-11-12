@@ -12,7 +12,7 @@ from collections import Counter
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, fields, is_dataclass
-from functools import wraps
+from functools import lru_cache, wraps
 from numbers import Integral, Real
 from threading import RLock
 from typing import NamedTuple
@@ -26,6 +26,16 @@ from ._cache import SingleFlightCache
 def _torch_compiling():
     torch = sys.modules.get("torch")
     return torch is not None and torch._dynamo.is_compiling()
+
+
+@lru_cache(maxsize=1)
+def _jax_asarray_device():
+    """Observe the installed converter instead of assuming a newer JAX API."""
+    import inspect
+
+    import jax.numpy as jnp
+
+    return "device" in inspect.signature(jnp.asarray).parameters
 
 
 def _positive(value, name, *, zero=False):
@@ -397,7 +407,9 @@ class ComputeKernel:
                 and not isinstance(like, jax.core.Tracer)
                 and isinstance(getattr(like, "sharding", None), jax.sharding.SingleDeviceSharding)
             ):
-                return xp.asarray(value, dtype=dtype, device=like.sharding)
+                if _jax_asarray_device():
+                    return xp.asarray(value, dtype=dtype, device=like.sharding)
+                return jax.device_put(xp.asarray(value, dtype=dtype), like.sharding)
         return xp.asarray(value, dtype=dtype)
 
     def matmul(self, left, right, *, xp=None, out=None):
