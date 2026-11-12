@@ -27,6 +27,25 @@ def test_parameter_sweeps_share_topology_without_stale_values_or_bound_copies(mo
     np.testing.assert_allclose(repeated, expected[::-1], atol=2e-14)
 
 
+@pytest.mark.parametrize("mode", ["affine", "nonlinear", "finite_cancellation"])
+def test_prepared_bindings_preserve_scalar_order_at_extreme_cancellation(mode):
+    from openqml.runtime.backends import get_backend
+
+    x, y = oq.Parameter("x"), oq.Parameter("y")
+    angle = (1e308 if mode == "finite_cancellation" else 1) + x + y
+    if mode == "nonlinear":
+        angle = angle.sin()
+    scale = 1e308 if mode == "finite_cancellation" else 1e16
+    rows = [{"x": scale, "y": -scale}, {"x": -scale, "y": scale}]
+    circuit = oq.Circuit(2).ry(angle, 0).ry(angle, 1).with_global_phase(angle / 3)
+    obs = [oq.PauliString("ZI"), oq.PauliString("IZ")]
+    expected = oq.expectations_batch(circuit, obs, rows, backend=get_backend("numpy"))
+    actual = oq.expectations_batch(circuit, obs, iter(rows), backend="numpy")
+    np.testing.assert_allclose(actual, expected, atol=2e-14)
+    if mode == "affine":
+        np.testing.assert_allclose(actual, np.cos(1), atol=2e-14)
+
+
 def test_parameter_batch_preserves_empty_bindings_domains_and_backend_limits(monkeypatch):
     from openqml.runtime import backends
     from openqml.sim import dense

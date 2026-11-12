@@ -6,7 +6,7 @@ import numpy as np
 
 from ..compute.kernel import get_compute_kernel
 from ..errors import ValidationError, _as_tuple, _require_mapping
-from ..ir.parameters import Parameter, parameter_name, real
+from ..ir.parameters import Parameter, _rewrite_expression, parameter_name, real
 
 
 @dataclass(frozen=True)
@@ -74,13 +74,15 @@ def numpy_expectations(circuit, observables, bindings, options, device):
     program, ops, chunk = _program(circuit), _TensorOps(), min(128, capacity)
     for start in range(0, len(rows), chunk):
         selected = clean[start : start + chunk]
-        columns = {name: np.array([row[name] for row in selected]) for name in circuit.parameters}
-        values = {}
-        for name, angle in program.expressions:
-            value = np.asarray(angle.evaluate(columns))
-            if value.dtype.kind not in "fiu" or not np.isfinite(value).all():
-                raise ValidationError("Bound circuit angles must be finite real values.")
-            values[name] = value
+        # Use the scalar binding contract, including its summation order and
+        # nonlinear constant folding. Direct column evaluation adds affine
+        # constants in a different order and can lose them during cancellation.
+        # One memo per row shares expression rewrites without copying bound IR.
+        values = {name: np.empty(len(selected)) for name, _ in program.expressions}
+        for index, row in enumerate(selected):
+            memo = {}
+            for name, angle in program.expressions:
+                values[name][index] = _rewrite_expression(angle, row, memo=memo).constant
         states = statevector(
             program.template,
             values,

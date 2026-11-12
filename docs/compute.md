@@ -144,8 +144,9 @@ and capability policy.
 
 For explicit NumPy `expectations_batch(circuit, observables, rows, backend="numpy")`,
 one circuit topology is prepared for all scalar binding rows. Shared symbolic
-angles are evaluated as float64 columns and rows execute in admitted chunks;
-fixed gates remain fixed so gate fusion can reuse their products. The bounded
+angles are bound once per row with the same scalar summation and constant-folding
+semantics as `Circuit.bind`; the resulting columns execute in admitted chunks.
+Fixed gates remain fixed so gate fusion can reuse their products. The bounded
 cache retains symbolic metadata only. New calls evaluate their own bindings.
 Effects, external providers and heterogeneous circuit lists retain their existing
 execution paths. State and expectation checks apply to both paths.
