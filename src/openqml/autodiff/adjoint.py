@@ -12,7 +12,7 @@ import numpy as np
 
 from ..compute.kernel import get_compute_kernel, memory_budget
 from ..errors import ResourceError, ValidationError
-from ..ir.core import Circuit, integer
+from ..ir.core import Circuit, _require_circuit, integer
 from ..ir.observables import Hamiltonian
 from ..sim.dense import (
     _X,
@@ -27,8 +27,7 @@ from ._common import _binding_columns, _names, _observables, _real_array
 
 
 def _check_adjoint(circuit, max_qubits, max_memory_mb):
-    if not isinstance(circuit, Circuit):
-        raise ValidationError("Adjoint differentiation requires an OpenQML Circuit.")
+    _require_circuit(circuit)
     if circuit.has_effects:
         raise ValidationError("Adjoint differentiation requires a unitary circuit without effects.")
     if max_qubits is not None:

@@ -2,6 +2,8 @@
 
 [PyPI](https://pypi.org/project/openqml/) · [Documentation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/api.md) · [CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml)
 
+[Contributing](CONTRIBUTING.md) · [Governance](GOVERNANCE.md) · [Security](SECURITY.md)
+
 ## Quantum–classical hybrid AI
 
 Build and train hybrid neural networks with PyTorch, JAX or Flax. Use `Model.fit` and `predict` for supervised tasks, or compose convolution, attention, graph, recurrent and generative architectures with native layers. Validation loss, early stopping and portable checkpoints keep model selection and continued training in the same workflow. [Explore hybrid AI](https://github.com/OpenQML-org/OpenQML/blob/main/docs/models.md).

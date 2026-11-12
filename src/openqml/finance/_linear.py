@@ -23,10 +23,11 @@ def _woodbury(diagonal, factors, mass, rhs, ops):
     scaled = weighted * inverse[..., None, :]
     core = ops.matmul(scaled, weighted.swapaxes(-1, -2)) * signs[..., None, :]
     core = core + ops.array(np.eye(factors.shape[-2]))
+    solve = ops.kernel.factorized_solve(core, xp=ops.xp, backend=ops.name)
 
     def apply(value):
         direct = inverse[..., :, None] * value
-        dual = ops.solve(core, ops.matmul(weighted, direct))
+        dual = solve(ops.matmul(weighted, direct))
         return direct - ops.matmul(scaled.swapaxes(-1, -2), signs[..., :, None] * dual)
 
     result = apply(rhs)

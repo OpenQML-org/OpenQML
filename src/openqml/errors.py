@@ -1,6 +1,10 @@
 """Structured failures shared by the IR, simulators, and adapters."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import TypeVar
+
+_T = TypeVar("_T")
 
 
 class OpenQMLError(Exception):
@@ -9,6 +13,41 @@ class OpenQMLError(Exception):
 
 class ValidationError(OpenQMLError):
     """Invalid circuit, parameters, or runtime options."""
+
+
+def _require_instance(value: object, expected: type[_T], name: str) -> _T:
+    """Validate public input types before dispatch, without coercing user data."""
+    if not isinstance(value, expected):
+        raise ValidationError(
+            f"{name} must be a {expected.__name__} instance; got {type(value).__name__}."
+        )
+    return value
+
+
+def _require_mapping(value, name="bindings"):
+    if not isinstance(value, Mapping):
+        raise ValidationError(f"{name} must be a mapping; got {type(value).__name__}.")
+    return value
+
+
+def _require_choice(value, choices, name):
+    _require_instance(value, str, name)
+    if value not in choices:
+        shown = repr(value[:80]) + ("..." if len(value) > 80 else "")
+        raise ValidationError(f"{name} must be one of {tuple(choices)}; got {shown}.")
+    return value
+
+
+def _as_tuple(value, name):
+    if isinstance(value, (str, bytes, Mapping)):
+        raise ValidationError(f"{name} must be an iterable of items; got {type(value).__name__}.")
+    try:
+        iterator = iter(value)
+    except TypeError as exc:
+        raise ValidationError(
+            f"{name} must be an iterable of items; got {type(value).__name__}."
+        ) from exc
+    return tuple(iterator)
 
 
 class ResourceError(OpenQMLError):

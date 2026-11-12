@@ -233,7 +233,7 @@ class ScenarioPlan:
         target = target.reshape(
             target.shape[: -(self.scenarios.ndim - 1)] + (self._flat.shape[-1],)
         )
-        prefix = np.broadcast_shapes(p.shape[:-1], target.shape[:-1])
+        prefix = ops.broadcast_shape(p.shape[:-1], target.shape[:-1])
         admission(6 * rows(prefix) * self._flat.size + 2 * self._distances.size, self.max_memory_mb)
         distances = ops.norm(ops.array(self._flat) - target[..., None, :])
         first = ops.sum(p * distances)

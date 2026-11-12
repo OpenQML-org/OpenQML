@@ -179,6 +179,16 @@ def _gaussian(ctx, q, k, v, mask):
     xp, c, outputs = ctx.xp, ctx.spec.config, []
     tokens, temperature = q.shape[2], math.sqrt(q.shape[-1])
     key_norm = ctx.sum(k * k, -1, True)
+    if ctx.backend == "torch":
+        import torch.nn.functional as functional
+
+        value_width = v.shape[-1]
+        aligned = 8 * math.ceil(max(q.shape[-1] + 1, value_width) / 8)
+        ctx.check_workspace(q.shape[0] * q.shape[1] * tokens * (2 * aligned + 1))
+        ka = ctx.cat((k * math.sqrt(2 / temperature), -key_norm / temperature))
+        ka = functional.pad(ka, (0, aligned - ka.shape[-1]))
+        va = functional.pad(v, (0, aligned - value_width))
+        sentinel = ctx.array(np.arange(tokens) == 0, boolean=True)[None, None, None]
     for start in range(0, tokens, c["chunk_size"]):
         stop = min(tokens, start + c["chunk_size"])
         qc = q[:, :, start:stop]
@@ -197,20 +207,12 @@ def _gaussian(ctx, q, k, v, mask):
             else xp.any(allowed, axis=-1, keepdims=True)
         )
         if ctx.backend == "torch":
-            import torch.nn.functional as functional
-
             # Gaussian softmax equals dot-product softmax after augmenting Q/K.
             # Query norms cancel in row normalization. SDPA selects available
             # fused CUDA kernels; the sentinel makes old all-masked kernels safe.
             qa = ctx.cat((qc * math.sqrt(2 / temperature), xp.ones_like(qc[..., :1])))
-            ka = ctx.cat((k * math.sqrt(2 / temperature), -key_norm / temperature))
             # Align Q/K/V widths for fused kernels without changing the kernel.
-            value_width = v.shape[-1]
-            aligned = 8 * math.ceil(max(qa.shape[-1], value_width) / 8)
             qa = functional.pad(qa, (0, aligned - qa.shape[-1]))
-            ka = functional.pad(ka, (0, aligned - ka.shape[-1]))
-            va = functional.pad(v, (0, aligned - value_width))
-            sentinel = ctx.array(np.arange(tokens) == 0, boolean=True)[None, None, None]
             safe = allowed | (~live & sentinel)
             outputs.append(
                 functional.scaled_dot_product_attention(

@@ -19,6 +19,28 @@ A QPU executes compatible circuits. Classical projections, portfolio solvers
 and optimizer state remain native tensor calculations. Recurrent density carries
 require native execution; see the stateful-model guide for exporting unrolls.
 
+## Input and failure contracts
+
+Circuit entry points validate `Circuit` instances before backend dispatch.
+Bindings require mappings; batch bindings require an iterable of mappings.
+Model task/framework and conversion-format names require strings. Invalid
+container types raise `ValidationError` rather than incidental attribute or
+unhashable-container errors. Tensor subclasses retain their framework; a
+framework's non-tensor Python objects are not treated as arrays.
+
+| Failure | Exception |
+| --- | --- |
+| Invalid types, shapes, values or option names | `ValidationError` |
+| Unsupported conversion semantics or format string | `ConversionError` with diagnostics |
+| Optional SDK/framework import failure | `MissingDependencyError` with the integration and install command |
+| Working-memory, qubit or arithmetic admission exceeded | `ResourceError` |
+| Singular factorization or non-finite numerical primitive | `NumericalError` |
+| Solver residual, allocation KKT or projection funding tolerance not met | `ConvergenceError`, a `NumericalError` subclass |
+
+Checked `compile_compute` boundaries retain typed numerical failures. Raw native
+JIT calls retain framework error behavior and may expose the internal NaN/error
+status used by training checks. See [compute contracts](compute.md#numerical-contracts).
+
 ## Circuit conversion
 
 ```python

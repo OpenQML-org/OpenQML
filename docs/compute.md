@@ -142,6 +142,28 @@ and capability policy.
 
 ## Bounded reuse
 
+For explicit NumPy `expectations_batch(circuit, observables, rows, backend="numpy")`,
+one circuit topology is prepared for all scalar binding rows. Shared symbolic
+angles are bound once per row with the same scalar summation and constant-folding
+semantics as `Circuit.bind`; the resulting columns execute in admitted chunks.
+Fixed gates remain fixed so gate fusion can reuse their products. The bounded
+cache retains symbolic metadata only. New calls evaluate their own bindings.
+Effects, external providers and heterogeneous circuit lists retain their existing
+execution paths. State and expectation checks apply to both paths.
+
+Torch Gaussian attention prepares its augmented keys, padded values and
+empty-mask sentinel once per forward. Query chunks share those tensors and
+their gradient graph while native SDPA selects its available kernels. This
+reduces repeated preparation; exact Gaussian attention still has quadratic
+arithmetic in the token count. The separate positive-feature attention mode
+retains its linear sufficient-statistic calculation.
+
+Small-factor financial solves reuse one native pivoted LU for the primal solve
+and its true-residual correction. Torch and JAX keep that factorization local
+to a single solve; numerical arrays never enter the metadata cache. Implicit
+derivatives still solve the original factor operator. NumPy retains its checked
+LAPACK solve without adding SciPy to the core dependencies.
+
 The shared LRU cache defaults to 256 entries and 8 MiB of conservatively counted
 Python metadata. NumPy einsum paths are keyed by equation, shapes and memory
 policy. Shape-specialized tensor contraction descriptors are interned across

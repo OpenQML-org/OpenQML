@@ -1,6 +1,6 @@
 # Quantitative finance
 
-`openqml.finance` connects the existing quantum models and tensor executors to
+`openqml.finance` connects hybrid models and the shared compute service to
 financial objectives. It provides native NumPy, PyTorch and JAX calculations;
 forecast and scenario architectures also build ordinary Flax models. No market
 data, broker connection or extra core dependency is installed.
@@ -158,17 +158,25 @@ explicit masses, retaining finite derivatives at zero-mass atoms. Other factor
 shapes use preconditioned conjugate gradients
 with factor matrix products. Both paths avoid an asset-sized KKT factorization
 and a stored optimizer-iteration tape.
+Torch/JAX reuse one pivoted factorization for a Woodbury solve and its residual
+correction within each forward or implicit adjoint. NumPy keeps its existing
+LAPACK solve. No factorization or trainable value is retained in a shared cache.
 PyTorch implicit adjoints/JVPs and JAX `custom_linear_solve` differentiate the
 fixed active face; derivatives at changing faces are piecewise, not globally
 smooth. Small-rank spectral work still costs `min(rank,N)**2` workspace.
 
 Check `AllocationResult.residual` and `converged`. Eager nonconvergence raises
-`ResourceError`; invalid/nonconverged traced results become NaN so the existing
+`ConvergenceError`; invalid/nonconverged traced results become NaN so the existing
 training finite checks can skip them. `resource_profile(N,rank,batch_size=...)`
 admits primal workspace and arithmetic budgets, excluding framework reserves
 and autodiff tapes. Computation stays on the selected native tensor device.
 This is a single-stage allocation layer with explicit previous holdings, not a
 full multi-horizon dynamic portfolio optimizer.
+
+`cost_aware_projection` likewise raises `ConvergenceError` when numerical
+precision cannot satisfy its funding tolerance. `ResourceError` is reserved
+for rejected workspace or arithmetic budgets; invalid financial domains raise
+`ValidationError`.
 
 `oq.finance.allocate(returns,...)` is the array-based entry point. Supply the last
 solution as `warm_start` to propose an active face for a nearby problem. The

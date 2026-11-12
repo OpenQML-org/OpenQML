@@ -12,7 +12,7 @@ from typing import NamedTuple
 import numpy as np
 
 from ..compute.kernel import _torch_compiling, compute_operation
-from ..errors import ValidationError
+from ..errors import ConvergenceError, ValidationError, _require_instance
 from ..ir.core import integer
 from ..ir.parameters import real
 from ._array import Ops, admission, rows
@@ -91,9 +91,8 @@ class AllocationPlan:
 
     @compute_operation
     def solve(self, mean, risk, *, previous=None, caps=1, fees=0, budget=1, warm_start=None):
-        ops = Ops(
-            mean, *(risk if isinstance(risk, FactorRisk) else ()), previous, caps, fees, budget
-        )
+        _require_instance(risk, FactorRisk, "risk")
+        ops = Ops(mean, *risk, previous, caps, fees, budget)
         xp = ops.xp
         mean = ops.real(mean)
         if mean.ndim < 1 or mean.shape[-1] < 1:
@@ -101,10 +100,10 @@ class AllocationPlan:
         risk = prepare_risk(risk, ops, mean.shape)
         previous = ops.real(0 if previous is None else previous)
         caps, fees, budget = (ops.real(v) for v in (caps, fees, budget))
-        shape = np.broadcast_shapes(
+        shape = ops.broadcast_shape(
             mean.shape, risk.mean.shape, previous.shape, caps.shape, fees.shape
         )
-        prefix = np.broadcast_shapes(shape[:-1], budget.shape)
+        prefix = ops.broadcast_shape(shape[:-1], budget.shape)
         shape = prefix + (shape[-1],)
         n, rank = shape[-1], risk.factors.shape[-2]
         self.resource_profile(n, rank, batch_size=rows(prefix))
@@ -196,7 +195,7 @@ class AllocationPlan:
             converged[..., None],
             "Allocation failed its feasibility/KKT tolerance; "
             "increase iterations, ridge or numeric precision.",
-            resource=True,
+            error=ConvergenceError,
         )
         smooth = matmat(diagonal, factors, mass, candidate[..., None], ops)[..., 0]
         objective = 0.5 * ops.sum(candidate * smooth) - ops.sum(linear * candidate)

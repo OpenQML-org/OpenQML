@@ -1,4 +1,4 @@
-include README.md LICENSE
+include README.md LICENSE CONTRIBUTING.md GOVERNANCE.md SECURITY.md CODE_OF_CONDUCT.md
 prune tests
 prune docs
 prune .github

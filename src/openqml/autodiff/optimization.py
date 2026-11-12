@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 
 from ..errors import Diagnostic, ValidationError, conversion_error
 from ..ir.compiler import CircuitStats, _sum_angles, circuit_stats, simplify
-from ..ir.core import Circuit, ClassicalCondition, Operation, integer
+from ..ir.core import Circuit, ClassicalCondition, Operation, _require_circuit, integer
 
 
 class _Facts:
@@ -169,8 +169,7 @@ def optimize(
     Removed symbols are reported; callers must update bindings/layer ownership.
     No numeric probability pruning or approximation is performed.
     """
-    if not isinstance(circuit, Circuit):
-        raise ValidationError("optimize expects an OpenQML Circuit.")
+    _require_circuit(circuit)
     integer(max_operations, "max_operations")
     integer(max_depth, "max_depth")
     integer(max_passes, "max_passes", 1)

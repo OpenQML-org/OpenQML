@@ -87,7 +87,7 @@ class SelfFinancingPlan:
             raise ValidationError(
                 "Returns and decisions need matching nonempty time and asset axes."
             )
-        prefix = np.broadcast_shapes(r.shape[:-2], w.shape[:-2])
+        prefix = ops.broadcast_shape(r.shape[:-2], w.shape[:-2])
         t, n = r.shape[-2:]
         admission(rows(prefix) * (12 * n + 12 * t + 4 * self.execution_lag * n), self.max_memory_mb)
         r, w = (ops.broadcast(x, prefix + (t, n)) for x in (r, w))
