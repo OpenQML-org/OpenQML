@@ -24,6 +24,8 @@ Appending does bounded work independent of the existing length. The public
 `operations` value remains a tuple, materialized on first read; repeatedly
 reading every intermediate prefix still requires the corresponding output work.
 Forks, dataclass replacement, JSON and pickle retain their value semantics.
+Cache accounting visits shared expression nodes once, rather than expanding
+their logical trees. Deep parameter graphs do not trigger recursive counting.
 
 Local NumPy state evolution groups consecutive gates whose combined support
 fits one or two wires, up to 64 gates per group. Fixed matrix products are

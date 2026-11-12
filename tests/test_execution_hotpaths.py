@@ -119,6 +119,29 @@ def test_default_fusion_reduces_state_passes_and_keeps_parameter_batches(monkeyp
     np.testing.assert_allclose(actual, expected, atol=2e-14)
 
 
+def test_fusion_cache_counts_shared_expression_nodes_once(monkeypatch):
+    from openqml.compute import kernel
+    from openqml.ir.parameters import Expression
+
+    levels, value = 60, oq.Parameter("theta")
+    for _ in range(levels):
+        value = value * value
+    circuit = oq.Circuit(1).ry(value, 0)
+    original, counted = kernel.sys.getsizeof, []
+
+    def bounded(current):
+        if isinstance(current, Expression):
+            counted.append(id(current))
+            assert len(counted) <= levels + 2, "Cache accounting expanded a shared expression tree"
+        return original(current)
+
+    with monkeypatch.context() as patch, oq.compute_context(kernel=oq.ComputeKernel()):
+        patch.setattr(kernel.sys, "getsizeof", bounded)
+        actual = oq.statevector(circuit, {"theta": 0.1}, backend="numpy")
+    assert len(counted) == len(set(counted))
+    np.testing.assert_allclose(actual, [1, 0], atol=1e-14)
+
+
 def test_fusion_small_budget_falls_back_without_rejecting_original_execution():
     circuit = oq.Circuit(1).h(0).x(0).h(0)
     budget = 128 / 2**20
