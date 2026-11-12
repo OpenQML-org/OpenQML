@@ -1,11 +1,14 @@
 """Quantum-classical learning, finance and circuit tools from one lazy namespace."""
 
+from ._compat import install_aliases as _install_aliases
 from ._exports import EXPORTS as _EXPORTS
 from ._exports import MODULES as _MODULES
 from ._exports import PUBLIC as _PUBLIC
 from ._lazy import resolve as _resolve
 
-__version__ = "0.22.0"
+_install_aliases()
+
+__version__ = "0.23.0"
 __all__ = _PUBLIC
 
 

@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from ..compute import _torch_compiling
+from ..compute.kernel import _torch_compiling
 from ..errors import ConvergenceError
 
 

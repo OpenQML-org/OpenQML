@@ -17,6 +17,48 @@ PyTorch scaled dot-product attention, continue to use their native kernels.
 | Cross-framework programming | Unitary/Kraus checks and the same simulation primitives for numerical verification |
 | Runtime providers | Common workspace options and state, density and expectation validation |
 
+## Circuit construction and execution lowering
+
+`Circuit.append` validates the new operation and shares immutable prefix chunks.
+Appending does bounded work independent of the existing length. The public
+`operations` value remains a tuple, materialized on first read; repeatedly
+reading every intermediate prefix still requires the corresponding output work.
+Forks, dataclass replacement, JSON and pickle retain their value semantics.
+
+Local NumPy state evolution groups consecutive gates whose combined support
+fits one or two wires, up to 64 gates per group. Fixed matrix products are
+prepared once in the bounded metadata cache. Parameter-dependent products are
+formed per call. Barriers and larger gates delimit groups. Fusion falls back
+to original gates if its temporary matrices exceed the selected workspace.
+`statevector(...,backend="numpy",fusion=False)` selects unfused execution.
+External providers keep their own optimization policies.
+
+One-wire and adjacent two-wire applications use tensor views and batched GEMM.
+Separated pairs use four basic input views and one reusable quarter-state
+product buffer. They do not gather indexed state copies. Larger local matrices
+retain the bounded tile implementation. These working buffers remain subject
+to dense representation admission; general entanglement still costs exponential
+memory. Precomputed byte limits remove repeated MiB conversion from the common
+admission path. Public validation and symbolic compiled checks remain active.
+
+`compile_circuit` captures an entire native circuit, its declared readouts and
+an optional differentiation transform. Python gate selection runs during
+tracing. Warm execution calls the compiled graph with new parameter arrays.
+Torch uses [TorchInductor](https://docs.pytorch.org/docs/stable/generated/torch.compile.html);
+JAX uses [XLA through jit](https://docs.jax.dev/en/latest/jit-compilation.html).
+Put transforms inside this boundary with `transform=...`; the returned callable
+checks admission and result errors at its host boundary. Native shape/dtype/
+device specialization can trigger additional compilation.
+Classical branch bookkeeping for density execution is resolved into a static
+register program before tracing. Compiled Torch transforms require PyTorch
+2.4 or later; ordinary autograd through compiled circuit values works on the
+base Torch version. OpenQML does not change process-global compiler settings.
+
+Compilation has an initial cost, and small circuits can remain faster eagerly.
+TorchInductor can delegate unsupported complex operators to native kernels.
+Fusion benefit depends on locality, gate mix and reuse. These mechanisms do not
+establish a universal acceleration factor or measured multi-GPU/QPU throughput.
+
 ## Configuration
 
 ```python

@@ -1,8 +1,8 @@
 """Small financial entry points; policies and native results stay explicit."""
 
-from ..compute import compute_operation
+from ..compute.kernel import compute_operation
 from ..errors import ResourceError, ValidationError
-from ..parameters import real
+from ..ir.parameters import real
 from ._array import Ops
 from ._results import PayoffEstimate
 
@@ -13,9 +13,9 @@ def _exact_coherent(payoff, oracle, offset, scale, discount, backend, memory):
 
     import numpy as np
 
-    from ..backends import ExecutionOptions, get_backend
-    from ..runtime import PriorityBackend, resolve_backend
-    from ..simulator import expectation, statevector
+    from ..runtime.backends import ExecutionOptions, get_backend
+    from ..runtime.scheduler import PriorityBackend, resolve_backend
+    from ..sim.dense import expectation, statevector
 
     source = payoff.preparation if payoff is not None else oracle.preparation
     options = ExecutionOptions(max_memory_mb=memory)
@@ -26,7 +26,7 @@ def _exact_coherent(payoff, oracle, offset, scale, discount, backend, memory):
         if isinstance(device, PriorityBackend):
             device = replace(device, require_exact=True)
         if payoff is None and source.num_qubits <= memory * 2**20:
-            from ..observables import PauliString
+            from ..ir.observables import PauliString
 
             word = "I" * oracle.good_qubit + "Z" + "I" * (source.num_qubits - oracle.good_qubit - 1)
             observable = PauliString(word)
@@ -177,8 +177,8 @@ def price(
         p = ops.probabilities(probabilities, values.shape[-1])
         value = discount * ops.sum(p * values)
         return PayoffEstimate(value, ((value, value),), 1.0, None)
-    from ..adaptive_amplitude import AdaptiveAmplitudeEstimationPlan
-    from ..amplitude import AmplitudeEstimationPlan, AmplitudeOracle
+    from ..sim.adaptive_amplitude import AdaptiveAmplitudeEstimationPlan
+    from ..sim.amplitude import AmplitudeEstimationPlan, AmplitudeOracle
 
     if oracle is not None:
         if (

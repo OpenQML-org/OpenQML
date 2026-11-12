@@ -66,7 +66,7 @@ def test_sparse_readouts_evaluate_only_requested_lane_pairs(cap, readouts, monke
     monkeypatch.setattr(simulator, "_apply_matrix", gate)
     np.testing.assert_allclose(plan.evaluate(bindings), reference, atol=3e-14)
     assert sum(rows) == 3 * readouts * 6
-    assert len(calls) == 3 * math.ceil(3 / cap)
+    assert len(calls) == 2 * math.ceil(3 / cap)  # A fused local pair plus the three-wire gate.
     batch = plan.dense_batches[0]
     report = batch.to_dict()
     assert report["requested_readout_pairs"] == 3 * readouts
@@ -192,7 +192,6 @@ def test_torch_routed_generated_weights_compile_hessian_jvp_and_checkpoints():
 def test_jax_routed_jit_vmap_hessian_and_flax_optax_training():
     jax = pytest.importorskip("jax")
     import jax.numpy as jnp
-
     from openqml.interfaces.jax import QuantumLayer
 
     spec = routed_spec(3, 2)

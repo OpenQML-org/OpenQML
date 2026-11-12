@@ -7,521 +7,253 @@ import qiskit as qiskit
 import qiskit_aer as qiskit_aer
 import sympy as sympy
 
-from . import adaptive as adaptive
-from . import adjoint as adjoint
-from . import aer as aer
-from . import amplitude as amplitude
-from . import architecture as architecture
-from . import architecture_runtime as architecture_runtime
-from . import autoregressive as autoregressive
-from . import backends as backends
-from . import batch as batch
-from . import calibration as calibration
+from . import autodiff as autodiff
 from . import cli as cli
-from . import compiler as compiler
-from . import components as components
 from . import compute as compute
-from . import conversion as conversion
-from . import costs as costs
-from . import deep as deep
-from . import density as density
-from . import environment as environment
 from . import errors as errors
-from . import execution as execution
 from . import finance as finance
-from . import frontends as frontends
-from . import geometry as geometry
-from . import gradients as gradients
-from . import inspection as inspection
-from . import iqp as iqp
+from . import interop as interop
 from . import ir as ir
-from . import layers as layers
-from . import measurement as measurement
-from . import mitigation as mitigation
-from . import models as models
-from . import multiscale as multiscale
-from . import observables as observables
-from . import optimization as optimization
-from . import parameters as parameters
-from . import pauli as pauli
-from . import pauli_fusion as pauli_fusion
-from . import pauli_transfer as pauli_transfer
-from . import planning as planning
-from . import program as program
-from . import program_compilation as program_compilation
-from . import providers as providers
-from . import quantum_activations as quantum_activations
-from . import quantum_cells as quantum_cells
-from . import quantum_channels as quantum_channels
-from . import quantum_generative as quantum_generative
-from . import quantum_measurement as quantum_measurement
-from . import readout as readout
-from . import resources as resources
+from . import qml as qml
 from . import runtime as runtime
-from . import semantics as semantics
-from . import shadows as shadows
-from . import simulator as simulator
-from . import sparse_pauli as sparse_pauli
-from . import templates as templates
-from . import verification as verification
-from ._hybrid_operators import (
-    NetworkOperator as NetworkOperator,
-)
-from ._hybrid_operators import (
-    OperatorSpec as OperatorSpec,
-)
-from ._hybrid_operators import (
-    list_network_operators as list_network_operators,
-)
-from ._hybrid_operators import (
-    register_network_operator as register_network_operator,
-)
-from ._hybrid_training import (
-    DepthSchedule as DepthSchedule,
-)
-from ._hybrid_training import (
-    StagewiseOptimizer as StagewiseOptimizer,
-)
-from ._native_training import NativeNaturalGradientResult as NativeNaturalGradientResult
-from ._scheduling import ExecutionBatch as ExecutionBatch
-from ._scheduling import ReadoutRoute as ReadoutRoute
-from .adaptive import (
-    AdaptivePlan as AdaptivePlan,
-)
-from .adaptive import (
-    ExecutionCandidate as ExecutionCandidate,
-)
-from .adaptive import (
-    plan_execution as plan_execution,
-)
-from .adaptive_amplitude import (
-    AdaptiveAmplitudeEstimate as AdaptiveAmplitudeEstimate,
-)
-from .adaptive_amplitude import (
+from . import sim as sim
+from .autodiff import adjoint as adjoint
+from .autodiff import geometry as geometry
+from .autodiff import gradients as gradients
+from .autodiff import optimization as optimization
+from .autodiff.adjoint import AdjointPlan as AdjointPlan
+from .autodiff.adjoint import adjoint_jvp as adjoint_jvp
+from .autodiff.adjoint import adjoint_vjp as adjoint_vjp
+from .autodiff.geometry import NaturalGradientResult as NaturalGradientResult
+from .autodiff.geometry import QuantumMetricPlan as QuantumMetricPlan
+from .autodiff.geometry import quantum_metric as quantum_metric
+from .autodiff.gradients import ShiftPlan as ShiftPlan
+from .autodiff.gradients import parameter_shift as parameter_shift
+from .autodiff.gradients import parameter_shift_jacobian as parameter_shift_jacobian
+from .autodiff.gradients import parameter_shift_jvp as parameter_shift_jvp
+from .autodiff.gradients import parameter_shift_vjp as parameter_shift_vjp
+from .autodiff.optimization import CertifiedOptimization as CertifiedOptimization
+from .autodiff.optimization import OptimizationResult as OptimizationResult
+from .autodiff.optimization import optimize as optimize
+from .autodiff.optimization import optimize_verified as optimize_verified
+from .errors import BackendError as BackendError
+from .errors import ConversionError as ConversionError
+from .errors import Diagnostic as Diagnostic
+from .errors import MissingDependencyError as MissingDependencyError
+from .errors import OpenQMLError as OpenQMLError
+from .errors import ResourceError as ResourceError
+from .errors import ValidationError as ValidationError
+from .interop import aer as aer
+from .interop import conversion as conversion
+from .interop import frontends as frontends
+from .interop import inspection as inspection
+from .interop import program as program
+from .interop import program_compilation as program_compilation
+from .interop import providers as providers
+from .interop import semantics as semantics
+from .interop import verification as verification
+from .interop.aer import AerBackend as AerBackend
+from .interop.conversion import ConversionPlan as ConversionPlan
+from .interop.conversion import ConversionResult as ConversionResult
+from .interop.conversion import convert as convert
+from .interop.conversion import diagnose as diagnose
+from .interop.conversion import plan_conversion as plan_conversion
+from .interop.frontends import FrameworkAdapter as FrameworkAdapter
+from .interop.frontends import list_formats as list_formats
+from .interop.frontends import register_adapter as register_adapter
+from .interop.frontends import unregister_adapter as unregister_adapter
+from .interop.inspection import PythonSourceReport as PythonSourceReport
+from .interop.inspection import inspect_python as inspect_python
+from .interop.program import QuantumProgram as QuantumProgram
+from .interop.program import as_circuit as as_circuit
+from .interop.program_compilation import ProgramConversion as ProgramConversion
+from .interop.program_compilation import compile_program as compile_program
+from .interop.providers import CirqDensityBackend as CirqDensityBackend
+from .interop.providers import QiskitEstimatorBackend as QiskitEstimatorBackend
+from .interop.providers import QiskitSamplerBackend as QiskitSamplerBackend
+from .interop.semantics import CertifiedConversion as CertifiedConversion
+from .interop.semantics import EquivalenceProof as EquivalenceProof
+from .interop.semantics import compile_verified as compile_verified
+from .interop.semantics import prove_equivalence as prove_equivalence
+from .interop.semantics import semantic_coverage as semantic_coverage
+from .interop.verification import ConversionCheck as ConversionCheck
+from .ir import Circuit as Circuit
+from .ir import CircuitBuilder as CircuitBuilder
+from .ir import ClassicalCondition as ClassicalCondition
+from .ir import Operation as Operation
+from .ir import compiler as compiler
+from .ir import observables as observables
+from .ir import parameters as parameters
+from .ir import pauli_fusion as pauli_fusion
+from .ir import templates as templates
+from .ir.compiler import CircuitStats as CircuitStats
+from .ir.compiler import circuit_stats as circuit_stats
+from .ir.compiler import decompose as decompose
+from .ir.compiler import inverse as inverse
+from .ir.compiler import simplify as simplify
+from .ir.observables import Hamiltonian as Hamiltonian
+from .ir.observables import PauliString as PauliString
+from .ir.observables import SparseHamiltonian as SparseHamiltonian
+from .ir.observables import SparsePauliString as SparsePauliString
+from .ir.observables import z_observables as z_observables
+from .ir.parameters import Expression as Expression
+from .ir.parameters import Parameter as Parameter
+from .ir.pauli_fusion import PauliFusionResult as PauliFusionResult
+from .ir.pauli_fusion import fuse_pauli_rotations as fuse_pauli_rotations
+from .ir.templates import IdentityBlockInitialization as IdentityBlockInitialization
+from .ir.templates import data_reuploading as data_reuploading
+from .ir.templates import hardware_efficient as hardware_efficient
+from .ir.templates import identity_block_ansatz as identity_block_ansatz
+from .qml import architecture as architecture
+from .qml import autoregressive as autoregressive
+from .qml import deep as deep
+from .qml import iqp as iqp
+from .qml import layers as layers
+from .qml import models as models
+from .qml import multiscale as multiscale
+from .qml._native_training import NativeNaturalGradientResult as NativeNaturalGradientResult
+from .qml.activations import QuantumActivationPlan as QuantumActivationPlan
+from .qml.architecture import HybridArchitecture as HybridArchitecture
+from .qml.architecture import NetworkParameter as NetworkParameter
+from .qml.architecture import QuantumCellSpec as QuantumCellSpec
+from .qml.autoregressive import detach_quantum_state as detach_quantum_state
+from .qml.autoregressive import sample_tokens as sample_tokens
+from .qml.cells import FeatureCircuitPlan as FeatureCircuitPlan
+from .qml.channels import QuantumChannelPlan as QuantumChannelPlan
+from .qml.deep import DeepQuantumPlan as DeepQuantumPlan
+from .qml.execution import NetworkExecutionPlan as NetworkExecutionPlan
+from .qml.generative import BornCircuitPlan as BornCircuitPlan
+from .qml.generative import QuantumDiffusionPlan as QuantumDiffusionPlan
+from .qml.generative import born_nll as born_nll
+from .qml.generative import born_probabilities as born_probabilities
+from .qml.generative import shifted_tokens as shifted_tokens
+from .qml.interfaces import flax as flax
+from .qml.interfaces import jax as jax
+from .qml.interfaces import torch as torch
+from .qml.iqp import IQPGraph as IQPGraph
+from .qml.layers import LayerCheckpoint as LayerCheckpoint
+from .qml.layers import LayerSpec as LayerSpec
+from .qml.measurement import QuantumPOVMPlan as QuantumPOVMPlan
+from .qml.models import Model as Model
+from .qml.multiscale import MultiscalePlan as MultiscalePlan
+from .qml.operators import NetworkOperator as NetworkOperator
+from .qml.operators import OperatorSpec as OperatorSpec
+from .qml.operators import list_network_operators as list_network_operators
+from .qml.operators import register_network_operator as register_network_operator
+from .qml.training import DepthSchedule as DepthSchedule
+from .qml.training import StagewiseOptimizer as StagewiseOptimizer
+from .runtime import CostAwareBackend as CostAwareBackend
+from .runtime import DispatchCandidate as DispatchCandidate
+from .runtime import DispatchPlan as DispatchPlan
+from .runtime import PriorityBackend as PriorityBackend
+from .runtime import QPUBackend as QPUBackend
+from .runtime import backends as backends
+from .runtime import calibration as calibration
+from .runtime import configure_runtime as configure_runtime
+from .runtime import costs as costs
+from .runtime import environment as environment
+from .runtime import register_qpu_backend as register_qpu_backend
+from .runtime._scheduling import ExecutionBatch as ExecutionBatch
+from .runtime._scheduling import ReadoutRoute as ReadoutRoute
+from .runtime.backends import BackendCapabilities as BackendCapabilities
+from .runtime.backends import DensityMatrixBackend as DensityMatrixBackend
+from .runtime.backends import ExecutionOptions as ExecutionOptions
+from .runtime.backends import ExpectationBackend as ExpectationBackend
+from .runtime.backends import SamplingBackend as SamplingBackend
+from .runtime.backends import StatevectorBackend as StatevectorBackend
+from .runtime.backends import get_backend as get_backend
+from .runtime.backends import list_backends as list_backends
+from .runtime.backends import register_backend as register_backend
+from .runtime.backends import unregister_backend as unregister_backend
+from .runtime.calibration import CalibrationModel as CalibrationModel
+from .runtime.calibration import GateCalibration as GateCalibration
+from .runtime.calibration import NoiseEstimate as NoiseEstimate
+from .runtime.costs import BudgetLedger as BudgetLedger
+from .runtime.costs import ExecutionCost as ExecutionCost
+from .runtime.costs import ExecutionFeedback as ExecutionFeedback
+from .runtime.costs import ExecutionProfile as ExecutionProfile
+from .runtime.costs import SchedulingPolicy as SchedulingPolicy
+from .runtime.costs import SchedulingRequest as SchedulingRequest
+from .runtime.costs import TrainingWorkload as TrainingWorkload
+from .runtime.environment import environment_report as environment_report
+from .sim import adaptive as adaptive
+from .sim import amplitude as amplitude
+from .sim import batch as batch
+from .sim import components as components
+from .sim import density as density
+from .sim import execution as execution
+from .sim import measurement as measurement
+from .sim import mitigation as mitigation
+from .sim import pauli as pauli
+from .sim import pauli_transfer as pauli_transfer
+from .sim import planning as planning
+from .sim import readout as readout
+from .sim import resources as resources
+from .sim import shadows as shadows
+from .sim import sparse_pauli as sparse_pauli
+from .sim.adaptive import AdaptivePlan as AdaptivePlan
+from .sim.adaptive import ExecutionCandidate as ExecutionCandidate
+from .sim.adaptive import plan_execution as plan_execution
+from .sim.adaptive_amplitude import AdaptiveAmplitudeEstimate as AdaptiveAmplitudeEstimate
+from .sim.adaptive_amplitude import (
     AdaptiveAmplitudeEstimationPlan as AdaptiveAmplitudeEstimationPlan,
 )
-from .adjoint import (
-    AdjointPlan as AdjointPlan,
-)
-from .adjoint import (
-    adjoint_jvp as adjoint_jvp,
-)
-from .adjoint import (
-    adjoint_vjp as adjoint_vjp,
-)
-from .aer import AerBackend as AerBackend
-from .amplitude import (
-    AmplitudeEstimate as AmplitudeEstimate,
-)
-from .amplitude import (
-    AmplitudeEstimationPlan as AmplitudeEstimationPlan,
-)
-from .amplitude import (
-    AmplitudeOracle as AmplitudeOracle,
-)
-from .architecture import (
-    HybridArchitecture as HybridArchitecture,
-)
-from .architecture import (
-    NetworkParameter as NetworkParameter,
-)
-from .architecture import (
-    QuantumCellSpec as QuantumCellSpec,
-)
-from .architecture_runtime import NetworkExecutionPlan as NetworkExecutionPlan
-from .autoregressive import (
-    detach_quantum_state as detach_quantum_state,
-)
-from .autoregressive import (
-    sample_tokens as sample_tokens,
-)
-from .backends import (
-    BackendCapabilities as BackendCapabilities,
-)
-from .backends import (
-    DensityMatrixBackend as DensityMatrixBackend,
-)
-from .backends import (
-    ExecutionOptions as ExecutionOptions,
-)
-from .backends import (
-    ExpectationBackend as ExpectationBackend,
-)
-from .backends import (
-    SamplingBackend as SamplingBackend,
-)
-from .backends import (
-    StatevectorBackend as StatevectorBackend,
-)
-from .backends import (
-    get_backend as get_backend,
-)
-from .backends import (
-    list_backends as list_backends,
-)
-from .backends import (
-    register_backend as register_backend,
-)
-from .backends import (
-    unregister_backend as unregister_backend,
-)
-from .batch import execute_batch as execute_batch
-from .batch import expectations_batch as expectations_batch
-from .calibration import (
-    CalibrationModel as CalibrationModel,
-)
-from .calibration import (
-    GateCalibration as GateCalibration,
-)
-from .calibration import (
-    NoiseEstimate as NoiseEstimate,
-)
-from .compiler import (
-    CircuitStats as CircuitStats,
-)
-from .compiler import (
-    circuit_stats as circuit_stats,
-)
-from .compiler import (
-    decompose as decompose,
-)
-from .compiler import (
-    inverse as inverse,
-)
-from .compiler import (
-    simplify as simplify,
-)
-from .components import ComponentPlan as ComponentPlan
-from .components import plan_components as plan_components
-from .conversion import (
-    ConversionPlan as ConversionPlan,
-)
-from .conversion import (
-    ConversionResult as ConversionResult,
-)
-from .conversion import (
-    convert as convert,
-)
-from .conversion import (
-    diagnose as diagnose,
-)
-from .conversion import (
-    plan_conversion as plan_conversion,
-)
-from .costs import (
-    BudgetLedger as BudgetLedger,
-)
-from .costs import (
-    ExecutionCost as ExecutionCost,
-)
-from .costs import (
-    ExecutionFeedback as ExecutionFeedback,
-)
-from .costs import (
-    ExecutionProfile as ExecutionProfile,
-)
-from .costs import (
-    SchedulingPolicy as SchedulingPolicy,
-)
-from .costs import (
-    SchedulingRequest as SchedulingRequest,
-)
-from .costs import (
-    TrainingWorkload as TrainingWorkload,
-)
-from .deep import DeepQuantumPlan as DeepQuantumPlan
-from .density import density_matrix as density_matrix
-from .environment import environment_report as environment_report
-from .errors import (
-    BackendError as BackendError,
-)
-from .errors import (
-    ConversionError as ConversionError,
-)
-from .errors import (
-    Diagnostic as Diagnostic,
-)
-from .errors import (
-    MissingDependencyError as MissingDependencyError,
-)
-from .errors import (
-    OpenQMLError as OpenQMLError,
-)
-from .errors import (
-    ResourceError as ResourceError,
-)
-from .errors import (
-    ValidationError as ValidationError,
-)
-from .execution import (
-    ExecutionGroup as ExecutionGroup,
-)
-from .execution import (
-    ExpectationCheck as ExpectationCheck,
-)
-from .execution import (
-    ExpectationPlan as ExpectationPlan,
-)
-from .frontends import (
-    FrameworkAdapter as FrameworkAdapter,
-)
-from .frontends import (
-    list_formats as list_formats,
-)
-from .frontends import (
-    register_adapter as register_adapter,
-)
-from .frontends import (
-    unregister_adapter as unregister_adapter,
-)
-from .geometry import (
-    NaturalGradientResult as NaturalGradientResult,
-)
-from .geometry import (
-    QuantumMetricPlan as QuantumMetricPlan,
-)
-from .geometry import (
-    quantum_metric as quantum_metric,
-)
-from .gradients import (
-    ShiftPlan as ShiftPlan,
-)
-from .gradients import (
-    parameter_shift as parameter_shift,
-)
-from .gradients import (
-    parameter_shift_jacobian as parameter_shift_jacobian,
-)
-from .gradients import (
-    parameter_shift_jvp as parameter_shift_jvp,
-)
-from .gradients import (
-    parameter_shift_vjp as parameter_shift_vjp,
-)
-from .inspection import PythonSourceReport as PythonSourceReport
-from .inspection import inspect_python as inspect_python
-from .interfaces import flax as flax
-from .interfaces import jax as jax
-from .interfaces import torch as torch
-from .iqp import IQPGraph as IQPGraph
-from .ir import (
-    Circuit as Circuit,
-)
-from .ir import (
-    CircuitBuilder as CircuitBuilder,
-)
-from .ir import (
-    ClassicalCondition as ClassicalCondition,
-)
-from .ir import (
-    Operation as Operation,
-)
-from .layers import LayerCheckpoint as LayerCheckpoint
-from .layers import LayerSpec as LayerSpec
-from .measurement import (
-    AdaptiveEstimateResult as AdaptiveEstimateResult,
-)
-from .measurement import (
-    EstimateResult as EstimateResult,
-)
-from .measurement import (
-    MeasurementPlan as MeasurementPlan,
-)
-from .measurement import (
-    ShotBackend as ShotBackend,
-)
-from .measurement import (
-    estimate as estimate,
-)
-from .measurement import (
-    estimate_adaptive as estimate_adaptive,
-)
-from .measurement import (
-    measurement_plan as measurement_plan,
-)
-from .mitigation import ExtrapolationResult as ExtrapolationResult
-from .mitigation import MitigatedEstimate as MitigatedEstimate
-from .mitigation import ReadoutMitigation as ReadoutMitigation
-from .mitigation import zero_noise_extrapolate as zero_noise_extrapolate
-from .models import Model as Model
-from .multiscale import MultiscalePlan as MultiscalePlan
-from .observables import (
-    Hamiltonian as Hamiltonian,
-)
-from .observables import (
-    PauliString as PauliString,
-)
-from .observables import (
-    SparseHamiltonian as SparseHamiltonian,
-)
-from .observables import (
-    SparsePauliString as SparsePauliString,
-)
-from .observables import (
-    z_observables as z_observables,
-)
-from .optimization import (
-    CertifiedOptimization as CertifiedOptimization,
-)
-from .optimization import (
-    OptimizationResult as OptimizationResult,
-)
-from .optimization import (
-    optimize as optimize,
-)
-from .optimization import (
-    optimize_verified as optimize_verified,
-)
-from .parameters import Expression as Expression
-from .parameters import Parameter as Parameter
-from .pauli import PauliPlan as PauliPlan
-from .pauli_fusion import (
-    PauliFusionResult as PauliFusionResult,
-)
-from .pauli_fusion import (
-    fuse_pauli_rotations as fuse_pauli_rotations,
-)
-from .pauli_transfer import PauliTransferPlan as PauliTransferPlan
-from .planning import DensityPlan as DensityPlan
-from .planning import plan_density as plan_density
-from .program import QuantumProgram as QuantumProgram
-from .program import as_circuit as as_circuit
-from .program_compilation import (
-    ProgramConversion as ProgramConversion,
-)
-from .program_compilation import (
-    compile_program as compile_program,
-)
-from .providers import (
-    CirqDensityBackend as CirqDensityBackend,
-)
-from .providers import (
-    QiskitEstimatorBackend as QiskitEstimatorBackend,
-)
-from .providers import (
-    QiskitSamplerBackend as QiskitSamplerBackend,
-)
-from .quantum_activations import QuantumActivationPlan as QuantumActivationPlan
-from .quantum_cells import FeatureCircuitPlan as FeatureCircuitPlan
-from .quantum_channels import QuantumChannelPlan as QuantumChannelPlan
-from .quantum_generative import (
-    BornCircuitPlan as BornCircuitPlan,
-)
-from .quantum_generative import (
-    QuantumDiffusionPlan as QuantumDiffusionPlan,
-)
-from .quantum_generative import (
-    born_nll as born_nll,
-)
-from .quantum_generative import (
-    born_probabilities as born_probabilities,
-)
-from .quantum_generative import (
-    shifted_tokens as shifted_tokens,
-)
-from .quantum_measurement import QuantumPOVMPlan as QuantumPOVMPlan
-from .readout import ReadoutPlan as ReadoutPlan
-from .readout import plan_readout as plan_readout
-from .resources import (
-    ResourceEstimate as ResourceEstimate,
-)
-from .resources import (
-    estimate_resources as estimate_resources,
-)
-from .runtime import (
-    CostAwareBackend as CostAwareBackend,
-)
-from .runtime import (
-    DispatchCandidate as DispatchCandidate,
-)
-from .runtime import (
-    DispatchPlan as DispatchPlan,
-)
-from .runtime import (
-    PriorityBackend as PriorityBackend,
-)
-from .runtime import (
-    QPUBackend as QPUBackend,
-)
-from .runtime import (
-    configure_runtime as configure_runtime,
-)
-from .runtime import (
-    register_qpu_backend as register_qpu_backend,
-)
-from .semantics import (
-    CertifiedConversion as CertifiedConversion,
-)
-from .semantics import (
-    EquivalenceProof as EquivalenceProof,
-)
-from .semantics import (
-    compile_verified as compile_verified,
-)
-from .semantics import (
-    prove_equivalence as prove_equivalence,
-)
-from .semantics import (
-    semantic_coverage as semantic_coverage,
-)
-from .shadows import ShadowEstimate as ShadowEstimate
-from .shadows import shadow_estimate as shadow_estimate
-from .simulator import (
-    ExecutionResult as ExecutionResult,
-)
-from .simulator import (
-    execute as execute,
-)
-from .simulator import (
-    expectation as expectation,
-)
-from .simulator import (
-    expectations as expectations,
-)
-from .simulator import (
-    sample as sample,
-)
-from .simulator import (
-    statevector as statevector,
-)
-from .sparse_pauli import SparsePauliPlan as SparsePauliPlan
-from .sparse_pauli import SparsePauliResult as SparsePauliResult
-from .templates import (
-    IdentityBlockInitialization as IdentityBlockInitialization,
-)
-from .templates import (
-    data_reuploading as data_reuploading,
-)
-from .templates import (
-    hardware_efficient as hardware_efficient,
-)
-from .templates import (
-    identity_block_ansatz as identity_block_ansatz,
-)
-from .verification import ConversionCheck as ConversionCheck
+from .sim.amplitude import AmplitudeEstimate as AmplitudeEstimate
+from .sim.amplitude import AmplitudeEstimationPlan as AmplitudeEstimationPlan
+from .sim.amplitude import AmplitudeOracle as AmplitudeOracle
+from .sim.batch import execute_batch as execute_batch
+from .sim.batch import expectations_batch as expectations_batch
+from .sim.components import ComponentPlan as ComponentPlan
+from .sim.components import plan_components as plan_components
+from .sim.dense import ExecutionResult as ExecutionResult
+from .sim.dense import execute as execute
+from .sim.dense import expectation as expectation
+from .sim.dense import expectations as expectations
+from .sim.dense import sample as sample
+from .sim.dense import statevector as statevector
+from .sim.density import density_matrix as density_matrix
+from .sim.execution import ExecutionGroup as ExecutionGroup
+from .sim.execution import ExpectationCheck as ExpectationCheck
+from .sim.execution import ExpectationPlan as ExpectationPlan
+from .sim.measurement import AdaptiveEstimateResult as AdaptiveEstimateResult
+from .sim.measurement import EstimateResult as EstimateResult
+from .sim.measurement import MeasurementPlan as MeasurementPlan
+from .sim.measurement import ShotBackend as ShotBackend
+from .sim.measurement import estimate as estimate
+from .sim.measurement import estimate_adaptive as estimate_adaptive
+from .sim.measurement import measurement_plan as measurement_plan
+from .sim.mitigation import ExtrapolationResult as ExtrapolationResult
+from .sim.mitigation import MitigatedEstimate as MitigatedEstimate
+from .sim.mitigation import ReadoutMitigation as ReadoutMitigation
+from .sim.mitigation import zero_noise_extrapolate as zero_noise_extrapolate
+from .sim.pauli import PauliPlan as PauliPlan
+from .sim.pauli_transfer import PauliTransferPlan as PauliTransferPlan
+from .sim.planning import DensityPlan as DensityPlan
+from .sim.planning import plan_density as plan_density
+from .sim.readout import ReadoutPlan as ReadoutPlan
+from .sim.readout import plan_readout as plan_readout
+from .sim.resources import ResourceEstimate as ResourceEstimate
+from .sim.resources import estimate_resources as estimate_resources
+from .sim.shadows import ShadowEstimate as ShadowEstimate
+from .sim.shadows import shadow_estimate as shadow_estimate
+from .sim.sparse_pauli import SparsePauliPlan as SparsePauliPlan
+from .sim.sparse_pauli import SparsePauliResult as SparsePauliResult
 
 __version__: str
 __all__: list[str]
 
-from . import adaptive_amplitude as adaptive_amplitude
-from ._compiled import compile_compute as compile_compute
-from .compute import (
-    ComputeKernel as ComputeKernel,
-)
-from .compute import (
-    ComputePolicy as ComputePolicy,
-)
+from .autodiff.compilation import compile_compute as compile_compute
+from .compute import ComputeKernel as ComputeKernel
+from .compute import ComputePolicy as ComputePolicy
 from .compute import compute_context as compute_context
-from .compute import (
-    configure_compute as configure_compute,
-)
-from .compute import (
-    get_compute_kernel as get_compute_kernel,
-)
+from .compute import configure_compute as configure_compute
+from .compute import get_compute_kernel as get_compute_kernel
 from .errors import ConvergenceError as ConvergenceError
 from .errors import NumericalError as NumericalError
-from .providers import recover_job as recover_job
-from .recovery import BackendJobError as BackendJobError
-from .recovery import BackendUnavailableError as BackendUnavailableError
-from .recovery import RecoveryPolicy as RecoveryPolicy
+from .interop.providers import recover_job as recover_job
 from .runtime import runtime_context as runtime_context
+from .runtime.recovery import BackendJobError as BackendJobError
+from .runtime.recovery import BackendUnavailableError as BackendUnavailableError
+from .runtime.recovery import RecoveryPolicy as RecoveryPolicy
+from .sim import adaptive_amplitude as adaptive_amplitude
+from .sim.compiled import compile_circuit as compile_circuit

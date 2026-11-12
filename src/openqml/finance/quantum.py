@@ -8,12 +8,12 @@ from typing import NamedTuple
 
 import numpy as np
 
-from ..compute import get_compute_kernel, memory_budget
+from ..compute.kernel import get_compute_kernel, memory_budget
 from ..errors import ResourceError, ValidationError
-from ..ir import CircuitBuilder, integer
-from ..layers import LayerSpec
-from ..observables import Hamiltonian, PauliString
-from ..parameters import Parameter, real
+from ..ir.core import CircuitBuilder, integer
+from ..ir.observables import Hamiltonian, PauliString
+from ..ir.parameters import Parameter, real
+from ..qml.layers import LayerSpec
 from ._array import Ops, admission
 
 
@@ -430,7 +430,7 @@ class CardinalityQAOAPlan:
         return self.spec.circuit.bind(dict(zip(self.spec.weight_parameters, values, strict=True)))
 
     def expectation(self, weights, *, backend=None, **options):
-        from ..simulator import expectations
+        from ..sim.dense import expectations
 
         ops = Ops(weights)
         w = ops.real(weights)
@@ -449,7 +449,7 @@ class CardinalityQAOAPlan:
         )[..., 0]
 
     def sample(self, weights, *, shots=1024, backend="auto", **options):
-        from ..simulator import sample
+        from ..sim.dense import sample
 
         options.setdefault("max_memory_mb", self.problem.max_memory_mb)
         return self.decode_counts(

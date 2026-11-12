@@ -6,7 +6,7 @@ from typing import NamedTuple
 import numpy as np
 
 from ..errors import ValidationError
-from ..ir import integer
+from ..ir.core import integer
 
 
 class FinancialFold(NamedTuple):
