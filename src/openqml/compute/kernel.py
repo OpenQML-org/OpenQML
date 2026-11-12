@@ -72,15 +72,29 @@ class ComputePolicy:
 
 def _metadata_size(value):
     """Count retained Python metadata and reject tensor/autograd ownership."""
-    size = sys.getsizeof(value)
-    if value is None or type(value) in {bool, int, float, complex, str, bytes}:
-        return size
-    if isinstance(value, (tuple, frozenset)):
-        return size + sum(_metadata_size(v) for v in value)
-    if is_dataclass(value) and value.__dataclass_params__.frozen:
-        storage = sys.getsizeof(value.__dict__) if hasattr(value, "__dict__") else 0
-        return size + storage + _metadata_size(tuple(getattr(value, f.name) for f in fields(value)))
-    raise ValidationError("Shared compute caches accept immutable metadata, not arrays or tensors.")
+    pending, seen, size = [value], {}, 0
+    while pending:
+        current = pending.pop()
+        identity = id(current)
+        if identity in seen:
+            continue
+        # Retain visited objects until counting ends, including values returned
+        # by descriptors, so temporary object IDs cannot be recycled.
+        seen[identity] = current
+        size += sys.getsizeof(current)
+        if current is None or type(current) in {bool, int, float, complex, str, bytes}:
+            continue
+        if isinstance(current, (tuple, frozenset)):
+            pending.extend(current)
+        elif is_dataclass(current) and current.__dataclass_params__.frozen:
+            if hasattr(current, "__dict__"):
+                size += sys.getsizeof(current.__dict__)
+            pending.extend(getattr(current, f.name) for f in fields(current))
+        else:
+            raise ValidationError(
+                "Shared compute caches accept immutable metadata, not arrays or tensors."
+            )
+    return size
 
 
 def _broadcast_shape(shapes):
