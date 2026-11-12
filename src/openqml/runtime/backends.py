@@ -210,6 +210,7 @@ _BUILTIN_NAMES = frozenset(
         "pennylane",
         "cirq",
         "aer",
+        "aer-gpu",
         "aer-mps",
         "aer-density",
         "aer-stabilizer",
@@ -322,6 +323,10 @@ def get_backend(backend: str | StatevectorBackend) -> StatevectorBackend:
             from ..sim._cuda import CUDABackend
 
             _REGISTRY[backend] = CUDABackend()
+        elif backend not in _REGISTRY and backend == "aer-gpu":
+            from ..interop.aer import AerBackend
+
+            _REGISTRY[backend] = AerBackend(name="aer-gpu", device="GPU")
         elif backend not in _REGISTRY and backend in {
             "aer",
             "aer-mps",

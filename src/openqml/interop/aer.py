@@ -6,7 +6,7 @@ from threading import RLock
 
 import numpy as np
 
-from ..errors import BackendError, ValidationError
+from ..errors import BackendError, ResourceError, ValidationError, _require_choice
 from ..ir.observables import Hamiltonian
 from ..runtime.backends import BackendCapabilities
 
@@ -22,6 +22,12 @@ class AerBackend:
     compile_cache_size: int = 8
     mps_truncation_threshold: float = 0.0
     mps_max_bond_dimension: int | None = None
+    precision: str = "double"
+    cu_statevec: bool = False
+    target_gpus: tuple[int, ...] | None = None
+    blocking_qubits: int | None = None
+    batched_shots_gpu: bool = False
+    runtime_parameter_binding: bool = False
     _compiled: object = field(default_factory=OrderedDict, repr=False, compare=False)
     _compile_lock: object = field(default_factory=RLock, repr=False, compare=False)
     _cache_stats: dict = field(
@@ -42,6 +48,69 @@ class AerBackend:
         from ..ir.core import integer
         from ..ir.parameters import real
 
+        _require_choice(self.device, ("CPU", "GPU"), "Aer device")
+        _require_choice(self.precision, ("single", "double"), "Aer precision")
+        _require_choice(
+            self.method,
+            (
+                "automatic",
+                "statevector",
+                "density_matrix",
+                "matrix_product_state",
+                "stabilizer",
+                "tensor_network",
+                "extended_stabilizer",
+            ),
+            "Aer method",
+        )
+        integer(self.max_parallel_threads, "max_parallel_threads")
+        for name in (
+            "parameter_batching",
+            "cu_statevec",
+            "batched_shots_gpu",
+            "runtime_parameter_binding",
+        ):
+            if type(getattr(self, name)) is not bool:
+                raise ValidationError(f"{name} must be a boolean.")
+        if self.device != "GPU" and (
+            self.cu_statevec
+            or self.batched_shots_gpu
+            or self.target_gpus is not None
+            or self.method == "tensor_network"
+        ):
+            raise ValidationError("GPU acceleration options require device='GPU'.")
+        if self.device == "GPU" and self.method in {
+            "stabilizer",
+            "matrix_product_state",
+            "extended_stabilizer",
+        }:
+            raise ValidationError("This Aer method does not support GPU execution.")
+        if self.cu_statevec and (self.batched_shots_gpu or self.method != "statevector"):
+            raise ValidationError(
+                "cuStateVec requires statevector and cannot combine with batched_shots_gpu."
+            )
+        if self.target_gpus is not None:
+            if not isinstance(self.target_gpus, (tuple, list)) or not self.target_gpus:
+                raise ValidationError("target_gpus requires a nonempty sequence of GPU indices.")
+            indices = tuple(integer(i, "GPU index") for i in self.target_gpus)
+            if len(set(indices)) != len(indices):
+                raise ValidationError("target_gpus must contain distinct GPU indices.")
+            object.__setattr__(self, "target_gpus", indices)
+        if self.blocking_qubits is not None:
+            integer(self.blocking_qubits, "blocking_qubits", 1)
+            if self.method not in {"statevector", "density_matrix"}:
+                raise ValidationError("Cache blocking requires statevector or density_matrix.")
+        object.__setattr__(
+            self,
+            "capabilities",
+            replace(
+                self.capabilities,
+                device_type=self.device,
+                deterministic_expectations=self.method != "extended_stabilizer",
+                exact_expectations=self.method
+                in {"statevector", "density_matrix", "stabilizer", "tensor_network"},
+            ),
+        )
         integer(self.compile_cache_size, "compile_cache_size", 1)
         if real(self.mps_truncation_threshold) < 0:
             raise ValidationError("mps_truncation_threshold must be nonnegative.")
@@ -73,6 +142,40 @@ class AerBackend:
             self._compiled.clear()
             self._cache_stats.update(hits=0, misses=0)
 
+    def is_available(self):
+        """Query the installed native engine without submitting simulation work."""
+        from ..errors import MissingDependencyError
+        from .adapters._common import dependency
+
+        try:
+            engine = dependency(
+                "qiskit_aer", "aer-gpu" if self.device == "GPU" else "aer"
+            ).AerSimulator()
+            return (
+                self.device in engine.available_devices()
+                and self.method in engine.available_methods()
+            )
+        except (MissingDependencyError, ImportError, OSError):
+            return False
+
+    def admit(self, task, circuits, observables, *, options):
+        from ..sim.dense import _resource_check
+        from ..sim.density import _resource_check as density_check
+
+        if not self.is_available():
+            raise ResourceError(
+                f"Native Aer {self.device} execution is unavailable; install its matching runtime."
+            )
+        for circuit in circuits:
+            if options.max_qubits is not None and circuit.num_qubits > options.max_qubits:
+                raise ResourceError("Circuit exceeds the requested qubit limit.")
+            if task == "expectations" and circuit.has_effects and self.method != "density_matrix":
+                raise ValidationError("Exact effectful Aer readouts require density_matrix.")
+            if self.method == "density_matrix":
+                density_check(circuit, options.max_qubits, options.max_memory_mb)
+            elif self.method in {"statevector"} or task == "statevector":
+                _resource_check(circuit, options.max_qubits, options.max_memory_mb)
+
     def cache_info(self):
         with self._compile_lock:
             return {
@@ -96,7 +199,16 @@ class AerBackend:
             engine.set_max_qubits(circuits[0].num_qubits)
         # Readouts do not depend on global phase. Cache a symbolic gate-angle
         # prototype rather than bound circuits, retaining a bounded LRU per engine.
-        key = signature, tuple(observables)
+        key = (
+            self.method,
+            self.device,
+            self.precision,
+            self.cu_statevec,
+            self.target_gpus,
+            self.blocking_qubits,
+            signature,
+            tuple(observables),
+        )
         with self._compile_lock:
             if key in self._compiled:
                 compiled = self._compiled.pop(key)
@@ -176,8 +288,24 @@ class AerBackend:
     def _engine(self, options):
         from .adapters._common import dependency
 
-        aer = dependency("qiskit_aer", "aer")
-        settings = {}
+        aer = dependency("qiskit_aer", "aer-gpu" if self.device == "GPU" else "aer")
+        if self.device not in aer.AerSimulator().available_devices():
+            raise ResourceError(
+                f"Installed Aer cannot execute on {self.device}; no CPU fallback was selected."
+            )
+        settings = dict(
+            precision=self.precision,
+            fusion_enable=True,
+            runtime_parameter_bind_enable=self.runtime_parameter_binding,
+        )
+        if self.device == "GPU":
+            settings.update(
+                cuStateVec_enable=self.cu_statevec, batched_shots_gpu=self.batched_shots_gpu
+            )
+            if self.target_gpus is not None:
+                settings["target_gpus"] = list(self.target_gpus)
+        if self.blocking_qubits is not None:
+            settings.update(blocking_enable=True, blocking_qubits=self.blocking_qubits)
         if self.method == "matrix_product_state":
             settings["matrix_product_state_truncation_threshold"] = self.mps_truncation_threshold
             settings["matrix_product_state_max_bond_dimension"] = self.mps_max_bond_dimension

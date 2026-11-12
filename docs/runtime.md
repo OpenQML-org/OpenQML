@@ -1,5 +1,50 @@
 # Runtime dispatch
 
+## Native C++/CUDA simulation
+
+`get_backend("aer-gpu")` selects Qiskit Aer's native GPU statevector engine.
+The simulator's C++/CUDA implementation performs gate fusion, state evolution
+and readout reductions; OpenQML supplies IR compilation, budgets and dispatch.
+Readout execution returns observables without exporting the complete state.
+This is an integration with Aer/cuQuantum, not a separately implemented
+OpenQML C++ statevector simulator.
+
+On supported Linux x86-64 systems, install `openqml[aer-gpu]` with a compatible
+NVIDIA driver/runtime. Use an environment containing the GPU Aer distribution;
+do not install both `qiskit-aer` and `qiskit-aer-gpu`, which share a Python
+namespace. The portable `all` extra retains the CPU Aer distribution.
+
+```python
+import openqml as oq
+
+engine = oq.AerBackend(
+    name="native-gpu",
+    device="GPU",
+    precision="double",
+    cu_statevec=True,
+    target_gpus=(0,),
+)
+```
+
+`cu_statevec=True` requests NVIDIA cuStateVec from an Aer build containing that
+support. `method="tensor_network", device="GPU"` selects Aer's cuTensorNet
+implementation. `target_gpus` chooses devices; `blocking_qubits` enables native
+statevector/density cache blocking across GPUs or an MPI-enabled Aer build.
+The caller provides the native runtime, MPI build and launch configuration.
+For GPU shot/parameter batches, `batched_shots_gpu=True` and
+`runtime_parameter_binding=True` select Aer's native batching path; cuStateVec
+and batched shots are mutually exclusive. GPU-unavailable requests raise an
+error. They do not silently execute on a CPU. Initialized GPU backends registered
+with OpenQML participate in automatic scheduling; native training candidates
+retain their framework/autodiff contract.
+
+There is no fixed 24-qubit ceiling. Dense state memory still grows exponentially,
+and tensor-network cost depends on circuit structure. Resource admission and
+the vendor's actual memory limits apply. These configuration paths do not
+establish a measured large-scale speedup or multi-GPU/MPI execution result.
+See [Aer GPU options](https://qiskit.github.io/qiskit-aer/stubs/qiskit_aer.AerSimulator.html)
+and [NVIDIA cuQuantum integrations](https://docs.nvidia.com/cuda/cuquantum/latest/getting-started/index.html).
+
 Local numerical engines share `ComputeKernel` for native arrays, matrix
 products, contractions, linear solves and numerical admission. Use
 `configure_compute` to establish workspace, validation and metadata-cache
