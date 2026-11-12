@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 
+from ...compute.kernel import _broadcast_shape
 from ...errors import ValidationError
 from ..layers import LayerCheckpoint, LayerSpec, validate_layer
 
@@ -245,10 +246,8 @@ def prepare_layer(circuit, inputs, weights, observables, *, optimize, optimizati
 
 def broadcast_batch_shape(weights, inputs):
     """Broadcast only leading dimensions; input and weight feature widths may differ."""
-    import numpy as np
-
     try:
-        return np.broadcast_shapes(weights.shape[:-1], inputs.shape[:-1])
+        return _broadcast_shape((tuple(weights.shape[:-1]), tuple(inputs.shape[:-1])))
     except ValueError as exc:
         raise ValidationError("Input and weight batch dimensions must be broadcastable.") from exc
 

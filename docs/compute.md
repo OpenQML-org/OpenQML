@@ -27,13 +27,27 @@ Forks, dataclass replacement, JSON and pickle retain their value semantics.
 Cache accounting visits shared expression nodes once, rather than expanding
 their logical trees. Deep parameter graphs do not trigger recursive counting.
 
-Local NumPy state evolution groups consecutive gates whose combined support
-fits one or two wires, up to 64 gates per group. Fixed matrix products are
-prepared once in the bounded metadata cache. Parameter-dependent products are
-formed per call. Barriers and larger gates delimit groups. Fusion falls back
-to original gates if its temporary matrices exceed the selected workspace.
-`statevector(...,backend="numpy",fusion=False)` selects unfused execution.
-External providers keep their own optimization policies.
+Local NumPy, Torch and JAX state evolution groups consecutive gates whose
+combined support fits one or two wires, up to 64 gates per group. Fixed matrix
+products are prepared once in the bounded metadata cache. Parameter-dependent
+products use native differentiable matrix operations on the selected device;
+cached plans contain no tensors or parameter values. This reduces full-state
+updates and retained state activations for suitable local gate sequences.
+Torch graph capture builds immutable instructions without accessing cache locks
+or NumPy, leaving constant folding to the native compiler. JAX can stage the
+same operations through XLA. Native registers below three qubits retain the
+ordinary path; larger registers also retain it when the state is too small
+relative to the local matrix work. This is a conservative structural heuristic,
+not a hardware autotuner.
+
+Barriers, checkpoint segments and larger gates delimit groups. Fusion falls
+back to original gates if its temporary matrices exceed the selected workspace.
+Checkpointed backward recomputes the same native fused segments; JVP, VJP,
+second derivatives and vectorization retain their framework semantics.
+`statevector(...,fusion=False)` selects unfused execution for every local
+backend. External providers keep their own optimization policies. See also
+NVIDIA's [gate-fusion execution model](https://docs.nvidia.com/cuda/cuquantum/latest/custatevec/overview/ex-svupdater.html);
+OpenQML's native fusion does not require cuQuantum.
 
 One-wire and adjacent two-wire applications use tensor views and batched GEMM.
 Separated pairs use four basic input views and one reusable quarter-state
