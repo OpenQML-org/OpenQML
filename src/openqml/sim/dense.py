@@ -836,7 +836,12 @@ def expectations(
             if isinstance(device, PriorityBackend) and any(
                 np.ndim(v) for v in (bindings or {}).values()
             ):
-                shape = np.broadcast_shapes(*(np.shape(v) for v in bindings.values()))
+                try:
+                    shape = np.broadcast_shapes(*(np.shape(v) for v in bindings.values()))
+                except ValueError as exc:
+                    raise ValidationError(
+                        "Circuit parameter batch shapes cannot be broadcast together."
+                    ) from exc
                 count = math.prod(shape)
                 if (
                     8 * count * (len(bindings) + len(observables))

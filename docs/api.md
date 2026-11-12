@@ -57,6 +57,14 @@ compatibility checks and output budgets use the same conversion pipeline.
 Use `plan_conversion` for repeated exports or partial binding; see
 [interoperability](interoperability.md).
 
+## Input validation
+
+Expression `evaluate`, `bind` and `substitute` methods require mappings, including
+for constant expressions. Derivatives require a valid parameter name. Malformed
+expression fields and incompatible automatic-readout batch shapes raise
+`ValidationError`; broadcast failures retain their original NumPy exception as
+the cause.
+
 ## Package organization
 
 The implementation is grouped by responsibility. The root API remains the
