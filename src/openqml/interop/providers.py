@@ -5,7 +5,7 @@ from threading import RLock
 
 import numpy as np
 
-from ..compute.kernel import get_compute_kernel
+from ..compute.kernel import compute_operation, get_compute_kernel
 from ..errors import BackendError, ResourceError, ValidationError, _as_tuple, _require_instance
 from ..ir.core import Circuit, _require_circuit
 from ..ir.observables import Hamiltonian
@@ -223,6 +223,7 @@ class QiskitEstimatorBackend:
     def expectations_batch(self, circuits, observables, *, options):
         return self.submit_expectations(circuits, observables, options=options).result()
 
+    @compute_operation
     def submit_expectations(self, circuits, observables, *, options=None):
         """Submit bound circuit rows once and return a recoverable provider handle."""
         from ..sim.batch import _observables
@@ -327,6 +328,7 @@ class QiskitSamplerBackend:
     def sample_batch(self, circuits, shots, *, options):
         return self.submit_samples(circuits, shots, options=options).result()
 
+    @compute_operation
     def submit_samples(self, circuits, shots, *, options=None):
         """Submit one V2 sampler job; retain its receipt before waiting for results."""
         from ..runtime._validation import validate_shots
