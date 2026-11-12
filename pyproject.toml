@@ -83,6 +83,9 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["openqml"]
+
 [tool.ruff.lint.per-file-ignores]
 "tests/test_jax.py" = ["E402"]
 "tests/test_torch.py" = ["E402"]

@@ -307,6 +307,7 @@ def test_torch_packed_zero_factors_keep_cross_derivatives_and_compile():
 def test_jax_packed_jit_vmap_hessian_and_flax_generated_weights():
     jax = pytest.importorskip("jax")
     import jax.numpy as jnp
+
     from openqml.interfaces.jax import QuantumLayer
 
     spec = block_spec(3)
@@ -389,6 +390,7 @@ def test_sparse_readout_union_preserves_compiled_native_gradients(backend):
     else:
         jax = pytest.importorskip("jax")
         import jax.numpy as jnp
+
         from openqml.interfaces.jax import QuantumLayer
 
         planned = QuantumLayer.from_spec(spec, execution_method="planned")

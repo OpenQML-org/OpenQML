@@ -12,6 +12,7 @@ import numpy as np
 
 from ..compute.kernel import (
     KernelOps,
+    _broadcast_shape,
     _torch_compiling,
     compute_operation,
     get_compute_kernel,
@@ -545,9 +546,9 @@ def statevector(
         like = next((v for v in bindings.values() if hasattr(v, "dtype")), None)
     ops = _TensorOps(backend, like)
     try:
-        inferred = np.broadcast_shapes(*(ops.parameter_shape(v) for v in bindings.values()))
+        inferred = _broadcast_shape(tuple(ops.parameter_shape(v) for v in bindings.values()))
         shape = (
-            inferred if batch_shape is None else np.broadcast_shapes(inferred, tuple(batch_shape))
+            inferred if batch_shape is None else _broadcast_shape((inferred, tuple(batch_shape)))
         )
     except ValueError as exc:
         raise ValidationError("Parameter batch shapes cannot be broadcast together.") from exc
