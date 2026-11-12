@@ -248,7 +248,7 @@ def broadcast_batch_shape(weights, inputs):
     """Broadcast only leading dimensions; input and weight feature widths may differ."""
     try:
         return _broadcast_shape((tuple(weights.shape[:-1]), tuple(inputs.shape[:-1])))
-    except ValueError as exc:
+    except (ValueError, ValidationError) as exc:
         raise ValidationError("Input and weight batch dimensions must be broadcastable.") from exc
 
 
