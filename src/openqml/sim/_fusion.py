@@ -1,6 +1,7 @@
 """Bounded single/two-wire fusion plans containing only immutable metadata."""
 
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import numpy as np
 
@@ -13,16 +14,14 @@ class FixedMatrix:
     values: tuple
 
 
-@dataclass(frozen=True)
-class GateGroup:
+class GateGroup(NamedTuple):
     qubits: tuple
     operations: tuple
     pieces: tuple
     parameters: tuple
 
 
-@dataclass(frozen=True)
-class FusionProgram:
+class FusionProgram(NamedTuple):
     # Retain the source, making its identity a safe cache key until eviction.
     source: tuple
     groups: tuple
