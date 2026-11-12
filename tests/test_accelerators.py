@@ -187,11 +187,34 @@ def test_provider_submission_rejects_invalid_inputs_before_sdk_execution():
             backend.submit_expectations(circuits, obs)
     with pytest.raises(oq.ValidationError):
         backend.submit_expectations(oq.Circuit(1), obs, options={})
+    with pytest.raises(oq.ResourceError):
+        backend.submit_expectations(
+            oq.Circuit(1), obs, options=oq.ExecutionOptions(max_memory_mb=1e-12)
+        )
     receipt = {"schema": "openqml.provider_job.v1", "job_id": "id", "backend": "b"}
     for metadata in ({"kind": []}, {"kind": "other"}):
         with pytest.raises(oq.ValidationError):
             oq.recover_job(dict(receipt, metadata=metadata), lambda _: None)
     assert not calls
+
+
+def test_async_submission_pins_policy_before_caller_primitive_reconfigures(monkeypatch):
+    pytest.importorskip("qiskit")
+    from importlib import import_module
+
+    kernel_module = import_module("openqml.compute.kernel")
+    original = oq.get_compute_kernel()
+    monkeypatch.setattr(kernel_module, "_KERNEL", original)
+
+    def submit(*args, **kwargs):
+        oq.configure_compute(policy=oq.ComputePolicy(validation_atol=0.1))
+        return SimpleNamespace(job_id=lambda: "policy-pinned", result=lambda: [])
+
+    pending = oq.QiskitEstimatorBackend(SimpleNamespace(run=submit)).submit_expectations(
+        oq.Circuit(1), (oq.PauliString("Z"),)
+    )
+    assert oq.get_compute_kernel() is not original
+    assert pending.kernel is original
 
 
 def _physical_cuda():
