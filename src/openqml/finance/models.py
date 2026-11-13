@@ -20,6 +20,13 @@ class MarketForecast(NamedTuple):
     median: object
 
 
+class ScenarioDecisionResult(NamedTuple):
+    decision: object
+    loss: object
+    calibration: object
+    realized_return: object
+
+
 @dataclass(frozen=True)
 class MarketForecastPlan:
     input_features: int
@@ -260,6 +267,62 @@ class ScenarioPlan:
             variance_floor=variance_floor,
             max_memory_mb=self.max_memory_mb,
         )
+
+    def execution_decision(self, probabilities, proposal, *, step=None, **options):
+        """Project a proposal using this Born distribution and after-cost risk.
+
+        Path atoms without step mean a single trade held for the whole horizon.
+        Supply the cash return for the same horizon. This submits no orders.
+        """
+        from .execution_risk import execution_risk_projection
+
+        options.setdefault("max_memory_mb", self.max_memory_mb)
+        return execution_risk_projection(
+            proposal, self.returns(step=step), probabilities=probabilities, **options
+        )
+
+    def execution_loss(
+        self,
+        probabilities,
+        proposal,
+        observations,
+        *,
+        calibration_weight=1,
+        decision_weight=0.1,
+        **options,
+    ):
+        """Native proper-score plus observed after-cost loss for end-to-end training.
+
+        Returns per-example losses for HybridTrainer/NetworkTrainer. Observed
+        labels affect training loss only. Scenario risk uses the predictive
+        distribution and supplied proposal. Path labels describe a buy-and-hold
+        horizon, not a sequence of optimized future trades.
+        """
+        if options.get("step") is not None:
+            raise ValidationError("execution_loss uses the full predictive and observed horizon.")
+        calibration_weight, decision_weight = real(calibration_weight), real(decision_weight)
+        if (
+            min(calibration_weight, decision_weight) < 0
+            or calibration_weight + decision_weight <= 0
+        ):
+            raise ValidationError("Use nonnegative decision-loss weights with positive total.")
+        decision = self.execution_decision(probabilities, proposal, **options)
+        ops = Ops(probabilities, observations, decision.positions, decision.cash, decision.costs)
+        target = ops.real(observations)
+        target = ops.check(target, target >= -1, "Observed arithmetic returns must be at least -1.")
+        calibration = self.energy_score(ops.real(probabilities), target)
+        if self.scenarios.ndim == 3:
+            target = (
+                (1 + target).prod(dim=-2) - 1
+                if ops.name == "torch"
+                else ops.xp.prod(1 + target, axis=-2) - 1
+            )
+        cash_return = ops.real(options.get("cash_return", 0))
+        realized = (
+            ops.sum(decision.positions * target) + cash_return * decision.cash - decision.costs
+        )
+        loss = calibration_weight * calibration - decision_weight * realized
+        return ScenarioDecisionResult(decision, loss, calibration, realized)
 
     def expected_payoff(self, probabilities, payoffs, *, discount=1):
         ops = Ops(probabilities, payoffs)

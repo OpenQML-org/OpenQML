@@ -11,6 +11,10 @@ _EXPORTS = {
     "adjoint_jvp": (".adjoint", "adjoint_jvp"),
     "adjoint_vjp": (".adjoint", "adjoint_vjp"),
     "quantum_metric": (".geometry", "quantum_metric"),
+    "DistanceAwareQNM": (".distance_aware", "DistanceAwareQNM"),
+    "DistanceAwareState": (".distance_aware", "DistanceAwareState"),
+    "DistanceAwareResult": (".distance_aware", "DistanceAwareResult"),
+    "hybrid_qnm": (".optimizers", "hybrid_qnm"),
     "optimize": (".optimization", "optimize"),
 }
 _MODULES = {}

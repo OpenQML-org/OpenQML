@@ -1,12 +1,30 @@
-"""Validate tensor archive declarations before allocation or native loading."""
+"""Tensor archive validation and shared atomic checkpoint writes."""
 
 import io
 import math
+import os
+import tempfile
 import zipfile
+from pathlib import Path
 
 import numpy as np
 
 from ..errors import ResourceError, ValidationError
+
+
+def atomic_write(path, writer):
+    """Replace a checkpoint only after its complete writer succeeds."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".")
+    try:
+        with os.fdopen(handle, "wb") as stream:
+            writer(stream)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return path
 
 
 def check_npz_payload(payload, maximum):

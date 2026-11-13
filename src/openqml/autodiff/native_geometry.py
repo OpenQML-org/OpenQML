@@ -156,22 +156,56 @@ def native_natural_gradient(
     plan, bindings, gradient, *, backend="torch", sample_weights=None, **options
 ):
     """Solve (Re(QGT)+damping*I)d=g on the selected native device."""
+    ops, local, gradient, mass = _inputs(plan, bindings, gradient, backend, sample_weights)
+    return _natural_solve(plan, local, gradient, mass, ops, backend, **options)
+
+
+def _natural_solve(
+    plan, local, gradient, mass, ops, backend, *, metric_scale=1, metric_reducer=None, **options
+):
     from ..qml._native_training import solve_metric
 
-    ops, local, gradient, mass = _inputs(plan, bindings, gradient, backend, sample_weights)
     if not plan.parameters:
         raise ValidationError("A natural-gradient solve needs selected parameters.")
-    result = solve_metric(
-        lambda value: {
-            "coordinates": native_matvec(
-                plan, local, value["coordinates"], backend=backend, sample_weights=mass
+
+    def product(value):
+        result = metric_scale * native_matvec(
+            plan, local, value["coordinates"], backend=backend, sample_weights=mass
+        )
+        if metric_reducer is not None:
+            result = metric_reducer(result)
+        if (
+            _array_backend(result) != backend
+            or result.shape != gradient.shape
+            or result.dtype != gradient.dtype
+        ):
+            raise ValidationError(
+                "Metric reducers must preserve the native vector shape and dtype."
             )
-        },
+        return {"coordinates": result}
+
+    result = solve_metric(
+        product,
         {"coordinates": gradient},
         ops,
         **options,
     )
     return NativeMetricResult(result.direction["coordinates"], *result[1:])
+
+
+def _spectral_shapes(block_shapes, size):
+    try:
+        shapes = tuple(
+            tuple(integer(n, "spectral block dimension", 1) for n in shape)
+            for shape in block_shapes
+        )
+    except TypeError as exc:
+        raise ValidationError("Spectral blocks require an iterable of matrix shapes.") from exc
+    if any(len(s) != 2 for s in shapes) or sum(a * b for a, b in shapes) != size:
+        raise ValidationError(
+            "Spectral matrix blocks must partition the selected parameter vector."
+        )
+    return shapes
 
 
 @compute_operation
@@ -198,17 +232,7 @@ def spectral_step(
     mixing, rate, radius = real(mixing), real(learning_rate), real(max_step_norm)
     if not 0 <= mixing <= 1 or rate <= 0 or radius <= 0:
         raise ValidationError("Use mixing in [0,1] and positive learning rate/step bound.")
-    try:
-        shapes = tuple(
-            tuple(integer(n, "spectral block dimension", 1) for n in shape)
-            for shape in block_shapes
-        )
-    except TypeError as exc:
-        raise ValidationError("Spectral blocks require an iterable of matrix shapes.") from exc
-    if any(len(s) != 2 for s in shapes) or sum(a * b for a, b in shapes) != len(plan.parameters):
-        raise ValidationError(
-            "Spectral matrix blocks must partition the selected parameter vector."
-        )
+    shapes = _spectral_shapes(block_shapes, len(plan.parameters))
     ops, local, gradient, mass = _inputs(plan, bindings, gradient, backend, sample_weights)
     get_compute_kernel().admit(
         32 * len(plan.parameters) + 8 * sum(min(s) ** 2 for s in shapes), plan.max_memory_mb
@@ -216,9 +240,22 @@ def spectral_step(
     natural = native_natural_gradient(
         plan, local, gradient, backend=backend, sample_weights=mass, **options
     )
+    xp = ops.xp
+    direction = _polar_mix(natural.direction, shapes, mixing, ops, backend)
+    alignment = (gradient * direction).sum()
+    fallback = ~(xp.isfinite(alignment) & (alignment > 0))
+    direction = xp.where(fallback, natural.direction, direction)
+    norm = ops.norm(direction)
+    length = xp.minimum(rate * ops.norm(natural.direction), ops.array(radius, real_value=True))
+    step = (direction / xp.where(norm > 0, norm, 1)) * length
+    step = ops.check(step, xp.isfinite(step), "Spectral natural step must be finite.")
+    return SpectralStepResult(step, natural, (gradient * step).sum(), fallback | (mixing == 0))
+
+
+def _polar_mix(vector, shapes, mixing, ops, backend):
     xp, parts, start = ops.xp, [], 0
     for a, b in shapes if mixing else ():
-        matrix = natural.direction[start : start + a * b].reshape((a, b))
+        matrix = vector[start : start + a * b].reshape((a, b))
         u, singular, vh = xp.linalg.svd(matrix, full_matrices=False)
         # The partial polar factor must leave zero singular subspaces inactive.
         eps = 2.220446049250313e-16 if "64" in str(matrix.dtype) else 1.1920928955078125e-7
@@ -229,15 +266,7 @@ def spectral_step(
         scaled = polar * norm / xp.sqrt(xp.where(rank > 0, rank, 1))
         parts.append(((1 - mixing) * matrix + mixing * scaled).reshape(-1))
         start += a * b
-    direction = natural.direction if not mixing else _cat_parts(parts, backend, xp)
-    alignment = (gradient * direction).sum()
-    fallback = ~(xp.isfinite(alignment) & (alignment > 0))
-    direction = xp.where(fallback, natural.direction, direction)
-    norm = ops.norm(direction)
-    length = xp.minimum(rate * ops.norm(natural.direction), ops.array(radius, real_value=True))
-    step = (direction / xp.where(norm > 0, norm, 1)) * length
-    step = ops.check(step, xp.isfinite(step), "Spectral natural step must be finite.")
-    return SpectralStepResult(step, natural, (gradient * step).sum(), fallback | (mixing == 0))
+    return vector if not mixing else _cat_parts(parts, backend, xp)
 
 
 def _cat_parts(parts, backend, xp):

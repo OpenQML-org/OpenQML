@@ -1,9 +1,6 @@
 """Microbatched hybrid optimization, DDP sample weighting and resumable state."""
 
 import contextlib
-import os
-import tempfile
-from pathlib import Path
 
 import torch
 
@@ -11,6 +8,7 @@ from ...compute._norms import global_norm
 from ...errors import ValidationError
 from ...ir.core import integer
 from ...ir.parameters import real
+from .._archive import atomic_write
 
 
 def _leaves(batch):
@@ -33,17 +31,7 @@ def _map(batch, function):
 
 
 def _atomic_save(state, path):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, temporary = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".")
-    try:
-        with os.fdopen(handle, "wb") as stream:
-            torch.save(state, stream)
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-    return path
+    return atomic_write(path, lambda stream: torch.save(state, stream))
 
 
 class HybridTrainer:
@@ -226,6 +214,9 @@ class HybridTrainer:
             (state["scheduler"] is None) != (self.scheduler is None)
         ):
             raise ValidationError("Checkpoint scaler/scheduler configuration differs.")
+        validate = getattr(self.optimizer, "validate_state_dict", None)
+        if callable(validate):
+            validate(state["optimizer"])
         rng = state
         if restore_rng and "rng_by_rank" in state:
             if self.distributed and len(state["rng_by_rank"]) != self.world_size:

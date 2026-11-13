@@ -46,6 +46,18 @@ operate on native Torch/JAX parameter vectors. Their result types are
 `NativeMetricResult` and `SpectralStepResult`. See [native quantum geometry](native-geometry.md)
 for the metric convention, spectral block order, residual certificates and scope.
 
+`DistanceAwareQNM` returns `DistanceAwareResult(step, state, natural, radius,
+alignment, restarted)`. `DistanceAwareState` is an explicit native tensor tree.
+`hybrid_qnm(model, ...)` creates a Torch optimizer for native unitary
+`QuantumLayer` weights and classical parameters. It is also available from
+`openqml.autodiff`; importing its factory does not load Torch.
+
+`finance.execution_risk_projection` returns `ExecutionRiskResult`, including
+pre-trade positions, post-cost target weights, cash, costs and risk certificates.
+`ScenarioPlan.execution_decision` supplies its scenario atoms;
+`execution_loss` returns a `ScenarioDecisionResult` containing the decision,
+per-example objective, calibration score and realized net return.
+
 `ShiftPlan.linearize` returns `ShiftLinearization` with forward values, an
 explicit Jacobian and submission counts. External Torch/JAX layers opt in with
 `gradient_method="batched-shift"`; see [submission-aware training](submission-training.md).

@@ -86,6 +86,24 @@ def test_custom_architecture_and_atomic_save_failure(tmp_path, monkeypatch):
     np.testing.assert_array_equal(model.predict(x), loaded.predict(x))
 
 
+def test_interrupted_checkpoint_writer_keeps_old_bytes_and_removes_partial_file(tmp_path):
+    from openqml.qml._archive import atomic_write
+
+    path = tmp_path / "training.state"
+    path.write_bytes(b"complete old checkpoint")
+
+    def interrupted(stream):
+        stream.write(b"partial replacement")
+        raise OSError("interrupted during serialization")
+
+    with pytest.raises(OSError, match="during serialization"):
+        atomic_write(path, interrupted)
+    assert path.read_bytes() == b"complete old checkpoint"
+    assert list(tmp_path.iterdir()) == [path]
+    atomic_write(path, lambda stream: stream.write(b"complete replacement"))
+    assert path.read_bytes() == b"complete replacement"
+
+
 def test_checkpoint_rejects_unfitted_malformed_oversized_and_traversal_archives(tmp_path):
     with pytest.raises(oq.ValidationError, match="fit"):
         oq.Model().save(tmp_path / "none")

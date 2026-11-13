@@ -98,7 +98,7 @@ class _BitVectors:
     def __init__(self, bdd):
         self.bdd = bdd
 
-    def add(self, left, right, *, subtract=False):
+    def add(self, left, right, *, subtract=False, with_carry=False):
         self.bdd.charge(len(left))
         carry, result = int(subtract), []
         for a, b in zip(left, right, strict=True):
@@ -109,7 +109,39 @@ class _BitVectors:
             carry = self.bdd.apply(
                 "or", self.bdd.apply("and", a, b), self.bdd.apply("and", parity, carry)
             )
-        return tuple(result)  # Discard the carry: Uint arithmetic is modulo 2**width.
+        value = tuple(result)
+        return (value, carry) if with_carry else value
+
+    def select(self, condition, high, low):
+        self.bdd.charge(len(high))
+        return tuple(
+            self.bdd.apply("xor", a, self.bdd.apply("and", condition, self.bdd.apply("xor", a, b)))
+            for a, b in zip(low, high, strict=True)
+        )
+
+    def divide(self, left, right):
+        if self.bdd.truth(right) != 1:
+            raise conversion_error(
+                "CLASSICAL_DIVISOR_DOMAIN",
+                "Integer divisors must be symbolically proven nonzero for every classical input.",
+                self.bdd.location,
+            )
+        size = len(left)
+        if all(bit < 2 for bit in right):
+            divisor = sum(bit << i for i, bit in enumerate(right))
+            if divisor & (divisor - 1) == 0:
+                shift = divisor.bit_length() - 1
+                self.bdd.charge(size)
+                return left[shift:] + (0,) * shift
+        self.bdd.charge(size * size)
+        remainder, divisor = (0,) * (size + 1), right + (0,)
+        quotient = [0] * size
+        for i in reversed(range(size)):
+            remainder = (left[i],) + remainder[:-1]
+            difference, carry = self.add(remainder, divisor, subtract=True, with_carry=True)
+            remainder = self.select(carry, difference, remainder)
+            quotient[i] = carry
+        return tuple(quotient)
 
     def multiply(self, left, right):
         size = len(left)
@@ -124,17 +156,16 @@ class _BitVectors:
 
     def shift(self, bits, amount, *, left=False, index=False):
         size = len(bits)
-        maximum = 0
-        for i, bit in enumerate(amount):
-            if bit == 0:
-                continue
-            if i >= size.bit_length() or maximum + (1 << i) >= size:
-                raise conversion_error(
-                    "CLASSICAL_INDEX_RANGE" if index else "CLASSICAL_SHIFT_RANGE",
-                    "Every possible index/shift must be provably inside its operand width.",
-                    self.bdd.location,
-                )
-            maximum += 1 << i
+        width = max(len(amount), size.bit_length())
+        extended = amount + (0,) * (width - len(amount))
+        bound = tuple((size >> i) & 1 for i in range(width))
+        _, greater_equal = self.add(extended, bound, subtract=True, with_carry=True)
+        if greater_equal != 0:
+            raise conversion_error(
+                "CLASSICAL_INDEX_RANGE" if index else "CLASSICAL_SHIFT_RANGE",
+                "Every possible index/shift must be symbolically proven inside its operand width.",
+                self.bdd.location,
+            )
         self.bdd.charge(size * len(amount))
         for i, control in enumerate(amount):
             if control == 0:
@@ -144,12 +175,7 @@ class _BitVectors:
             if control == 1:
                 bits = shifted
             else:
-                bits = tuple(
-                    self.bdd.apply(
-                        "xor", a, self.bdd.apply("and", control, self.bdd.apply("xor", a, b))
-                    )
-                    for a, b in zip(bits, shifted, strict=True)
-                )
+                bits = self.select(control, shifted, bits)
         return bits
 
 
@@ -239,11 +265,13 @@ def _compile(value, native, bdd):
         else:
             right = memo[id(children[1])]
             op = current.op.name
-            if op in {"ADD", "SUB", "MUL"}:
+            if op in {"ADD", "SUB", "MUL", "DIV"}:
                 a, b = expand(left, size), expand(right, size)
                 result = (
                     vectors.multiply(a, b)
                     if op == "MUL"
+                    else vectors.divide(a, b)
+                    if op == "DIV"
                     else vectors.add(a, b, subtract=op == "SUB")
                 )
             elif op in {"SHIFT_LEFT", "SHIFT_RIGHT"}:

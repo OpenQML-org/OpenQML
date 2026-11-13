@@ -33,10 +33,9 @@ def _array_backend(value):
     torch = sys.modules.get("torch")
     if torch is not None and isinstance(value, getattr(torch, "Tensor", ())):
         return "torch"
-    if hasattr(value, "dtype") and type(value).__module__.startswith(("jax.", "jaxlib.")):
-        jax = sys.modules.get("jax")
-        if jax is not None and isinstance(value, (jax.Array, jax.core.Tracer)):
-            return "jax"
+    jax = sys.modules.get("jax")
+    if jax is not None and isinstance(value, (jax.Array, jax.core.Tracer)):
+        return "jax"
     return "numpy"
 
 
