@@ -30,6 +30,12 @@ The core depends on NumPy, packaging and psutil. Training frameworks, quantum SD
 
 For NVIDIA GPU simulation, `openqml[aer-gpu]` on supported Linux systems connects the shared IR and scheduler to Aer's C++/CUDA engine, including optional cuStateVec and cuTensorNet paths. Native PyTorch/JAX training keeps tensors and gradients on the selected GPU. Caller-initialized Qiskit V2 primitives support asynchronous QPU submission with recoverable job receipts. See [GPU and QPU execution](docs/runtime.md).
 
+OpenQML implements circuit lowering, fusion planning, readout arithmetic and resource
+scheduling. Aer owns the integrated C++/CUDA simulator; PyTorch/JAX and their compilers
+provide tensor kernels for OpenQML's own execution algorithms. These are separate
+execution paths. `AerBackend.execution_info()` and `CUDABackend.execution_info()`
+describe the configured engine and kernel provider without initializing hardware.
+
 ## Quick start
 
 Allocate from observed returns:

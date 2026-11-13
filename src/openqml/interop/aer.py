@@ -142,6 +142,25 @@ class AerBackend:
             self._compiled.clear()
             self._cache_stats.update(hits=0, misses=0)
 
+    def execution_info(self):
+        """Describe configured implementation sources without importing/probing Aer."""
+        return {
+            "engine": "qiskit-aer",
+            "algorithm_owner": "Qiskit Aer",
+            "kernel_provider": "qiskit-aer",
+            "device": self.device,
+            "method": self.method,
+            "precision": self.precision,
+            "requested_accelerator": (
+                "cuStateVec"
+                if self.cu_statevec
+                else "cuTensorNet"
+                if self.method == "tensor_network"
+                else None
+            ),
+            "execution_verified": False,
+        }
+
     def is_available(self):
         """Query the installed native engine without submitting simulation work."""
         from ..errors import MissingDependencyError

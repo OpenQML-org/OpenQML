@@ -9,6 +9,18 @@ Readout execution returns observables without exporting the complete state.
 This is an integration with Aer/cuQuantum, not a separately implemented
 OpenQML C++ statevector simulator.
 
+| Execution path | OpenQML's implementation | External kernel/runtime provider |
+| --- | --- | --- |
+| `AerBackend(device="GPU")` | IR export, parameter batching, memory admission, dispatch | Qiskit Aer C++/CUDA; requested cuStateVec/cuTensorNet support depends on its build |
+| `CUDABackend()` | Circuit/readout planning, register schedules, tensor evolution | PyTorch CUDA tensor kernels |
+| `CUDABackend(compile_mode="default")` | Shared readout program, packed parameters, bounded graph cache | PyTorch TorchInductor code generation |
+
+Both adapters expose `execution_info()` without loading an SDK or accessing a
+device. This describes configuration and provenance. `requested_accelerator`
+on Aer records a request, and `execution_verified=False` explicitly prevents
+treating that configuration as evidence that a vendor accelerator ran.
+OpenQML currently has no independently implemented C++/CUDA kernel engine.
+
 On supported Linux x86-64 systems, install `openqml[aer-gpu]` with a compatible
 NVIDIA driver/runtime. Use an environment containing the GPU Aer distribution;
 do not install both `qiskit-aer` and `qiskit-aer-gpu`, which share a Python

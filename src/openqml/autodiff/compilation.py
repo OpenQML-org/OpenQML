@@ -32,6 +32,31 @@ def _leaves(value):
         yield np.asarray(value)
 
 
+def _check_compiler_error(error):
+    """Translate only an observed missing compiler, preserving unrelated failures."""
+    from torch._inductor.exc import InvalidCxxCompiler
+
+    pending, seen = [error], set()
+    while pending:
+        current = pending.pop()
+        if not isinstance(current, BaseException) or id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, InvalidCxxCompiler):
+            raise ResourceError(
+                "TorchInductor could not find a working C++ compiler. On Windows, install "
+                "Visual Studio Build Tools with Desktop development with C++ and run from "
+                "an x64 Native Tools command prompt (cl must be available). On other systems, "
+                "configure a supported C++ toolchain. For graph execution without C++ code "
+                "generation, explicitly select compiler='aot_eager' or compiler='eager'; "
+                "these backends do not provide Inductor kernel fusion or CUDA Graph replay. "
+                "For CUDABackend, leave compile_mode=None to use eager GPU execution."
+            ) from error
+        pending.extend(
+            (current.__cause__, current.__context__, getattr(current, "inner_exception", None))
+        )
+
+
 def compile_compute(
     function, *, backend, compiler=None, kernel=None, check_outputs=True, **options
 ):
@@ -83,10 +108,11 @@ def compile_compute(
             with compute_context(kernel=kernel):
                 try:
                     result = graph(*args, **kwargs)
-                except (RuntimeError, AssertionError) as exc:
-                    if "[OpenQML:" not in str(exc):
-                        raise
-                    _raise(str(exc))
+                except Exception as exc:
+                    _check_compiler_error(exc)
+                    if isinstance(exc, (RuntimeError, AssertionError)) and "[OpenQML:" in str(exc):
+                        _raise(str(exc))
+                    raise
                 if check_outputs:
                     flags = {}
                     for value in _leaves(result):
