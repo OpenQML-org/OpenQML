@@ -46,6 +46,8 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
     External backends support torch.func jvp/vjp, jacfwd/jacrev and vmap. Products
     stream without a full Jacobian; nonlinear higher derivatives require native
     PyTorch execution.
+    gradient_method='batched-shift' packs primal and derivatives together,
+    retaining a memory-admitted explicit Jacobian for the current forward call.
     reduce_readout=True compacts the declared unitary readout cone; readout_plan
     records provenance, while to_spec()/checkpoint() retain the full source.
     execution_method='pauli' compiles exact real expectation arithmetic with
@@ -109,6 +111,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
             backend,
             "torch",
             gradient_chunk_size=integer(gradient_chunk_size, "gradient_chunk_size", 2),
+            gradient_method=gradient_method,
             native_contract=reduce_readout
             or execution_method != "auto"
             or checkpoint_interval is not None,
@@ -308,6 +311,12 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
                 .to(output_dtype)
             )
         if self.execution_backend != "torch":
+            if self.gradient_method == "batched-shift":
+                from ._torch_stencil import BatchedShiftFunction
+
+                return BatchedShiftFunction.apply(inputs, computation_weights, self)[0].to(
+                    output_dtype
+                )
             return _ExternalQuantumFunction.apply(inputs, computation_weights, self).to(
                 output_dtype
             )

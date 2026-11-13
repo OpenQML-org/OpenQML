@@ -11,6 +11,8 @@ Build and train hybrid neural networks with PyTorch, JAX or Flax. Use `Model.fit
 Native quantum metric products and certified natural-gradient solves retain
 PyTorch/JAX tensors and device placement. An optional geometry-first spectral
 step balances circuit parameter blocks after preconditioning.
+External Torch/JAX layers can pack forward and parameter-shift rows together,
+reusing one linearization during backward to reduce provider round trips.
 
 ## Quantum–classical hybrid quantitative research
 
@@ -19,6 +21,8 @@ Train scenario distributions, allocate constrained portfolios and project decisi
 Learn contextual Wasserstein radii and anisotropic transport metrics alongside
 quantum scenario probabilities. Factor-space implicit derivatives connect the
 robust risk bound and funded cash allocation to the predictive model.
+Coherent expectile risk and Wasserstein expectile budgets provide an additional
+native decision objective with exact sorted roots.
 
 ## Cross-framework quantum programming
 
@@ -27,6 +31,8 @@ Connect Qiskit, Cirq, PennyLane and OpenQASM through a shared circuit representa
 Typed Qiskit logical, bitwise and unsigned comparison predicates lower to bounded
 shared decision graphs. Their branch selection completes before either payload
 executes, including payloads that overwrite a measured predicate input.
+Fixed-width unsigned arithmetic, bounded shifts and dynamic bit indexing retain
+the same atomic branch-selection contract.
 
 Simulate physical noise with amplitude/phase damping, depolarization and custom Kraus channels. Correct independent readout errors or extrapolate measured noise scales with explicit conditioning and sampling-overhead limits. Caller-initialized Qiskit V2 primitives connect real hardware; see [execution limits and mitigation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md#physical-noise-and-error-mitigation).
 

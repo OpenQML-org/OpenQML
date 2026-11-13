@@ -46,6 +46,10 @@ operate on native Torch/JAX parameter vectors. Their result types are
 `NativeMetricResult` and `SpectralStepResult`. See [native quantum geometry](native-geometry.md)
 for the metric convention, spectral block order, residual certificates and scope.
 
+`ShiftPlan.linearize` returns `ShiftLinearization` with forward values, an
+explicit Jacobian and submission counts. External Torch/JAX layers opt in with
+`gradient_method="batched-shift"`; see [submission-aware training](submission-training.md).
+
 ## Circuit conversion
 
 ```python

@@ -1,5 +1,10 @@
 # Structured quantum–classical models
 
+External `QuantumLayer` instances support `gradient_method="batched-shift"`
+to pack forward readouts and their derivative stencil before the first result.
+See [submission-aware training](submission-training.md) for the Jacobian-memory
+tradeoff, Torch/JAX transforms and QPU submission accounting.
+
 For KAN, recurrent memory, Born generators, autoregressive sequence models and
 quantum-state diffusion, see [Stateful and generative models](frontier-models.md).
 

@@ -12,7 +12,9 @@ data, broker connection or extra core dependency is installed.
 | Factor risk | `factor_risk(returns, probabilities)` | Weighted centered factors plus shrinkage diagonal |
 | Differentiable allocation | `AllocationPlan.solve(mean, risk, ...)` | Long-only capped allocation with funding and turnover costs |
 | Tail risk | `expected_shortfall`, `wasserstein_cvar` | Fractional weighted CVaR and a Wasserstein robustness margin |
+| Expectile risk | `expectile`, `wasserstein_expectile` | Coherent asymmetric-loss risk and an unrestricted-support W1 supremum |
 | Decision risk budgets | `risk_budget_projection(weights, scenarios, ...)` | Maximal funded cash-ray scaling under weighted robust CVaR |
+| Expectile decision budgets | `expectile_budget_projection(weights, scenarios, ...)` | Maximal funded cash-ray scaling under robust expectile risk |
 | Funded execution | `SelfFinancingPlan.rollout(...)` | Delayed decisions, cash, proportional fees and quadratic impact |
 | Chronological validation | `PurgedWalkForward.split(times, label_end)` | Past-only training with overlapping labels removed |
 | Rolling model selection | `walk_forward(factory, inputs, targets, ...)` | Fresh hybrid models, nested validation and aligned out-of-sample predictions |
@@ -228,6 +230,50 @@ equality and are removed before score construction. A final conservation check
 rejects unresolved financing rather than returning weights outside the budget.
 
 ## Differentiable decision risk budgets
+
+`expectile(losses, level=0.95, probabilities=None)` adds a coherent, elicitable
+risk measure. Its level is an asymmetric-loss weight, not a quantile confidence
+or the fraction of observations in a tail. Supported levels lie in `[0.5,1)`;
+level `0.5` returns the weighted mean. A sorted piecewise-affine root uses
+`O(S log S)` work and `O(S)` workspace for `S` scenarios. Native derivatives
+are piecewise smooth; ties and active-set transitions can be nonsmooth.
+
+`wasserstein_expectile(weights, scenarios, level=..., radius=...,
+transport_metric=...)` returns the worst-case loss expectile over an
+unrestricted-support W1 ball. With `L=-returns@weights` and
+`delta=radius*transport_dual_norm(weights, metric)`, it solves
+`level*E[(L-q)+] -(1-level)*E[(q-L)+] +level*delta=0`.
+The robustness penalty depends on the tail mass at the root. Zero radius
+recovers the nominal expectile. The supremum can require transporting arbitrarily
+small mass arbitrarily far; support or moment constraints can make this bound
+conservative.
+
+`expectile_budget_projection` uses `level` and otherwise shares the funded cash,
+scenario, probability, radius, metric and memory arguments of the CVaR budget
+layer. `ExpectileBudgetResult` exposes `weights`, `cash`, `scale`, `expectile`,
+`robust_expectile` and `budget`. Positive homogeneity and cash translation make
+its admitted cash-ray scale maximal. It scales a supplied proposal; it does not
+optimize unrestricted portfolio directions or fit market data.
+
+```python
+import openqml as oq
+
+decision = oq.finance.expectile_budget_projection(
+    [0.4, 0.5],
+    [[-0.12, -0.03], [0.04, -0.08], [0.1, 0.02]],
+    level=0.8,
+    budget=0.015,
+    radius=0.001,
+)
+```
+
+The robust root specializes the envelope mechanism of
+[Multi-period Mean-Expectile Portfolio Optimization under Wasserstein Ambiguity (October 2026)](https://arxiv.org/abs/2610.11917).
+It implements a one-period unrestricted-support risk layer, excluding the
+paper's fixed-mean constraints and multi-period optimization programs.
+Calibrate radius and geometry using past-only held-out data, then evaluate with
+the existing purged walk-forward and self-financing ledger. The paper's empirical
+portfolio results are not OpenQML performance evidence.
 
 `WassersteinMetric(diagonal, factors=None)` defines the anisotropic ground norm
 `||delta||_M`, where `M = diag(diagonal) + factors.T @ factors`. The diagonal

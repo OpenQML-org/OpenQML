@@ -138,11 +138,14 @@ the actual transpiled layout, provider grouping and calibration regime.
 | `native_devices` | Platforms supporting native autodiff; other platforms include parameter-shift work |
 | `submission_batch_size` | Client chunking limit, combined with provider batch limits |
 | `microbatch_size`, `gradient_chunk_size` | Sequential training microbatches and shifted-row submission chunks |
+| `joint_primal_gradient` | Pack primal and shifted rows in one phase for eager linearization |
 | `classical_seconds_per_step`, `classical_cost_per_step` | Encoder, optimizer and other classical work |
 | `ExecutionProfile` | Queue, job latency, circuit/shot time, prices, concurrency, groups, mitigation overhead and uncertainty |
 | `SchedulingPolicy` | Cost/deadline/error limits, time/cost/error preferences and uncertainty margin |
 
-Forward and gradient phases are sequential; optimizer steps cannot borrow
+Forward and gradient phases are sequential by default. With
+`joint_primal_gradient=True`, a packed linearization combines their rows before
+submission; see [submission-aware training](submission-training.md). Optimizer steps cannot borrow
 parallel capacity from future steps. Queue/latency apply to each job wave.
 Billing sums total device use, even when jobs overlap. All quotes use the
 policy's currency. QPU quotes require explicit queue, pricing and noise values;

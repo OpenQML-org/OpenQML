@@ -19,6 +19,15 @@ class RiskBudgetResult(NamedTuple):
     budget: object
 
 
+class ExpectileBudgetResult(NamedTuple):
+    weights: object
+    cash: object
+    scale: object
+    expectile: object
+    robust_expectile: object
+    budget: object
+
+
 def risk_budget_projection(
     weights,
     scenarios,
@@ -32,6 +41,68 @@ def risk_budget_projection(
     transport_metric=None,
     metric_iterations=128,
     metric_tolerance=1e-6,
+):
+    """Maximal funded cash-ray scaling under the weighted robust CVaR bound."""
+    return _project(
+        weights,
+        scenarios,
+        probabilities=probabilities,
+        confidence=confidence,
+        budget=budget,
+        radius=radius,
+        cash_return=cash_return,
+        max_memory_mb=max_memory_mb,
+        transport_metric=transport_metric,
+        metric_iterations=metric_iterations,
+        metric_tolerance=metric_tolerance,
+    )
+
+
+def expectile_budget_projection(
+    weights,
+    scenarios,
+    *,
+    probabilities=None,
+    level=0.95,
+    budget=0.02,
+    radius=0,
+    cash_return=0,
+    max_memory_mb=256,
+    transport_metric=None,
+    metric_iterations=128,
+    metric_tolerance=1e-6,
+):
+    """Maximal funded cash-ray scaling under an unrestricted-support W1 expectile."""
+    return _project(
+        weights,
+        scenarios,
+        probabilities=probabilities,
+        confidence=level,
+        budget=budget,
+        radius=radius,
+        cash_return=cash_return,
+        max_memory_mb=max_memory_mb,
+        transport_metric=transport_metric,
+        metric_iterations=metric_iterations,
+        metric_tolerance=metric_tolerance,
+        risk_measure="expectile",
+    )
+
+
+def _project(
+    weights,
+    scenarios,
+    *,
+    probabilities=None,
+    confidence=0.95,
+    budget=0.02,
+    radius=0,
+    cash_return=0,
+    max_memory_mb=256,
+    transport_metric=None,
+    metric_iterations=128,
+    metric_tolerance=1e-6,
+    risk_measure="cvar",
 ):
     """Scale a funded long-only proposal toward cash to meet its CVaR bound.
 
@@ -95,8 +166,14 @@ def risk_budget_projection(
         bound + cash_rate, bound + cash_rate >= 0, "The risk budget must admit the cash position."
     )
     incremental = cash_rate[..., None] * total[..., None] - ops.einsum("...sn,...n->...s", r, w)
-    base_cvar = expected_shortfall(incremental, confidence=confidence, probabilities=p)
-    robust = base_cvar + radius * dual / (1 - confidence)
+    if risk_measure == "expectile":
+        from .expectiles import _expectile_root
+
+        base_risk = _expectile_root(incremental, confidence, p, 0, max_memory_mb)
+        robust = _expectile_root(incremental, confidence, p, radius * dual, max_memory_mb)
+    else:
+        base_risk = expected_shortfall(incremental, confidence=confidence, probabilities=p)
+        robust = base_risk + radius * dual / (1 - confidence)
     safe_denominator = ops.xp.where(robust > target, robust, ops.array(1))
     scale = ops.xp.where(robust > target, target / safe_denominator, ops.array(1))
     scale = ops.check(
@@ -105,11 +182,12 @@ def risk_budget_projection(
         "Risk-budget inputs must define finite admissible risk and cash bounds.",
     )
     projected = w * scale[..., None]
-    return RiskBudgetResult(
+    result_type = ExpectileBudgetResult if risk_measure == "expectile" else RiskBudgetResult
+    return result_type(
         projected,
         ops.xp.maximum(1 - ops.sum(projected), ops.array(0)),
         scale,
-        -cash_rate + scale * base_cvar,
+        -cash_rate + scale * base_risk,
         -cash_rate + scale * robust,
         bound,
     )
