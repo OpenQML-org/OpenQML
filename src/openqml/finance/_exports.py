@@ -1,6 +1,8 @@
 """Lazy financial API locations."""
 
 EXPORTS = {
+    "WassersteinMetric": (".transport", "WassersteinMetric"),
+    "transport_dual_norm": (".transport", "transport_dual_norm"),
     "BarrierOption": (".barrier", "BarrierOption"),
     "AllocationPlan": (".allocation", "AllocationPlan"),
     "AllocationResult": (".allocation", "AllocationResult"),
@@ -38,6 +40,8 @@ EXPORTS = {
 }
 
 PUBLIC = [
+    "WassersteinMetric",
+    "transport_dual_norm",
     "BarrierOption",
     "price",
     "allocate",
@@ -75,6 +79,7 @@ PUBLIC = [
 ]
 
 MODULES = {
+    "transport": ".transport",
     "barrier": ".barrier",
     "quantum": ".quantum",
     "risk": ".risk",

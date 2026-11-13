@@ -166,7 +166,6 @@ def from_qiskit(
                 raise conversion_error(
                     "EXPANSION_LIMIT", "Control blocks exceed max_depth.", location
                 )
-            condition = _condition(op.condition, native, location)
             blocks = []
             remaining = max_operations - used - 1
             for body in op.blocks:
@@ -191,7 +190,26 @@ def from_qiskit(
                 )
             if len(blocks) == 1:
                 blocks.append(Circuit(width))
-            append(Operation("if_else", (), condition=condition, blocks=tuple(blocks)), location)
+            try:
+                condition = _condition(op.condition, native, location)
+            except ConversionError:
+                from ._classical_predicate import lower_predicate
+
+                lowered = lower_predicate(
+                    op.condition,
+                    native,
+                    tuple(blocks),
+                    max_operations=max_operations - used,
+                    max_depth=max_depth,
+                    location=location,
+                )
+                for operation in lowered.operations:
+                    append(operation, location)
+                phase += lowered.global_phase
+            else:
+                append(
+                    Operation("if_else", (), condition=condition, blocks=tuple(blocks)), location
+                )
             continue
         if isinstance(op, ForLoopOp) and expand:
             from numbers import Integral

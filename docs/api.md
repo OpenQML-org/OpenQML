@@ -41,6 +41,11 @@ Checked `compile_compute` boundaries retain typed numerical failures. Raw native
 JIT calls retain framework error behavior and may expose the internal NaN/error
 status used by training checks. See [compute contracts](compute.md#numerical-contracts).
 
+`QuantumMetricPlan.native_matvec`, `native_natural_gradient` and `spectral_step`
+operate on native Torch/JAX parameter vectors. Their result types are
+`NativeMetricResult` and `SpectralStepResult`. See [native quantum geometry](native-geometry.md)
+for the metric convention, spectral block order, residual certificates and scope.
+
 ## Circuit conversion
 
 ```python

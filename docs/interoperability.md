@@ -71,6 +71,37 @@ symbolic parameter identity, global phase, wire mappings and operation budgets;
 subsequent calls import the current source object afresh. Numerical bindings and
 target objects remain independent across exported artifacts.
 
+## Typed classical predicates
+
+The Qiskit IR route additionally accepts pure `Bool`/`Uint` expressions over
+declared classical bits/registers: `logic_not`, `logic_and`, `logic_or`,
+`bit_not`, `bit_and`, `bit_or`, `bit_xor`, equality/inequality and all unsigned
+ordered comparisons. Bool/Uint casts implement nonzero truth conversion,
+unsigned truncation and zero extension. Standalone mutable variables, signed
+arithmetic, stores, timing and other unsupported expression operations retain
+explicit diagnostics or require the existing native program route.
+
+A bit-vector compiler lowers these predicates into reduced ordered binary
+decision diagrams, reusing canonical nodes and cached Boolean operations.
+Portable IR emits immutable equality decisions with shared branch bodies.
+The predicate is fully evaluated before its selected body executes, including
+when the body overwrites a measurement bit used by the predicate. No scratch
+classical bits or truth-table enumeration are introduced. The emitted equality
+subset remains compatible with OpenQASM and Cirq export/reimport paths.
+
+`max_operations` bounds expression/bit-vector work, BDD construction and the
+expanded decision/payload cost; `max_depth` bounds expression, guard and payload
+nesting. Variable order follows declared bit indices. Some Boolean functions
+have large decision or expanded output representations and are rejected at the
+budget boundary. This is an expanded representable subset, not universal host
+Python or general classical-program translation.
+
+The supported source nodes follow [Qiskit's typed classical-expression API](https://quantum.cloud.ibm.com/docs/en/api/qiskit/circuit_classical).
+Recent work on [structured quantum programs (September 2026)](https://arxiv.org/abs/2609.16171)
+motivates retaining classical structure. The existing native program route
+continues to retain supported dynamic loops instead of flattening their runtime
+iterations; this addition handles bounded pure predicates in the portable IR.
+
 ## Prepare once, bind many
 
 ```python

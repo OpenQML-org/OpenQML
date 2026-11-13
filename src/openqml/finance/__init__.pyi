@@ -26,6 +26,8 @@ from .risk import wasserstein_cvar as wasserstein_cvar
 from .trading import SelfFinancingPlan as SelfFinancingPlan
 from .trading import TradingResult as TradingResult
 from .trading import TradingState as TradingState
+from .transport import WassersteinMetric as WassersteinMetric
+from .transport import transport_dual_norm as transport_dual_norm
 from .validation import FinancialFold as FinancialFold
 from .validation import PurgedWalkForward as PurgedWalkForward
 
