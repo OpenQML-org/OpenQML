@@ -261,4 +261,8 @@ class DistanceAwareQNM:
             "QNM step counter is exhausted.",
             error=ResourceError,
         )
-        return state._replace(initial_parameters=initial)
+        # Construct directly: older Dynamo treats NamedTuple._replace as a
+        # skipped stdlib function even though all of its fields are native.
+        return DistanceAwareState(
+            initial, state.momentum, state.max_distance, state.steps, state.signature
+        )

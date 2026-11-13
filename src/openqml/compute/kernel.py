@@ -33,9 +33,14 @@ def _array_backend(value):
     torch = sys.modules.get("torch")
     if torch is not None and isinstance(value, getattr(torch, "Tensor", ())):
         return "torch"
-    jax = sys.modules.get("jax")
-    if jax is not None and isinstance(value, (jax.Array, jax.core.Tracer)):
-        return "jax"
+    # NumPy constants become Dynamo-specific array variables. Avoid both
+    # reflection on their dtype/module and JAX's custom instance hooks.
+    if isinstance(value, (np.ndarray, np.generic)):
+        return "numpy"
+    if hasattr(value, "dtype") and type(value).__module__.startswith(("jax.", "jaxlib.")):
+        jax = sys.modules.get("jax")
+        if jax is not None and isinstance(value, (jax.Array, jax.core.Tracer)):
+            return "jax"
     return "numpy"
 
 
