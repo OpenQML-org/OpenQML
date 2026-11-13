@@ -353,7 +353,7 @@ def test_sparse_lane_outputs_do_not_retain_unrequested_readout_storage(monkeypat
     bindings = {n: np.ones(3) * 0.2 for n in spec.input_parameters + spec.weight_parameters}
     captured, original = [], execution._evaluate_program
 
-    def inspect(nodes, roots, local, ops, shape, factors=()):
+    def inspect(nodes, roots, local, ops, shape, factors=(), **kwargs):
         if factors:
             storage = {}
             for value in factors:
@@ -361,7 +361,7 @@ def test_sparse_lane_outputs_do_not_retain_unrequested_readout_storage(monkeypat
                     value = value.base
                 storage[id(value)] = value.nbytes
             captured.append(sum(storage.values()))
-        return original(nodes, roots, local, ops, shape, factors)
+        return original(nodes, roots, local, ops, shape, factors, **kwargs)
 
     monkeypatch.setattr(execution, "_evaluate_program", inspect)
     np.testing.assert_allclose(

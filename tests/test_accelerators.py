@@ -243,19 +243,25 @@ def _report(torch, name, **checks):
 
 
 @pytest.mark.parametrize("precision", ["float32", "float64"])
-def test_physical_cuda_readouts_sampling_and_resident_gradients(precision):
+@pytest.mark.parametrize("compile_mode", [None, "default", "reduce-overhead"])
+def test_physical_cuda_readouts_sampling_and_resident_gradients(precision, compile_mode):
     torch = _physical_cuda()
-    engine = oq.CUDABackend(precision=precision, device=f"cuda:{torch.cuda.current_device()}")
+    engine = oq.CUDABackend(
+        precision=precision,
+        device=f"cuda:{torch.cuda.current_device()}",
+        compile_mode=compile_mode,
+    )
     x = oq.Parameter("x")
     circuit = oq.Circuit(4).h(0).ry(x, 3).cx(3, 1).rz(x / 2, 1)
     observables = (oq.PauliString("IIIZ"), oq.PauliString("ZIII"))
-    rows = [{"x": float(v)} for v in np.linspace(-1, 1, 35)]
     tolerance = 3e-5 if precision == "float32" else 2e-12
-    np.testing.assert_allclose(
-        oq.expectations_batch(circuit, observables, rows, backend=engine),
-        oq.expectations_batch(circuit, observables, rows, backend="numpy"),
-        atol=tolerance,
-    )
+    for offset in (0.0, 0.2, -0.3, 0.5):
+        rows = [{"x": float(v)} for v in np.linspace(-1, 1, 35) + offset]
+        np.testing.assert_allclose(
+            oq.expectations_batch(circuit, observables, rows, backend=engine),
+            oq.expectations_batch(circuit, observables, rows, backend="numpy"),
+            atol=tolerance,
+        )
     results = oq.execute_batch([oq.Circuit(2).x(1)] * 3, backend=engine, shots=31)
     assert [result.counts for result in results] == [{"01": 31}] * 3
     states = [oq.Circuit(1).ry(0.2, 0), oq.Circuit(2).h(1)]
@@ -267,7 +273,14 @@ def test_physical_cuda_readouts_sampling_and_resident_gradients(precision):
     assert values.device == angles.device
     gradient = torch.autograd.grad(values.sum(), angles)[0]
     torch.testing.assert_close(gradient, -angles.sin(), atol=tolerance, rtol=tolerance)
-    _report(torch, f"cuda-{precision}", precision=precision, readouts=True, gradients=True)
+    _report(
+        torch,
+        f"cuda-{precision}-{compile_mode or 'eager'}",
+        precision=precision,
+        compile_mode=compile_mode,
+        readouts=True,
+        gradients=True,
+    )
 
 
 def test_physical_cuda_factor_allocation_and_implicit_gradient():

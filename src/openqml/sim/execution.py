@@ -11,6 +11,7 @@ import math
 from collections.abc import Mapping, Set
 from dataclasses import asdict, dataclass, field, replace
 
+from ..compute._program import lower_program
 from ..compute.kernel import memory_budget
 from ..errors import ConversionError, Diagnostic, ResourceError, ValidationError, conversion_error
 from ..ir.compiler import _check_circuit_limits, circuit_stats
@@ -519,6 +520,8 @@ class ExpectationPlan:
     _roots: tuple = field(init=False, repr=False)
     _coefficient_nodes: tuple = field(init=False, repr=False)
     _coefficient_roots: tuple = field(init=False, repr=False)
+    _coefficient_program: object = field(init=False, repr=False)
+    _output_program: object = field(init=False, repr=False)
     _source_parameters: frozenset = field(init=False, repr=False)
     _retained_bytes_per_row: int = field(init=False, repr=False)
     _memory_bytes: int = field(init=False, repr=False)
@@ -587,8 +590,12 @@ class ExpectationPlan:
         nodes, roots, factor_aliases = _reuse_factors(
             nodes, roots, groups, dense_batches, builder.factors, self.max_nodes
         )
-        reserve = 8 * (len(nodes) + builder.factors + 8)
-        retained = reserve + 8 * (len(coefficient_nodes) + len(coefficient_roots))
+        coefficient_program = lower_program(coefficient_nodes, coefficient_roots)
+        output_program = lower_program(nodes, roots)
+        reserve = 8 * (output_program.registers + builder.factors + 8)
+        retained = reserve + 8 * (
+            coefficient_program.registers + len(coefficient_roots) + len(self.circuit.parameters)
+        )
         required = retained + max(
             (batch.working_bytes_per_lane for batch in dense_batches), default=0
         )
@@ -611,6 +618,8 @@ class ExpectationPlan:
             ("_roots", roots),
             ("_coefficient_nodes", coefficient_nodes),
             ("_coefficient_roots", coefficient_roots),
+            ("_coefficient_program", coefficient_program),
+            ("_output_program", output_program),
             ("_source_parameters", frozenset(self.circuit.parameters)),
             ("_retained_bytes_per_row", retained),
         ):
@@ -657,6 +666,8 @@ class ExpectationPlan:
             "contraction_nodes": len(self._nodes),
             "shared_coefficient_nodes": len(self._coefficient_nodes),
             "shared_coefficient_outputs": len(self._coefficient_roots),
+            "coefficient_live_registers": self._coefficient_program.registers,
+            "contraction_live_registers": self._output_program.registers,
             "active_parameters": list(self.active_parameters),
             "removed_parameters": sorted(self._source_parameters - set(self.active_parameters)),
             "groups": [g.to_dict() for g in self.groups],
@@ -700,7 +711,14 @@ class ExpectationPlan:
             )
         factors = [None] * self.factor_count
         coefficients = (
-            _evaluate_program(self._coefficient_nodes, self._coefficient_roots, local, ops, shape)
+            _evaluate_program(
+                self._coefficient_nodes,
+                self._coefficient_roots,
+                local,
+                ops,
+                shape,
+                program=self._coefficient_program,
+            )
             if self._coefficient_roots
             else None
         )
@@ -709,7 +727,9 @@ class ExpectationPlan:
                 for slot, factor in zip(group.program_indices, group.factor_indices, strict=True):
                     factors[factor] = coefficients[..., slot]
         _evaluate_dense(self, coefficients, factors, ops, shape)
-        return _evaluate_program(self._nodes, self._roots, local, ops, shape, factors)
+        return _evaluate_program(
+            self._nodes, self._roots, local, ops, shape, factors, program=self._output_program
+        )
 
     def verify(
         self,

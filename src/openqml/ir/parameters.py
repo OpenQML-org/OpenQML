@@ -30,12 +30,14 @@ def parameter_name(name):
 
 
 def _namespace(value):
-    module = type(value).__module__
-    if module.startswith("torch"):
+    from ..compute.kernel import _array_backend
+
+    backend = _array_backend(value)
+    if backend == "torch":
         import torch
 
         return torch
-    if module.startswith(("jax", "jaxlib")):
+    if backend == "jax":
         import jax.numpy as jnp
 
         return jnp
@@ -44,15 +46,48 @@ def _namespace(value):
 
 def _checked(value):
     if type(value) is int or type(value) is float:
-        if not isfinite(value):
+        try:
+            finite = isfinite(value)
+        except (OverflowError, ValueError) as exc:
+            raise ValidationError("Parameter expression exceeds finite real precision.") from exc
+        if not finite:
             raise ValidationError("Parameter expression is undefined over finite real values.")
         return value
-    if isinstance(value, complex):
-        raise ValidationError("Parameter expressions must remain real.")
+    if isinstance(value, (bool, complex, str, bytes)):
+        raise ValidationError("Parameter expressions require real numeric scalars or arrays.")
+    if isinstance(value, Real) and not isinstance(value, np.generic):
+        real(value)
+        return value
     if isinstance(value, (Real, np.ndarray, np.generic)):
-        if np.iscomplexobj(value) or not np.all(np.isfinite(value)):
+        dtype = getattr(value, "dtype", None)
+        if dtype is not None and dtype.kind not in "iuf":
+            raise ValidationError("Parameter expressions require real numeric scalars or arrays.")
+        try:
+            finite = np.all(np.isfinite(value))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValidationError("Parameter expressions require real numeric values.") from exc
+        if not finite:
             raise ValidationError("Parameter expression is undefined over finite real values.")
-    return value
+        return value
+    from ..compute.kernel import _array_backend
+
+    backend = _array_backend(value)
+    if backend == "torch":
+        xp = _namespace(value)
+        if value.dtype != xp.bool and not value.is_complex():
+            return value
+    elif backend == "jax":
+        xp = _namespace(value)
+        if xp.issubdtype(value.dtype, xp.floating) or xp.issubdtype(value.dtype, xp.integer):
+            return value
+    raise ValidationError("Parameter expressions require real numeric scalars or arrays.")
+
+
+def _broadcast_operands(left, right):
+    if hasattr(left, "shape") and hasattr(right, "shape"):
+        from ..compute.kernel import _broadcast_shape
+
+        _broadcast_shape((tuple(left.shape), tuple(right.shape)))
 
 
 _ARITY = {
@@ -109,11 +144,20 @@ def _leaf_value(value, bindings):
     for name, coefficient in value.terms:
         if name not in bindings:
             raise ValidationError(f"Missing parameter binding: {name}.")
-        result = result + coefficient * bindings[name]
+        bound = _checked(bindings[name])
+        _broadcast_operands(result, bound)
+        try:
+            result = result + coefficient * bound
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValidationError(
+                f"Parameter binding {name!r} cannot be evaluated as broadcastable real values."
+            ) from exc
     return _checked(result)
 
 
 def _apply(op, args):
+    if len(args) == 2:
+        _broadcast_operands(*args)
     try:
         if op == "add":
             result = args[0] + args[1]
@@ -125,7 +169,7 @@ def _apply(op, args):
             result = args[0] ** args[1]
         else:
             result = getattr(_namespace(args[0]), op)(args[0])
-    except (ZeroDivisionError, OverflowError, ValueError) as exc:
+    except (TypeError, ZeroDivisionError, OverflowError, ValueError) as exc:
         raise ValidationError("Parameter expression is undefined over real values.") from exc
     return _checked(result)
 

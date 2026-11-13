@@ -7,6 +7,92 @@ import openqml as oq
 
 
 @pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        object(),
+        [],
+        [1, 2],
+        {},
+        "1",
+        True,
+        1j,
+        np.array(["1"]),
+        np.array([None], dtype=object),
+        np.array([True]),
+    ],
+)
+@pytest.mark.parametrize("nonlinear", [False, True])
+def test_expression_rejects_invalid_bound_values_before_arithmetic(value, nonlinear):
+    from openqml.ir.parameters import expression
+
+    program = expression(oq.Parameter("x"))
+    if nonlinear:
+        program = program.sin().exp()
+    with pytest.raises(oq.ValidationError, match="real numeric"):
+        program.evaluate({"x": value})
+
+
+def test_expression_rejects_opaque_values_without_invoking_their_arithmetic():
+    class Opaque:
+        def __rmul__(self, value):
+            pytest.fail("Invalid expression input reached user arithmetic")
+
+    with pytest.raises(oq.ValidationError, match="real numeric"):
+        oq.Parameter("x").sin().evaluate({"x": Opaque()})
+
+
+def test_expression_preserves_real_scalars_and_checks_affine_broadcasts():
+    from fractions import Fraction
+
+    from openqml.ir.parameters import expression
+
+    x, y = oq.Parameter("x"), oq.Parameter("y")
+    assert expression(x).evaluate({"x": Fraction(1, 4)}) == 0.25
+    with pytest.raises(oq.ValidationError, match="broadcast"):
+        (x + y).evaluate({"x": np.ones(2), "y": np.ones(3)})
+    with pytest.raises(oq.ValidationError, match="finite real precision"):
+        expression(x).evaluate({"x": 2**100_000})
+
+
+@pytest.mark.parametrize("framework", ["torch", "jax"])
+def test_expression_checks_native_dtypes_without_detaching_gradients(framework):
+    xp = pytest.importorskip(framework)
+    x, y = oq.Parameter("x"), oq.Parameter("y")
+    program = (x.sin() + x * y).cos()
+    if framework == "torch":
+
+        class Tensor(xp.Tensor):
+            pass
+
+        value = xp.tensor(0.3, dtype=xp.float64, requires_grad=True).as_subclass(Tensor)
+        result = program.evaluate({"x": value, "y": 0.2})
+        gradient = xp.autograd.grad(result, value)[0]
+        actual = float(result.detach()), float(gradient.detach())
+        invalid = [xp.tensor(True), xp.tensor(1j)]
+        first, second = xp.ones(2), xp.ones(3)
+    else:
+        import jax.numpy as jnp
+
+        def fn(value):
+            return program.evaluate({"x": value, "y": 0.2})
+
+        result, gradient = xp.jit(xp.value_and_grad(fn))(jnp.asarray(0.3))
+        actual = float(result), float(gradient)
+        invalid = [jnp.asarray(True), jnp.asarray(1j)]
+        first, second = jnp.ones(2), jnp.ones(3)
+    angle = np.sin(0.3) + 0.06
+    np.testing.assert_allclose(
+        actual, [np.cos(angle), -np.sin(angle) * (np.cos(0.3) + 0.2)], atol=2e-7
+    )
+    for value in invalid:
+        with pytest.raises(oq.ValidationError, match="real numeric"):
+            program.evaluate({"x": value, "y": 0.2})
+    with pytest.raises(oq.ValidationError, match="broadcast"):
+        (x + y).evaluate({"x": first, "y": second})
+
+
+@pytest.mark.parametrize(
     "entry",
     [
         lambda value: oq.statevector(value),
