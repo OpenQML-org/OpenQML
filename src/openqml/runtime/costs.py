@@ -36,8 +36,11 @@ class TrainingWorkload:
     execution_batches: tuple | None = None
     classical_seconds_per_step: float = 0
     classical_cost_per_step: float = 0
+    joint_primal_gradient: bool = False
 
     def __post_init__(self):
+        if type(self.joint_primal_gradient) is not bool:
+            raise ValidationError("joint_primal_gradient must be a boolean.")
         if self.batch_size is not None:
             object.__setattr__(self, "batch_size", integer(self.batch_size, "batch_size", 1))
         object.__setattr__(self, "steps", integer(self.steps, "steps", 1))
@@ -352,8 +355,12 @@ def estimate_cost(profile, request, policy, *, exact=False, adjustable_shots=Fal
     for size, repeats in segments:
         if not repeats:
             continue
-        forward = phase(size)
-        gradient = phase(size * gradient_count, work.gradient_chunk_size)
+        if work.joint_primal_gradient:
+            forward = phase(size * (1 + gradient_count), work.gradient_chunk_size)
+            gradient = (0,) * 5
+        else:
+            forward = phase(size)
+            gradient = phase(size * gradient_count, work.gradient_chunk_size)
         for i, (a, b) in enumerate(zip(forward, gradient, strict=True)):
             totals[i] += (a + b) * repeats * work.steps
     wall, cost, count, physical, jobs = totals

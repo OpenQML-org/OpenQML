@@ -4,6 +4,10 @@ from .allocation import AllocationResult as AllocationResult
 from .api import allocate as allocate
 from .api import price as price
 from .barrier import BarrierOption as BarrierOption
+from .budget import ExpectileBudgetResult as ExpectileBudgetResult
+from .budget import expectile_budget_projection as expectile_budget_projection
+from .expectiles import expectile as expectile
+from .expectiles import wasserstein_expectile as wasserstein_expectile
 from .models import MarketForecast as MarketForecast
 from .models import MarketForecastPlan as MarketForecastPlan
 from .models import ScenarioPlan as ScenarioPlan

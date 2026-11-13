@@ -21,6 +21,7 @@ from .autodiff import adjoint as adjoint
 from .autodiff import geometry as geometry
 from .autodiff import gradients as gradients
 from .autodiff import optimization as optimization
+from .autodiff._linearization import ShiftLinearization as ShiftLinearization
 from .autodiff.adjoint import AdjointPlan as AdjointPlan
 from .autodiff.adjoint import adjoint_jvp as adjoint_jvp
 from .autodiff.adjoint import adjoint_vjp as adjoint_vjp

@@ -1,12 +1,20 @@
 from collections.abc import Mapping
 
-from ...compute.kernel import _broadcast_shape
+from ...compute.kernel import _broadcast_shape, get_compute_kernel
 from ...errors import ValidationError
 from ..layers import LayerCheckpoint, LayerSpec, validate_layer
 
 
 def default_layer_backend(
-    circuit, observables, backend, native, *, native_contract, limits, gradient_chunk_size=64
+    circuit,
+    observables,
+    backend,
+    native,
+    *,
+    native_contract,
+    limits,
+    gradient_chunk_size=64,
+    gradient_method="auto",
 ):
     """Compare configured QPU quotes against native training work before pinning.
 
@@ -39,6 +47,8 @@ def default_layer_backend(
                 runtime.workload.gradient_evaluations, shifts.gradient_evaluations
             ),
             native_gradient_evaluations=1,
+            joint_primal_gradient=gradient_method == "batched-shift",
+            gradient_chunk_size=gradient_chunk_size,
             submission_batch_size=min(
                 gradient_chunk_size, runtime.workload.submission_batch_size or gradient_chunk_size
             ),
@@ -372,8 +382,15 @@ def prepare_execution(
 
 def resolve_gradient_method(circuit, backend, method, limits):
     """Keep native graphs by default; adjoint is an explicit NumPy simulator choice."""
-    if not isinstance(method, str) or method not in {"auto", "parameter-shift", "adjoint"}:
-        raise ValidationError("gradient_method must be auto, parameter-shift or adjoint.")
+    if not isinstance(method, str) or method not in {
+        "auto",
+        "parameter-shift",
+        "batched-shift",
+        "adjoint",
+    }:
+        raise ValidationError(
+            "gradient_method must be auto, parameter-shift, batched-shift or adjoint."
+        )
     native = isinstance(backend, str) and backend in {"torch", "jax"}
     if method == "auto":
         return "backprop" if native else "parameter-shift"
@@ -450,7 +467,7 @@ def prepare_gradients(layer):
             layer.limits["max_qubits"],
             layer.limits["max_memory_mb"],
         ), None
-    if layer.gradient_method == "parameter-shift":
+    if layer.gradient_method in {"parameter-shift", "batched-shift"}:
         from ...autodiff.gradients import ShiftPlan
 
         plan = ShiftPlan(
@@ -481,6 +498,27 @@ def numeric_columns(layer, weights, inputs):
             if name in active:
                 columns[name] = np.broadcast_to(values[..., i], shape).reshape(count)
     return columns, count
+
+
+def numeric_linearization(layer, weights, inputs):
+    """Pack one primal/stencil stream, scattering columns to full source ownership."""
+    import numpy as np
+
+    columns, count = numeric_columns(layer, weights, inputs)
+    names = layer.input_parameters + layer.weight_parameters
+    get_compute_kernel().admit(
+        count * len(layer.observables) * (len(names) + len(layer.shift_plan.parameters) + 2),
+        layer.limits["max_memory_mb"],
+    )
+    result = layer.shift_plan.linearize(
+        columns, batch_size=count, chunk_size=layer.gradient_chunk_size
+    )
+    jacobian = np.zeros((count, len(layer.observables), len(names)))
+    positions = {name: i for i, name in enumerate(names)}
+    for source, name in enumerate(result.parameters):
+        jacobian[..., positions[name]] = result.jacobian[..., source]
+    shape = broadcast_batch_shape(weights, inputs) + (len(layer.observables),)
+    return result.values.reshape(shape), jacobian.reshape(shape + (len(names),))
 
 
 def numeric_expectations(layer, weights, inputs):

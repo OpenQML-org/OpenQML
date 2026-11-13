@@ -92,9 +92,73 @@ class _BDD:
         return value
 
 
+class _BitVectors:
+    """Fixed-width unsigned circuits, built from canonical Boolean operations."""
+
+    def __init__(self, bdd):
+        self.bdd = bdd
+
+    def add(self, left, right, *, subtract=False):
+        self.bdd.charge(len(left))
+        carry, result = int(subtract), []
+        for a, b in zip(left, right, strict=True):
+            if subtract:
+                b = self.bdd.apply("xor", b, 1)
+            parity = self.bdd.apply("xor", a, b)
+            result.append(self.bdd.apply("xor", parity, carry))
+            carry = self.bdd.apply(
+                "or", self.bdd.apply("and", a, b), self.bdd.apply("and", parity, carry)
+            )
+        return tuple(result)  # Discard the carry: Uint arithmetic is modulo 2**width.
+
+    def multiply(self, left, right):
+        size = len(left)
+        self.bdd.charge(size * size)
+        result = (0,) * size
+        for index, bit in enumerate(right):
+            if bit == 0:
+                continue
+            row = (0,) * index + tuple(self.bdd.apply("and", bit, a) for a in left[: size - index])
+            result = self.add(result, row)
+        return result
+
+    def shift(self, bits, amount, *, left=False, index=False):
+        size = len(bits)
+        maximum = 0
+        for i, bit in enumerate(amount):
+            if bit == 0:
+                continue
+            if i >= size.bit_length() or maximum + (1 << i) >= size:
+                raise conversion_error(
+                    "CLASSICAL_INDEX_RANGE" if index else "CLASSICAL_SHIFT_RANGE",
+                    "Every possible index/shift must be provably inside its operand width.",
+                    self.bdd.location,
+                )
+            maximum += 1 << i
+        self.bdd.charge(size * len(amount))
+        for i, control in enumerate(amount):
+            if control == 0:
+                continue
+            step = 1 << i
+            shifted = (0,) * step + bits[: size - step] if left else bits[step:] + (0,) * step
+            if control == 1:
+                bits = shifted
+            else:
+                bits = tuple(
+                    self.bdd.apply(
+                        "xor", a, self.bdd.apply("and", control, self.bdd.apply("xor", a, b))
+                    )
+                    for a, b in zip(bits, shifted, strict=True)
+                )
+        return bits
+
+
 def _compile(value, native, bdd):
     from qiskit.circuit import ClassicalRegister, Clbit
     from qiskit.circuit.classical import expr, types
+
+    vectors = _BitVectors(bdd)
+    index_type = getattr(expr, "Index", ())
 
     def fail(message):
         raise conversion_error("CLASSICAL_EXPRESSION", message, bdd.location)
@@ -145,6 +209,8 @@ def _compile(value, native, bdd):
             descendants[identity] = (
                 (current.left, current.right)
                 if isinstance(current, expr.Binary)
+                else (current.target, current.index)
+                if isinstance(current, index_type)
                 else (current.operand,)
                 if isinstance(current, (expr.Unary, expr.Cast))
                 else ()
@@ -157,7 +223,9 @@ def _compile(value, native, bdd):
             pending.extend((child, False, depth + 1) for child in children if id(child) not in memo)
             continue
         left = memo[id(children[0])]
-        if isinstance(current, expr.Cast):
+        if isinstance(current, index_type):
+            result = (vectors.shift(left, memo[id(children[1])], index=True)[0],)
+        elif isinstance(current, expr.Cast):
             result = (
                 (bdd.truth(left),) if isinstance(current.type, types.Bool) else expand(left, size)
             )
@@ -171,7 +239,16 @@ def _compile(value, native, bdd):
         else:
             right = memo[id(children[1])]
             op = current.op.name
-            if op in {"BIT_AND", "BIT_OR", "BIT_XOR"}:
+            if op in {"ADD", "SUB", "MUL"}:
+                a, b = expand(left, size), expand(right, size)
+                result = (
+                    vectors.multiply(a, b)
+                    if op == "MUL"
+                    else vectors.add(a, b, subtract=op == "SUB")
+                )
+            elif op in {"SHIFT_LEFT", "SHIFT_RIGHT"}:
+                result = vectors.shift(expand(left, size), right, left=op == "SHIFT_LEFT")
+            elif op in {"BIT_AND", "BIT_OR", "BIT_XOR"}:
                 operation = op.removeprefix("BIT_").lower()
                 result = tuple(
                     bdd.apply(operation, a, b)

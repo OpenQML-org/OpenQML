@@ -1,6 +1,10 @@
 """Lazy financial API locations."""
 
 EXPORTS = {
+    "expectile": (".expectiles", "expectile"),
+    "wasserstein_expectile": (".expectiles", "wasserstein_expectile"),
+    "ExpectileBudgetResult": (".budget", "ExpectileBudgetResult"),
+    "expectile_budget_projection": (".budget", "expectile_budget_projection"),
     "WassersteinMetric": (".transport", "WassersteinMetric"),
     "transport_dual_norm": (".transport", "transport_dual_norm"),
     "BarrierOption": (".barrier", "BarrierOption"),
@@ -40,6 +44,10 @@ EXPORTS = {
 }
 
 PUBLIC = [
+    "expectile",
+    "wasserstein_expectile",
+    "ExpectileBudgetResult",
+    "expectile_budget_projection",
     "WassersteinMetric",
     "transport_dual_norm",
     "BarrierOption",

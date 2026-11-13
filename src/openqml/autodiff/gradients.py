@@ -366,6 +366,24 @@ class ShiftPlan:
             columns, count, occurrences, "jacobian", None, result, chunk_size, options
         )
 
+    def linearize(self, bindings, *, parameters=None, chunk_size=64, batch_size=None, **options):
+        """Evaluate primal and a bounded explicit Jacobian in shared submission batches.
+
+        This opts into O(batch*readouts*parameters) storage to avoid a second
+        provider round trip when loss cotangents become available. A whole
+        stencil is one submission only when it fits chunk_size/provider limits.
+        """
+        from ._linearization import linearize
+
+        return linearize(
+            self,
+            bindings,
+            parameters=parameters,
+            chunk_size=chunk_size,
+            batch_size=batch_size,
+            **options,
+        )
+
     def vjp(
         self, bindings, cotangents, *, parameters=None, chunk_size=64, batch_size=None, **options
     ):

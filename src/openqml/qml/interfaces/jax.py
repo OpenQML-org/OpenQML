@@ -45,6 +45,8 @@ class QuantumLayer(LayerSpecMixin):
     optimize=True preserves source ownership and returns zero gradients for
     eliminated symbols. circuit is executable IR; optimization holds the report.
     gradient_method='auto' retains native autodiff or numerical parameter shifts.
+    gradient_method='batched-shift' packs primal and derivatives together,
+    retaining a memory-admitted explicit Jacobian for the current forward call.
     NumPy unitary simulation also supports explicit first-order adjoint gradients.
     External backends support standard jvp/vjp, jacfwd/jacrev, vmap and fixed-point
     linearize/linear_transpose. Nonlinear higher derivatives require native JAX.
@@ -105,6 +107,7 @@ class QuantumLayer(LayerSpecMixin):
             backend,
             "jax",
             gradient_chunk_size=integer(gradient_chunk_size, "gradient_chunk_size", 2),
+            gradient_method=gradient_method,
             native_contract=reduce_readout
             or execution_method != "auto"
             or checkpoint_interval is not None,
@@ -272,6 +275,10 @@ class QuantumLayer(LayerSpecMixin):
                     )
                 return result.reshape(shape + (len(self.observables),))
         if self.execution_backend != "jax":
+            if self.gradient_method == "batched-shift":
+                from ._jax_stencil import batched_shift_call
+
+                return batched_shift_call(self, weights, inputs)
             return _external_layer(self, weights, inputs)
         bindings = {
             name: inputs[..., i]
