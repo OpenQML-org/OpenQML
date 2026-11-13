@@ -75,6 +75,20 @@ TorchInductor can delegate unsupported complex operators to native kernels.
 Fusion benefit depends on locality, gate mix and reuse. These mechanisms do not
 establish a universal acceleration factor or measured multi-GPU/QPU throughput.
 
+## Readout working storage
+
+Real-arithmetic readout graphs use immutable last-use schedules and reuse
+register slots after their final consumer. A slot assignment replaces a Python
+reference; tensor data is never overwritten. Shared inputs, repeated operands
+and requested roots remain live for all consumers. Pauli and factored expectation
+plans report live-register counts and charge primal workspaces against that
+schedule. Framework autodiff may retain its own saved tensors; those tapes,
+compiler workspaces and allocator reserves remain outside this primal model.
+
+TorchInductor/XLA can fuse the resulting native arithmetic when a surrounding
+model or circuit is compiled. Numeric CUDA readouts also expose an explicit
+instance-local compiled path described in [runtime dispatch](runtime.md).
+
 ## Configuration
 
 ```python

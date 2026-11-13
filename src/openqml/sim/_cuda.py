@@ -3,6 +3,7 @@
 import re
 from dataclasses import dataclass, field, replace
 from importlib.util import find_spec
+from threading import RLock
 
 import numpy as np
 
@@ -12,14 +13,26 @@ from ..interop._parameter_batches import CircuitCache, binding_matrix, parameter
 from ..runtime.backends import BackendCapabilities
 
 
-def _native_parameters(bindings, start, stop, like):
+def _native_parameter_matrix(bindings, start, stop, like, names=None):
     """Stage one packed host buffer per chunk instead of one transfer per gate."""
-    if not bindings:
-        return {}
     import torch
 
-    host = torch.from_numpy(np.ascontiguousarray(binding_matrix(bindings)[start:stop]))
-    packed = host.to(device=like.device, dtype=like.dtype, non_blocking=True)
+    names = tuple(bindings) if names is None else tuple(names)
+    if not names:
+        return torch.empty((stop - start, 0), device=like.device, dtype=like.dtype)
+    values = (
+        binding_matrix(bindings)[start:stop]
+        if names == tuple(bindings)
+        else np.stack([bindings[name][start:stop] for name in names], axis=-1)
+    )
+    host = torch.from_numpy(np.ascontiguousarray(values))
+    return host.to(device=like.device, dtype=like.dtype, non_blocking=True)
+
+
+def _native_parameters(bindings, start, stop, like):
+    if not bindings:
+        return {}
+    packed = _native_parameter_matrix(bindings, start, stop, like)
     return {name: packed[:, i] for i, name in enumerate(bindings)}
 
 
@@ -28,6 +41,7 @@ class CUDABackend:
     name: str = "gpu"
     precision: str = "float64"
     device: str | None = None
+    compile_mode: str | None = None
     capabilities: BackendCapabilities = field(
         default_factory=lambda: BackendCapabilities(
             native_expectations=True,
@@ -44,14 +58,52 @@ class CUDABackend:
         )
     )
     _cache: object = field(default_factory=lambda: CircuitCache(16), repr=False, compare=False)
+    _compiled: object = field(default_factory=lambda: CircuitCache(8), repr=False, compare=False)
 
     def __post_init__(self):
         _require_choice(self.precision, ("float32", "float64"), "precision")
+        if self.compile_mode is not None:
+            _require_choice(
+                self.compile_mode,
+                ("default", "reduce-overhead", "max-autotune", "max-autotune-no-cudagraphs"),
+                "compile_mode",
+            )
         if self.device is not None and (
             not isinstance(self.device, str)
             or re.fullmatch(r"cuda(?::[0-9]+)?", self.device) is None
         ):
             raise ValidationError("device must be None, 'cuda' or 'cuda:<index>'.")
+        if self.device is not None and ":" in self.device:
+            object.__setattr__(self, "device", f"cuda:{int(self.device.split(':')[1])}")
+
+    def clear_cache(self):
+        """Release prepared plans and instance-owned native compiled callables."""
+        self._cache.clear()
+        self._compiled.clear()
+
+    def _compiled_readout(self, plan, rows, like):
+        from ..compute.kernel import get_compute_kernel
+        from .dense import _TensorOps
+        from .pauli import _evaluate_program
+
+        kernel = get_compute_kernel()
+        key = plan, rows, str(like.device), like.dtype, self.compile_mode, kernel
+
+        def prepare():
+            names, ops = plan.active_parameters, _TensorOps("torch", like)
+
+            def evaluate(packed):
+                local = {name: packed[:, i] for i, name in enumerate(names)}
+                return _evaluate_program(
+                    plan._nodes, plan._roots, local, ops, (rows,), program=plan._program
+                )
+
+            function = kernel.compile(
+                evaluate, backend="torch", fullgraph=True, dynamic=False, mode=self.compile_mode
+            )
+            return function, RLock(), names
+
+        return self._compiled.get(key, prepare)
 
     def _like(self):
         import torch
@@ -164,6 +216,18 @@ class CUDABackend:
                 )
                 for start in range(0, len(rows), chunk):
                     selected = rows[start : start + chunk]
+                    from .pauli import PauliPlan
+
+                    if self.compile_mode is not None and isinstance(plan, PauliPlan):
+                        function, lock, names = self._compiled_readout(plan, len(selected), like)
+                        # CUDA graph outputs may alias graph-owned buffers. Keep staging,
+                        # replay and the blocking host snapshot in the same critical section.
+                        with lock:
+                            packed = _native_parameter_matrix(
+                                bindings, start, start + len(selected), like, names
+                            )
+                            output[list(selected)] = function(packed).cpu().numpy()
+                        continue
                     parameters = _native_parameters(bindings, start, start + chunk, like)
                     values = plan.evaluate(
                         parameters, backend="torch", like=like, batch_shape=(len(selected),)

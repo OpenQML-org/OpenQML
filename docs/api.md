@@ -65,6 +65,11 @@ expression fields and incompatible automatic-readout batch shapes raise
 `ValidationError`; broadcast failures retain their original NumPy exception as
 the cause.
 
+Referenced expression bindings must contain real numeric scalars or NumPy,
+Torch or JAX arrays. Boolean, complex, object and text values are rejected
+before arithmetic. Native dtype/shape checks preserve tensors and gradients;
+errors raised by a caller's mapping implementation remain caller errors.
+
 ## Package organization
 
 The implementation is grouped by responsibility. The root API remains the

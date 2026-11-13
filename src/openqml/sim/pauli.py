@@ -14,6 +14,7 @@ from itertools import product
 
 import numpy as np
 
+from ..compute._program import lower_program
 from ..compute.kernel import get_compute_kernel, memory_budget
 from ..errors import Diagnostic, ResourceError, ValidationError, conversion_error
 from ..ir.compiler import _check_circuit_limits, circuit_stats, decompose
@@ -353,6 +354,8 @@ class PauliPlan:
     _nodes: tuple = field(init=False, repr=False)
     _roots: tuple = field(init=False, repr=False)
     _source_parameters: frozenset = field(init=False, repr=False)
+    _program: object = field(init=False, repr=False)
+    working_bytes: int = field(init=False)
 
     def __post_init__(self):
         for name in ("max_terms", "max_nodes", "max_work", "max_operations"):
@@ -371,6 +374,7 @@ class PauliPlan:
             self.max_operations,
         )
         active = tuple(sorted({n[1] for n in nodes if n[0] == "param"}))
+        program = lower_program(nodes, roots)
         for name, value in (
             ("observables", obs),
             ("_nodes", nodes),
@@ -381,6 +385,8 @@ class PauliPlan:
             ("construction_nodes", allocated),
             ("prepared_operations", operations),
             ("_source_parameters", frozenset(self.circuit.parameters)),
+            ("_program", program),
+            ("working_bytes", (program.registers + 8) * 8),
             ("max_memory_mb", budget),
         ):
             object.__setattr__(self, name, value)
@@ -410,6 +416,8 @@ class PauliPlan:
             "prepared_operations": self.prepared_operations,
             "outputs": len(self.observables),
             "arithmetic_nodes": len(self._nodes),
+            "live_registers": self._program.registers,
+            "working_bytes_per_row": self.working_bytes,
             "construction_nodes": self.construction_nodes,
             "peak_terms": self.peak_terms,
             "propagation_work": self.propagation_work,
@@ -436,13 +444,13 @@ class PauliPlan:
         ops, local, shape = _prepare_bindings(
             bindings, backend, like, batch_shape, self._source_parameters, self.active_parameters
         )
-        if (len(self._nodes) + 8) * 8 * max(1, math.prod(shape)) > memory_budget(
+        if (self.working_bytes + 8 * len(local)) * max(1, math.prod(shape)) > memory_budget(
             self.max_memory_mb
         ) * 2**20:
             raise ResourceError(
                 "Pauli arithmetic exceeds max_memory_mb; reduce the batch or use batch_chunk_size."
             )
-        return _evaluate_program(self._nodes, self._roots, local, ops, shape)
+        return _evaluate_program(self._nodes, self._roots, local, ops, shape, program=self._program)
 
 
 def _prepare_bindings(
@@ -503,28 +511,33 @@ def _prepare_bindings(
     return ops, local, shape
 
 
-def _evaluate_program(nodes, roots, local, ops, shape, factors=()):
-    values = []
-    for node in nodes:
-        name = node[0]
+def _evaluate_program(nodes, roots, local, ops, shape, factors=(), *, program=None):
+    if program is None:
+        program = get_compute_kernel().plan(
+            "readout_registers", (nodes, roots), lambda: lower_program(nodes, roots)
+        )
+    values = [None] * program.registers
+    for name, target, args, dead in program.instructions:
         if name == "const":
-            value = ops.array(node[1], real_value=True)
+            value = ops.array(args[0], real_value=True)
         elif name == "param":
-            value = local[node[1]]
+            value = local[args[0]]
         elif name == "factor":
-            value = factors[node[1]]
+            value = factors[args[0]]
         elif name in _UNARY:
-            value = getattr(ops.xp, name)(values[node[1]])
+            value = getattr(ops.xp, name)(values[args[0]])
         elif name == "mul":
-            value = values[node[1]] * values[node[2]]
+            value = values[args[0]] * values[args[1]]
         elif name == "div":
-            value = values[node[1]] / values[node[2]]
+            value = values[args[0]] / values[args[1]]
         elif name == "pow":
-            value = values[node[1]] ** values[node[2]]
+            value = values[args[0]] ** values[args[1]]
         else:
-            value = values[node[1]] + values[node[2]]
-        values.append(value)
-    outputs = tuple(ops.xp.broadcast_to(values[i], shape) for i in roots)
+            value = values[args[0]] + values[args[1]]
+        values[target] = value
+        for slot in dead:
+            values[slot] = None
+    outputs = tuple(ops.xp.broadcast_to(values[i], shape) for i in program.roots)
     result = (
         ops.xp.stack(outputs, dim=-1) if ops.backend == "torch" else ops.xp.stack(outputs, axis=-1)
     )

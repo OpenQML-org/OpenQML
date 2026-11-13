@@ -69,6 +69,31 @@ sampling, resident gradients and financial factor solves, and optionally checks
 native Aer GPU execution and two-GPU NCCL execution. It fails when required
 hardware is absent; CPU checks do not establish accelerator performance.
 
+## Compiled CUDA readouts
+
+`CUDABackend(compile_mode="reduce-overhead", device="cuda:0")` compiles admitted
+Pauli readout programs through TorchInductor with CUDA Graph support. Use
+`compile_mode="default"` for ordinary Inductor compilation or leave it unset for
+eager native execution. Compilation is explicit because cold compilation and
+graph capture can cost more than a small one-off readout.
+
+The compiled callable accepts one device-resident parameter matrix and transfers
+only columns active in the selected readout. Programs are cached by plan, batch
+shape, precision, actual device, mode and compute-policy snapshot, with eight
+instance-local entries. Changing values submits fresh inputs. Graph replay and
+the host result snapshot share a per-entry lock so concurrent readers cannot
+observe overwritten graph-owned outputs. `clear_cache()` releases prepared plans
+and these compiled callables. Other admitted representations retain eager GPU
+execution. Indexed CUDA devices and the caller's current device are preserved
+when scheduler workers run concurrently.
+
+CUDA Graph workspaces belong to the native compiler; admission does not cap its
+allocator or retained graph pools. This path has compiler/value-isolation tests;
+the physical CUDA checks require a real device and exercise eager, default and
+reduce-overhead modes. CPU checks do not establish GPU throughput or a universal
+speedup. See the official [Torch compiler modes](https://docs.pytorch.org/docs/stable/generated/torch.compile.html)
+and [CUDA Graph constraints](https://docs.pytorch.org/docs/stable/notes/cuda.html#cuda-graphs).
+
 ## Shared dispatch
 
 Local numerical engines share `ComputeKernel` for native arrays, matrix

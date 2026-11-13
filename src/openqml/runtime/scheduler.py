@@ -701,7 +701,14 @@ class _ObservedBackend:
             if isinstance(self.backend, CUDABackend):
                 import torch
 
-                gpu = self.backend.device or torch.cuda.current_device()
+                selected = (
+                    None if self.backend.device is None else torch.device(self.backend.device)
+                )
+                gpu = (
+                    torch.cuda.current_device()
+                    if selected is None or selected.index is None
+                    else selected.index
+                )
 
             def submit(index, chunk):
                 profile.check_fresh()
