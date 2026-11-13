@@ -155,6 +155,26 @@ class QuantumMetricPlan:
             result[:, j] = self._product(columns, direction)
         return (result + result.T) * 0.5
 
+    def native_matvec(self, bindings, vector, *, backend="torch", sample_weights=None):
+        """Apply the exact metric on native Torch/JAX tensors and their device."""
+        from .native_geometry import native_matvec
+
+        return native_matvec(self, bindings, vector, backend=backend, sample_weights=sample_weights)
+
+    def native_natural_gradient(self, bindings, gradient, *, backend="torch", **options):
+        """Certified native CG with gradients retained through metric products."""
+        from .native_geometry import native_natural_gradient
+
+        return native_natural_gradient(self, bindings, gradient, backend=backend, **options)
+
+    def spectral_step(self, bindings, gradient, *, block_shapes, backend="torch", **options):
+        """Geometry-first active-polar mixing with an explicit displacement bound."""
+        from .native_geometry import spectral_step
+
+        return spectral_step(
+            self, bindings, gradient, block_shapes=block_shapes, backend=backend, **options
+        )
+
     @compute_operation
     def natural_gradient(
         self, bindings, gradient, *, damping=1e-3, tolerance=1e-10, max_iterations=64

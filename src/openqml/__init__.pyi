@@ -32,6 +32,8 @@ from .autodiff.gradients import parameter_shift as parameter_shift
 from .autodiff.gradients import parameter_shift_jacobian as parameter_shift_jacobian
 from .autodiff.gradients import parameter_shift_jvp as parameter_shift_jvp
 from .autodiff.gradients import parameter_shift_vjp as parameter_shift_vjp
+from .autodiff.native_geometry import NativeMetricResult as NativeMetricResult
+from .autodiff.native_geometry import SpectralStepResult as SpectralStepResult
 from .autodiff.optimization import CertifiedOptimization as CertifiedOptimization
 from .autodiff.optimization import OptimizationResult as OptimizationResult
 from .autodiff.optimization import optimize as optimize

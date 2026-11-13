@@ -88,6 +88,17 @@ do not provide Inductor kernel fusion or CUDA Graph replay.
 `environment_report()["cxx_compiler"]` reports executable discovery only;
 it does not certify a working compiler, SDK, linker or accelerator.
 
+On macOS, generated CPU kernels also need OpenMP headers and libraries.
+Install `libomp` and set `OMP_PREFIX` to its installation prefix, for example
+the path printed by `brew --prefix libomp`. An observed missing `omp.h` raises
+an actionable `ResourceError`; other C++ compilation failures retain their
+native exceptions. Portable macOS CI installs and configures this prerequisite.
+
+On legacy Dynamo, resolve lazy module/function references before constructing
+a compiled callback, for example `norm = oq.finance.transport_dual_norm`.
+Use that reference in the callback so first-use namespace discovery stays
+outside the graph capture.
+
 Compilation has an initial cost, and small circuits can remain faster eagerly.
 TorchInductor can delegate unsupported complex operators to native kernels.
 Fusion benefit depends on locality, gate mix and reuse. These mechanisms do not

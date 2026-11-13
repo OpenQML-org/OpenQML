@@ -8,13 +8,25 @@
 
 Build and train hybrid neural networks with PyTorch, JAX or Flax. Use `Model.fit` and `predict` for supervised tasks, or compose convolution, attention, graph, recurrent and generative architectures with native layers. Validation loss, early stopping and portable checkpoints keep model selection and continued training in the same workflow. [Explore hybrid AI](https://github.com/OpenQML-org/OpenQML/blob/main/docs/models.md).
 
+Native quantum metric products and certified natural-gradient solves retain
+PyTorch/JAX tensors and device placement. An optional geometry-first spectral
+step balances circuit parameter blocks after preconditioning.
+
 ## Quantum–classical hybrid quantitative research
 
 Train scenario distributions, allocate constrained portfolios and project decisions onto explicit CVaR budgets with a funded cash position. Low-rank factor solves and native PyTorch/JAX derivatives connect financial objectives to hybrid models. Purged walk-forward refits and self-financing accounting preserve chronological evaluation, execution delays, fees and market impact. [Explore quantitative research](https://github.com/OpenQML-org/OpenQML/blob/main/docs/finance.md).
 
+Learn contextual Wasserstein radii and anisotropic transport metrics alongside
+quantum scenario probabilities. Factor-space implicit derivatives connect the
+robust risk bound and funded cash allocation to the predictive model.
+
 ## Cross-framework quantum programming
 
 Connect Qiskit, Cirq, PennyLane and OpenQASM through a shared circuit representation. Compile grouped switch cases, finite loops and atomic classical guards; reuse shared definitions and symbolic expressions. Prepare conversions once, stream parameter sweeps and verify their semantics against round-trip or native execution. [Explore interoperability](https://github.com/OpenQML-org/OpenQML/blob/main/docs/interoperability.md).
+
+Typed Qiskit logical, bitwise and unsigned comparison predicates lower to bounded
+shared decision graphs. Their branch selection completes before either payload
+executes, including payloads that overwrite a measured predicate input.
 
 Simulate physical noise with amplitude/phase damping, depolarization and custom Kraus channels. Correct independent readout errors or extrapolate measured noise scales with explicit conditioning and sampling-overhead limits. Caller-initialized Qiskit V2 primitives connect real hardware; see [execution limits and mitigation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md#physical-noise-and-error-mitigation).
 

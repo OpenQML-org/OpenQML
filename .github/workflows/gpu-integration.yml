@@ -41,6 +41,8 @@ jobs:
           OPENQML_REQUIRE_CUDA: '1'
           OPENQML_HARDWARE_REPORT_DIR: ${{ runner.temp }}/openqml-hardware
         run: python -m pytest -q tests/test_distributed_compute.py -k physical_multi_gpu
+      - name: Verify resident native quantum geometry
+        run: python -m pytest -q tests/test_native_geometry.py -k physical_cuda
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

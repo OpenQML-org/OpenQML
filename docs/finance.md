@@ -229,6 +229,53 @@ rejects unresolved financing rather than returning weights outside the budget.
 
 ## Differentiable decision risk budgets
 
+`WassersteinMetric(diagonal, factors=None)` defines the anisotropic ground norm
+`||delta||_M`, where `M = diag(diagonal) + factors.T @ factors`. The diagonal
+must be strictly positive; factors have shape `[...,rank,assets]`. Both may be
+native trainable model outputs. `transport_dual_norm(w, metric)` computes
+`sqrt(w.T @ M^-1 @ w)` through a certified, implicitly differentiated factor
+solve. No asset covariance matrix or inverse is constructed.
+
+Pass `transport_metric=metric` to `wasserstein_cvar` or
+`risk_budget_projection`. The robust margin becomes
+`radius * transport_dual_norm(w, metric) / (1-confidence)`. Native radii can
+vary by context and retain their gradients. The funded cash-ray projection
+remains maximal because the anisotropic norm is positively homogeneous.
+Metrics, radii, scenarios, probabilities and weights support broadcast batch
+axes; financial tensors must use one framework and device.
+
+```python
+import torch
+import openqml as oq
+
+metric = oq.finance.WassersteinMetric(
+    diagonal=torch.tensor([0.7, 1.2], requires_grad=True),
+    factors=torch.tensor([[0.2, -0.3]], requires_grad=True),
+)
+decision = oq.finance.risk_budget_projection(
+    [0.4, 0.5],
+    [[-0.12, -0.03], [0.04, -0.08], [0.1, 0.02]],
+    confidence=0.5,
+    budget=0.015,
+    radius=torch.tensor(0.01, requires_grad=True),
+    transport_metric=metric,
+)
+```
+
+This connects quantum Born scenario probabilities to contextual robust
+decisions without detaching the metric or radius. A positive parameterization
+such as `softplus(raw_diagonal)+floor` enforces the metric domain. Radius and
+metric scale are confounded: constrain their scale or calibrate them jointly
+within the training fold. The W1 dual margin is an unbounded-support bound;
+restricted return supports can make it conservative. Learned radii do not
+provide distribution-shift coverage without separate statistical calibration.
+
+[Learning Predictive Ambiguity Sets (July 2026)](https://arxiv.org/abs/2607.09820)
+motivates contextual radii and anisotropic metrics. Its anisotropic metric was
+not empirically evaluated in that paper, and its portfolio results do not
+establish returns for this library. This implementation extends the existing
+specialized W1/CVaR cash-ray layer; it does not reproduce the full LPAS pipeline.
+
 `risk_budget_projection` takes a long-only proposal whose asset weights sum to
 at most one, a joint scenario table, optional Born probabilities, a CVaR budget
 and a nonnegative Wasserstein radius. It returns `RiskBudgetResult` with
@@ -245,7 +292,8 @@ print(decision.weights, decision.cash, decision.robust_cvar)
 ```
 
 For proposal `w`, scenario returns `R` and deterministic cash return `r_c`,
-define `D = CVaR(r_c*sum(w) - R@w) + radius*||w||2/(1-confidence)`.
+define `D = CVaR(r_c*sum(w) - R@w) + radius*dual_norm(w)/(1-confidence)`.
+The dual norm is Euclidean unless `transport_metric` is supplied.
 The implementation selects `scale=1` when `D <= budget+r_c`, otherwise
 `scale=(budget+r_c)/D`. Positive homogeneity and cash translation make this the
 largest feasible scale on the proposal's ray toward cash. The budget must admit
@@ -466,7 +514,7 @@ reduction or quasi-Monte-Carlo execution.
   Robust Optimization](https://arxiv.org/abs/2607.09820) (July 2026):
   motivates contextual scenario masses and learned ambiguity radii. OpenQML's
   cash-ray layer uses an isotropic W1/L2 margin with a closed-form funded risk
-  projection; trainable anisotropic metrics require a separate risk model.
+  projection; trainable anisotropic metrics use the factor transport model above.
 
 - [Constant-Depth Quantum Barrier Option Pricing via a Static Bivariate Oracle Framework](https://arxiv.org/abs/2610.27929) (October 2026): static path compression under GBM. OpenQML uses terminal-price conditioning, exact discrete payoff rotations and explicit state-loading costs for continuous monitoring.
 

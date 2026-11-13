@@ -107,7 +107,12 @@ class Ops(RealOps):
     def real(self, value, *, finite=True):
         if isinstance(value, (bool, complex, str, bytes)):
             raise ValidationError("Financial arrays must contain real numeric values.")
-        dtype = getattr(value, "dtype", None)
+        # Older Dynamo cannot reflect with getattr/hasattr on Tensor.dtype.
+        dtype = (
+            value.dtype
+            if self.name == "torch" and isinstance(value, self.xp.Tensor)
+            else getattr(value, "dtype", None)
+        )
         if dtype is None and not isinstance(value, (int, float)):
             try:
                 dtype = np.asarray(value).dtype

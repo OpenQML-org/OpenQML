@@ -96,6 +96,25 @@ def test_unrelated_compiler_failures_are_not_reclassified_as_environment_errors(
         run(torch.tensor(0.2))
 
 
+def test_missing_openmp_headers_are_actionable_but_other_cpp_errors_remain_visible():
+    torch = pytest.importorskip("torch")
+    from torch._inductor.exc import CppCompileError
+
+    def no_openmp(graph, inputs):
+        raise CppCompileError(["clang++"], "fatal error: 'omp.h' file not found")
+
+    run = oq.compile_compute(lambda x: x.sin(), backend="torch", compiler=no_openmp, fullgraph=True)
+    with pytest.raises(oq.ResourceError, match="OMP_PREFIX"):
+        run(torch.tensor(0.2))
+
+    def bad_code(graph, inputs):
+        raise CppCompileError(["clang++"], "error: unknown generated symbol")
+
+    run = oq.compile_compute(lambda x: x.cos(), backend="torch", compiler=bad_code, fullgraph=True)
+    with pytest.raises(torch._dynamo.exc.BackendCompilerFailed, match="unknown generated symbol"):
+        run(torch.tensor(0.2))
+
+
 def test_fullgraph_readout_accepts_fresh_values_without_retracing():
     torch = pytest.importorskip("torch")
     plan = oq.PauliPlan(oq.Circuit(1).ry(oq.Parameter("x"), 0), [oq.PauliString("Z")])

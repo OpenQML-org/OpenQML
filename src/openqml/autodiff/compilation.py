@@ -34,7 +34,7 @@ def _leaves(value):
 
 def _check_compiler_error(error):
     """Translate only an observed missing compiler, preserving unrelated failures."""
-    from torch._inductor.exc import InvalidCxxCompiler
+    from torch._inductor.exc import CppCompileError, InvalidCxxCompiler
 
     pending, seen = [error], set()
     while pending:
@@ -51,6 +51,16 @@ def _check_compiler_error(error):
                 "generation, explicitly select compiler='aot_eager' or compiler='eager'; "
                 "these backends do not provide Inductor kernel fusion or CUDA Graph replay. "
                 "For CUDABackend, leave compile_mode=None to use eager GPU execution."
+            ) from error
+        if isinstance(current, CppCompileError) and (
+            "fatal error: 'omp.h' file not found" in str(current)
+            or "fatal error: omp.h: No such file or directory" in str(current)
+        ):
+            raise ResourceError(
+                "TorchInductor cannot find the OpenMP header omp.h. On macOS, install "
+                "libomp and set OMP_PREFIX to its installation prefix (brew --prefix libomp). "
+                "Use a C++ toolchain with OpenMP support, or explicitly select "
+                "compiler='aot_eager' for execution without generated C++ kernels."
             ) from error
         pending.extend(
             (current.__cause__, current.__context__, getattr(current, "inner_exception", None))

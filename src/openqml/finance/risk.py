@@ -147,24 +147,66 @@ def expected_shortfall(losses, *, confidence=0.95, probabilities=None):
     return ops.sum(admitted * ordered) / (1 - confidence)
 
 
-def wasserstein_cvar(weights, scenarios, *, confidence=0.95, probabilities=None, radius=0):
-    """W1/L2 robust-CVaR upper bound; no finite-support restriction is imposed.
+def wasserstein_cvar(
+    weights,
+    scenarios,
+    *,
+    confidence=0.95,
+    probabilities=None,
+    radius=0,
+    transport_metric=None,
+    max_memory_mb=256,
+    cg_iterations=128,
+    tolerance=1e-6,
+):
+    """W1 robust-CVaR upper bound with a Euclidean or anisotropic ground norm.
 
-    The norm margin is radius*||w||_2/(1-confidence). Its sharpness assumes an
+    The margin is radius*dual_norm(w)/(1-confidence), Euclidean by default.
+    The norm's sharpness assumes an
     unbounded return space; it is conservative for constrained supports.
     Radius calibration and distribution-shift coverage are caller responsibilities.
     """
-    confidence, radius = real(confidence), real(radius)
-    if not 0 <= confidence < 1 or radius < 0:
-        raise ValidationError("Invalid CVaR confidence or Wasserstein radius.")
-    ops = Ops(weights, scenarios, probabilities)
+    from .transport import _metric_values, transport_dual_norm
+
+    confidence = real(confidence)
+    if not 0 <= confidence < 1:
+        raise ValidationError("Invalid CVaR confidence.")
+    ops = Ops(weights, scenarios, probabilities, radius, *_metric_values(transport_metric))
     w, scenarios = ops.real(weights), ops.real(scenarios)
-    if scenarios.ndim < 2 or scenarios.shape[-1] != w.shape[-1]:
+    if w.ndim < 1 or scenarios.ndim < 2 or scenarios.shape[-1] != w.shape[-1]:
         raise ValidationError("Scenario and portfolio asset dimensions must match.")
+    radius = ops.real(radius)
+    radius = ops.check(radius, radius >= 0, "Wasserstein radii must be nonnegative.")
+    dual = transport_dual_norm(
+        w,
+        transport_metric,
+        max_memory_mb=max_memory_mb,
+        cg_iterations=cg_iterations,
+        tolerance=tolerance,
+    )
+    p = None if probabilities is None else ops.real(probabilities)
+    if p is not None and p.shape[-1:] != (scenarios.shape[-2],):
+        raise ValidationError("Probability width differs from the scenario count.")
+    prefix = ops.broadcast_shape(
+        w.shape[:-1],
+        scenarios.shape[:-2],
+        radius.shape,
+        dual.shape,
+        () if p is None else p.shape[:-1],
+    )
+    admission(
+        rows(prefix)
+        * (
+            4 * scenarios.shape[-2] * scenarios.shape[-1]
+            + 12 * scenarios.shape[-2]
+            + 8 * w.shape[-1]
+        ),
+        max_memory_mb,
+    )
     losses = -ops.einsum("...sn,...n->...s", scenarios, w)
-    return expected_shortfall(
-        losses, confidence=confidence, probabilities=probabilities
-    ) + radius * ops.norm(w) / (1 - confidence)
+    return expected_shortfall(losses, confidence=confidence, probabilities=p) + radius * dual / (
+        1 - confidence
+    )
 
 
 def quantile_loss(predictions, targets, quantiles, *, mask=None):
