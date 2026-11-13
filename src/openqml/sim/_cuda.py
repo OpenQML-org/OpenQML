@@ -81,6 +81,19 @@ class CUDABackend:
         self._cache.clear()
         self._compiled.clear()
 
+    def execution_info(self):
+        """Describe OpenQML algorithms and their external tensor/codegen runtime."""
+        return {
+            "engine": "openqml-tensor",
+            "algorithm_owner": "OpenQML",
+            "kernel_provider": "pytorch",
+            "device": self.device or "cuda",
+            "precision": self.precision,
+            "compiler": "torchinductor" if self.compile_mode is not None else None,
+            "compile_mode": self.compile_mode,
+            "execution_verified": False,
+        }
+
     def _compiled_readout(self, plan, rows, like):
         from ..compute.kernel import get_compute_kernel
         from .dense import _TensorOps

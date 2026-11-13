@@ -70,6 +70,24 @@ register program before tracing. Compiled Torch transforms require PyTorch
 2.4 or later; ordinary autograd through compiled circuit values works on the
 base Torch version. OpenQML does not change process-global compiler settings.
 
+Torch 2.2's Dynamo requires Python 3.10 or 3.11; use a newer Torch release for
+compilation on Python 3.12. Expression dtype and broadcast checks use static
+type/shape guards so full-graph tracing retains real-domain validation on the
+supported legacy versions, including native readouts and checkpointed circuits.
+
+TorchInductor also requires a working C++ toolchain for generated CPU code.
+On Windows, install Visual Studio Build Tools with **Desktop development with
+C++**, then start Python in an **x64 Native Tools Command Prompt** where `cl`
+is available. See [PyTorch's Windows setup](https://docs.pytorch.org/tutorials/unstable/inductor_windows.html).
+An observed missing compiler raises `ResourceError` with setup instructions;
+unrelated compiler failures retain their original exceptions. OpenQML does not
+silently switch compilation backends. Explicitly pass `compiler="aot_eager"`
+to `compile_compute` or `compile_circuit` for graph execution/autodiff without
+C++ code generation, or `compiler="eager"` to debug Dynamo capture. These modes
+do not provide Inductor kernel fusion or CUDA Graph replay.
+`environment_report()["cxx_compiler"]` reports executable discovery only;
+it does not certify a working compiler, SDK, linker or accelerator.
+
 Compilation has an initial cost, and small circuits can remain faster eagerly.
 TorchInductor can delegate unsupported complex operators to native kernels.
 Fusion benefit depends on locality, gate mix and reuse. These mechanisms do not

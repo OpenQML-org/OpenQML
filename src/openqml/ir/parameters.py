@@ -74,7 +74,9 @@ def _checked(value):
     backend = _array_backend(value)
     if backend == "torch":
         xp = _namespace(value)
-        if value.dtype != xp.bool and not value.is_complex():
+        # Dynamo 2.2 cannot trace Tensor.is_complex() returning a Python bool.
+        # Direct dtype comparisons are static guards, including under torch.func.
+        if value.dtype not in (xp.bool, xp.complex32, xp.complex64, xp.complex128):
             return value
     elif backend == "jax":
         xp = _namespace(value)
@@ -84,10 +86,14 @@ def _checked(value):
 
 
 def _broadcast_operands(left, right):
-    if hasattr(left, "shape") and hasattr(right, "shape"):
-        from ..compute.kernel import _broadcast_shape
+    # Operands have already passed _checked. Scalars broadcast to every shape;
+    # every other admitted value is an array. Avoid hasattr on native tensors,
+    # which breaks fullgraph capture in older Dynamo versions.
+    if isinstance(left, (Real, np.generic)) or isinstance(right, (Real, np.generic)):
+        return
+    from ..compute.kernel import _broadcast_shape
 
-        _broadcast_shape((tuple(left.shape), tuple(right.shape)))
+    _broadcast_shape((tuple(left.shape), tuple(right.shape)))
 
 
 _ARITY = {

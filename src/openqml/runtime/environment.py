@@ -3,6 +3,7 @@
 import importlib.metadata as metadata
 import os
 import platform
+import shutil
 import stat
 import subprocess
 import sys
@@ -29,6 +30,18 @@ _INTEGRATIONS = {
     "sympy": "sympy",
     "cotengra": "cotengra",
 }
+
+
+def _compiler_report():
+    command = os.environ.get("CXX") or ("cl" if platform.system() == "Windows" else "c++")
+    path = shutil.which(command)
+    return {
+        "command": command,
+        "path": path,
+        "status": "located" if path else "not_found",
+        "execution_checked": False,
+        "graph_backends_without_cxx": ["aot_eager", "eager"],
+    }
 
 
 def _probe_import(module, timeout):
@@ -232,6 +245,7 @@ def environment_report(*, check_imports=False, include_sizes=False, import_timeo
         "isolated_import_checks": check_imports,
         "runtime_probe_coverage": probe_coverage,
         "accelerator_execution_checked": False,
+        "cxx_compiler": _compiler_report(),
         "dependency_count": len(dependencies),
         "dependencies": dict(sorted(dependencies.items())),
         "integrations": integrations,

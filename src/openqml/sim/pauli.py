@@ -15,7 +15,7 @@ from itertools import product
 import numpy as np
 
 from ..compute._program import lower_program
-from ..compute.kernel import get_compute_kernel, memory_budget
+from ..compute.kernel import _broadcast_shape, get_compute_kernel, memory_budget
 from ..errors import Diagnostic, ResourceError, ValidationError, conversion_error
 from ..ir.compiler import _check_circuit_limits, circuit_stats, decompose
 from ..ir.core import Circuit, integer
@@ -488,6 +488,10 @@ def _prepare_bindings(
         if prototype is not None:
             ops = _TensorOps(backend, prototype)
     for value in bindings.values():
+        if backend == "torch" and isinstance(value, ops.xp.Tensor):
+            if value.dtype in (ops.xp.bool, ops.xp.complex32, ops.xp.complex64, ops.xp.complex128):
+                raise ValidationError("Pauli bindings must be real numeric values.")
+            continue
         dtype = getattr(value, "dtype", None)
         kind = getattr(dtype, "kind", None)
         if (
@@ -502,11 +506,11 @@ def _prepare_bindings(
         for n, v in bindings.items()
     }
     try:
-        shape = np.broadcast_shapes(*(tuple(v.shape) for v in local.values()))
+        shape = _broadcast_shape(tuple(tuple(v.shape) for v in local.values()))
         if batch_shape is not None:
             target = tuple(integer(n, "batch dimension") for n in batch_shape)
-            shape = np.broadcast_shapes(shape, target)
-    except (TypeError, ValueError) as exc:
+            shape = _broadcast_shape((shape, target))
+    except (TypeError, ValueError, ValidationError) as exc:
         raise ValidationError("Pauli parameter batch shapes cannot be broadcast together.") from exc
     return ops, local, shape
 

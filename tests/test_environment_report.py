@@ -11,6 +11,21 @@ import openqml.environment as environment
 from openqml.cli import main
 
 
+def test_compiler_report_distinguishes_executable_discovery_from_execution(monkeypatch):
+    monkeypatch.delenv("CXX", raising=False)
+    monkeypatch.setattr(environment.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(environment.shutil, "which", lambda command: None)
+    report = environment._compiler_report()
+    assert report["command"] == "cl" and report["status"] == "not_found"
+    assert report["execution_checked"] is False
+    assert report["graph_backends_without_cxx"] == ["aot_eager", "eager"]
+    monkeypatch.setenv("CXX", "clang-cl")
+    monkeypatch.setattr(environment.shutil, "which", lambda command: "/tools/" + command)
+    report = environment._compiler_report()
+    assert report["path"] == "/tools/clang-cl" and report["status"] == "located"
+    assert report["execution_checked"] is False
+
+
 def test_extra_markers_cycles_and_conflicts_are_resolved_without_dev_dependencies(monkeypatch):
     packages = {
         "openqml": SimpleNamespace(

@@ -8,6 +8,25 @@ import pytest
 import openqml as oq
 
 
+def test_engine_provenance_is_configuration_without_runtime_or_hardware_probes(monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail("Execution provenance must not probe an engine or device.")
+
+    monkeypatch.setattr(oq.AerBackend, "is_available", forbidden)
+    monkeypatch.setattr(oq.CUDABackend, "is_available", forbidden)
+    aer = oq.AerBackend(device="GPU", cu_statevec=True).execution_info()
+    assert aer["engine"] == aer["kernel_provider"] == "qiskit-aer"
+    assert aer["requested_accelerator"] == "cuStateVec"
+    assert not aer["execution_verified"]
+    tensor_network = oq.AerBackend(device="GPU", method="tensor_network").execution_info()
+    assert tensor_network["requested_accelerator"] == "cuTensorNet"
+    assert oq.AerBackend().execution_info()["requested_accelerator"] is None
+    native = oq.CUDABackend(compile_mode="default").execution_info()
+    assert native["algorithm_owner"] == "OpenQML" and native["kernel_provider"] == "pytorch"
+    assert native["compiler"] == "torchinductor" and not native["execution_verified"]
+    assert oq.CUDABackend().execution_info()["compiler"] is None
+
+
 @pytest.mark.parametrize(
     "options",
     [
