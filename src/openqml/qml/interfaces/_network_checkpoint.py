@@ -1,9 +1,6 @@
 """Atomic, pickle-free JAX architecture/optimizer checkpoints."""
 
 import json
-import os
-import tempfile
-from pathlib import Path
 
 import jax
 import numpy as np
@@ -11,7 +8,7 @@ import numpy as np
 from ...errors import ValidationError
 from ...ir._serialization import load_json
 from ...ir.core import integer
-from .._archive import check_npz_payload
+from .._archive import atomic_write, check_npz_payload
 from ..training import DepthSchedule
 
 
@@ -41,21 +38,15 @@ def save_network(trainer, path):
         "layout": layout,
         "tree": str(definition),
     }
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, temporary = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".")
-    try:
-        with os.fdopen(handle, "wb") as stream:
-            np.savez_compressed(
-                stream,
-                metadata=np.asarray(json.dumps(metadata)),
-                **{f"leaf_{i}": np.asarray(value) for i, value in enumerate(leaves)},
-            )
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-    return path
+
+    def write(stream):
+        np.savez_compressed(
+            stream,
+            metadata=np.asarray(json.dumps(metadata)),
+            **{f"leaf_{i}": np.asarray(value) for i, value in enumerate(leaves)},
+        )
+
+    return atomic_write(path, write)
 
 
 def load_network(trainer, path, *, max_bytes=256 * 2**20):

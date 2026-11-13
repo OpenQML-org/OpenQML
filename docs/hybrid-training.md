@@ -150,6 +150,69 @@ topology, chunk equivalence, Torch compile/func transforms and JAX JIT/vmap/Opta
 CUDA tests execute when hardware is available. Measure throughput on the target
 device with the intended architecture, precision, batch size and execution path.
 
+## Joint AdamW and Quantum Natural Muon
+
+`hybrid_qnm` owns a complete Torch module. Classical parameters use AdamW;
+active weights of native, unitary `QuantumLayer` modules use the stateful
+distance-aware quantum Fisher method. For example, after constructing a model
+with a quantum submodule named `quantum` containing four active weights:
+
+```python
+import openqml as oq
+from openqml.qml.interfaces.torch import HybridTrainer
+
+optimizer = oq.hybrid_qnm(
+    model,
+    lr=1e-3,
+    quantum_lr=0.02,
+    block_shapes={"quantum": ((2, 2),)},
+    quantum_options={"damping": 0.05, "momentum": 0.9},
+)
+trainer = HybridTrainer(model, optimizer, microbatch_size=16)
+
+
+def objective(network, batch):
+    features, targets = batch
+    return (network(features) - targets).square().mean()
+
+
+trainer.step((features, targets), objective)
+trainer.save("training.pt")
+optimizer.close()
+```
+
+Only layer calls participating in backward contribute geometry. Unused forward
+passes and inference do not enter the empirical metric. Feature snapshots span
+all participating calls and microbatches until `step` or `zero_grad`; their
+memory is admitted against layer and shared compute budgets. Do not mutate
+inputs between forward and backward. This metric uses uniform mass per captured
+feature row, independently of loss weighting; repeated uses contribute repeated
+rows. Classical layers influence the loss gradient but their full cross-block
+Fisher information is not computed.
+
+For `DistributedDataParallel`, construct the optimizer with the wrapped model.
+Block-shape keys follow its module names, such as `module.quantum`. Metric-vector
+products are reduced with each rank's actual feature-row count. The same global
+Fisher system is solved on each rank, without gathering a dense metric.
+`HybridTrainer` also weights the objective by global sample count, including
+unequal rank sizes. Ranks must execute the same optimizer groups and collectives.
+This path uses simulator state derivatives, not finite-shot hardware geometry.
+
+Quantum master weights must use float32 or float64. `HybridTrainer` can use AMP
+for the surrounding model, and its existing finite-gradient checks apply before
+either optimizer updates. Quantum groups receive no AdamW weight decay; each
+group's `lr` supports ordinary schedulers and zero-rate freezing. Spectral shapes
+must cover active circuit coordinates in `weight_parameters` order. With no
+shape mapping, each quantum vector uses a single-row block, retaining natural
+momentum without nontrivial polar redistribution.
+
+`trainer.state_dict()` and its save/load helpers retain classical moments,
+quantum momentum, initial coordinates, trajectory distance, counters, scheduler
+and random state. Restore into the same circuit and optimizer configuration;
+identity is checked before trainer model mutation. Call `optimizer.close()`
+when replacing it to remove its hooks. Capturable, differentiable, fused and
+maximizing optimizer steps are outside this integration.
+
 ## Validation and early stopping
 
 The high-level `Model` interface provides a held-out loss monitor for Torch,

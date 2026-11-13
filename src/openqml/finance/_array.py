@@ -4,7 +4,13 @@ import math
 
 import numpy as np
 
-from ..compute.kernel import RealOps, _array_backend, floating_array, get_compute_kernel
+from ..compute.kernel import (
+    RealOps,
+    _array_backend,
+    _torch_compiling,
+    floating_array,
+    get_compute_kernel,
+)
 from ..errors import ValidationError
 
 
@@ -107,21 +113,35 @@ class Ops(RealOps):
     def real(self, value, *, finite=True):
         if isinstance(value, (bool, complex, str, bytes)):
             raise ValidationError("Financial arrays must contain real numeric values.")
-        # Older Dynamo cannot reflect with getattr/hasattr on Tensor.dtype.
-        dtype = (
-            value.dtype
-            if self.name == "torch" and isinstance(value, self.xp.Tensor)
-            else getattr(value, "dtype", None)
-        )
-        if dtype is None and not isinstance(value, (int, float)):
-            try:
-                dtype = np.asarray(value).dtype
-            except (TypeError, ValueError, OverflowError) as exc:
-                raise ValidationError("Financial arrays must contain real numeric values.") from exc
-        if getattr(dtype, "kind", None) in {"b", "c", "O", "U", "S", "V"} or str(dtype).startswith(
-            ("torch.bool", "torch.complex")
+        if (
+            self.name == "torch"
+            and _torch_compiling()
+            and isinstance(value, (np.ndarray, list, tuple))
         ):
-            raise ValidationError("Financial arrays must contain real numeric values.")
+            # Preserve the original dtype before casting, while avoiding
+            # unsupported Dynamo reflection on a captured NumPy constant.
+            value = self.xp.as_tensor(value)
+        if self.name == "torch" and isinstance(value, self.xp.Tensor):
+            # Static dtype guards also work in Dynamo 2.2, which cannot
+            # reflect with getattr/hasattr on native dtype objects.
+            if value.dtype in (
+                self.xp.bool,
+                self.xp.complex32,
+                self.xp.complex64,
+                self.xp.complex128,
+            ):
+                raise ValidationError("Financial arrays must contain real numeric values.")
+        else:
+            dtype = getattr(value, "dtype", None)
+            if dtype is None and not isinstance(value, (int, float)):
+                try:
+                    dtype = np.asarray(value).dtype
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise ValidationError(
+                        "Financial arrays must contain real numeric values."
+                    ) from exc
+            if getattr(dtype, "kind", None) in {"b", "c", "O", "U", "S", "V"}:
+                raise ValidationError("Financial arrays must contain real numeric values.")
         result = self.array(value)
         return (
             self.check(result, self.xp.isfinite(result), "Financial arrays must be finite.")

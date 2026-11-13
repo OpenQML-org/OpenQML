@@ -6,10 +6,13 @@ from .api import price as price
 from .barrier import BarrierOption as BarrierOption
 from .budget import ExpectileBudgetResult as ExpectileBudgetResult
 from .budget import expectile_budget_projection as expectile_budget_projection
+from .execution_risk import ExecutionRiskResult as ExecutionRiskResult
+from .execution_risk import execution_risk_projection as execution_risk_projection
 from .expectiles import expectile as expectile
 from .expectiles import wasserstein_expectile as wasserstein_expectile
 from .models import MarketForecast as MarketForecast
 from .models import MarketForecastPlan as MarketForecastPlan
+from .models import ScenarioDecisionResult as ScenarioDecisionResult
 from .models import ScenarioPlan as ScenarioPlan
 from .pricing import PayoffEstimate as PayoffEstimate
 from .pricing import PayoffOraclePlan as PayoffOraclePlan

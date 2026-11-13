@@ -1,6 +1,8 @@
 """Lazy financial API locations."""
 
 EXPORTS = {
+    "ExecutionRiskResult": (".execution_risk", "ExecutionRiskResult"),
+    "execution_risk_projection": (".execution_risk", "execution_risk_projection"),
     "expectile": (".expectiles", "expectile"),
     "wasserstein_expectile": (".expectiles", "wasserstein_expectile"),
     "ExpectileBudgetResult": (".budget", "ExpectileBudgetResult"),
@@ -13,6 +15,7 @@ EXPORTS = {
     "MarketForecast": (".models", "MarketForecast"),
     "MarketForecastPlan": (".models", "MarketForecastPlan"),
     "ScenarioPlan": (".models", "ScenarioPlan"),
+    "ScenarioDecisionResult": (".models", "ScenarioDecisionResult"),
     "PayoffEstimate": ("._results", "PayoffEstimate"),
     "PayoffOraclePlan": (".pricing", "PayoffOraclePlan"),
     "cost_aware_projection": (".projection", "cost_aware_projection"),
@@ -44,6 +47,8 @@ EXPORTS = {
 }
 
 PUBLIC = [
+    "ExecutionRiskResult",
+    "execution_risk_projection",
     "expectile",
     "wasserstein_expectile",
     "ExpectileBudgetResult",
@@ -58,6 +63,7 @@ PUBLIC = [
     "MarketForecast",
     "MarketForecastPlan",
     "ScenarioPlan",
+    "ScenarioDecisionResult",
     "PayoffEstimate",
     "PayoffOraclePlan",
     "cost_aware_projection",

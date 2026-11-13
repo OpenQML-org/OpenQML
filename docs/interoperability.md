@@ -84,7 +84,20 @@ selectors whose full bit-vector range is provably inside the operand width.
 Barrel-select networks lower dynamic selectors without enumerating valuations.
 Out-of-range or unproven selectors retain range diagnostics.
 
-Standalone mutable variables, signed/float arithmetic, division, stores, timing
+Unsigned division lowers to bounded restoring bit-vector division. The compiler
+must symbolically prove the divisor nonzero for **every** classical input;
+otherwise it raises `CLASSICAL_DIVISOR_DOMAIN`. Nonconstant divisors such as a
+widened two-bit register plus one are admitted when the proof succeeds.
+Division by a constant power of two simplifies to a logical shift. General
+division charges quadratic bit work before expansion. No undefined zero-divisor
+behavior is chosen and no logical short-circuit evaluation is assumed.
+
+Selector bounds are proved on the full symbolic bit vector, retaining
+correlations between bits. A selector whose only possible values are 1 and 2
+can therefore index a three-bit word even when independent bit bounds would
+allow 3. Predicate decisions still complete before either selected payload.
+
+Standalone mutable variables, signed/float arithmetic, stores, timing
 and other unsupported expression operations retain
 explicit diagnostics or require the existing native program route.
 

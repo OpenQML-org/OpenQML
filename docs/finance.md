@@ -554,6 +554,85 @@ over known probabilities is O(S). Compare complete workloads including table
 loading, transpilation, error correction, queue time and classical variance
 reduction or quasi-Monte-Carlo execution.
 
+## Execution-cost-aware scenario decisions
+
+`execution_risk_projection` finds the largest feasible scale `s` of a funded,
+long-only proposal. Unlike a risk-only cash allocation, its constraints include
+proportional fees and quadratic market impact from current holdings. For
+pre-trade NAV fractions `w` and `previous`, trades are `s*w - previous`, costs
+are `C(s)=sum(fees*abs(trades)+impact*trades**2)`, and cash is
+`1-s*sum(w)-C(s)`. The CVaR or coherent expectile budget applies to the
+**after-cost** loss, including the return on the remaining cash.
+
+```python
+import openqml as oq
+
+plan = oq.finance.ScenarioPlan(
+    [
+        [-0.12, -0.03],
+        [0.04, -0.08],
+        [0.10, 0.02],
+        [-0.05, 0.01],
+    ]
+)
+decision = plan.execution_decision(
+    [0.25, 0.25, 0.25, 0.25],
+    [0.4, 0.5],
+    previous=[0.3, 0.2],
+    fees=0.001,
+    impact=0.01,
+    confidence=0.8,
+    budget=0.015,
+    radius=0.001,
+)
+print(decision.weights, decision.cash, decision.costs, decision.robust_risk)
+```
+
+`positions`, `cash` and `costs` are fractions of pre-trade NAV and sum to one.
+`weights=positions/(1-costs)` are **post-cost** target weights, the units accepted
+by `SelfFinancingPlan`. Using `positions` as its target would charge different
+trades. CVaR uses `confidence` in `[0,1)`; coherent expectile mode uses
+`risk_measure="expectile"` and `confidence` in `[0.5,1)`. An anisotropic
+`transport_metric` uses the same native dual-norm operator as the existing
+Wasserstein risk layers.
+
+Sorted trade sign changes partition `C(s)` into convex quadratics. Closed-form,
+scale-stable quadratic roots locate the binding risk or funding constraint in
+O(A log A + S log S) work, with linear workspace for A assets and S scenarios.
+There is no optimization-iteration tape or dense asset matrix. Torch/JAX retain
+gradients through probabilities, proposals, holdings, costs, radius and transport
+parameters, away from active-set, ordering and norm singularities. Zero initial
+impact retains its one-sided derivative. Returned risk and funding constraints
+are checked against native numerical tolerances.
+
+Both proposal and current holdings must be funded and long-only; fees and
+impact must be nonnegative, with `max(fees)+2*max(impact)<1`. Scenarios and cash
+returns are arithmetic returns of at least -1. Full liquidation must itself meet
+funding and the risk budget. If liquidation is infeasible, the operator raises
+`ValidationError`; it does not assume that fees can be borrowed. The feasible
+scale interval is convex under these conditions.
+
+For decision-focused hybrid training, call
+`plan.execution_loss(probabilities, proposal, observations, ...)`. Its per-example
+loss is `calibration_weight*energy_score - decision_weight*realized_net_return`.
+Predicted probabilities alone determine the scenario risk decision; observations
+enter only the proper calibration score and realized training objective. Native
+gradients connect both a quantum Born distribution and a classical allocation
+head to this loss. A temporal scenario plan with no `step` describes one initial
+trade held over the compounded horizon. Observations and `cash_return` must
+refer to that same horizon; `execution_loss` rejects a partial-step decision.
+
+This certifies the supplied discrete model and cost assumptions. Recompute from
+marked holdings and current cost estimates at fill time if an execution delay
+changes them. Future scenario errors, liquidity and delayed price moves are not
+covered by an earlier decision's certificate. No orders are submitted and no
+investment-performance or quantum-speedup claim follows from these operators.
+
+The integrated predictive/decision objective follows the direction of
+[Financially Guided Deep Portfolio Optimization](https://arxiv.org/abs/2605.28853),
+with OpenQML's own exact cash-ray projection. It does not reproduce that paper's
+full model or reported market results.
+
 ## Method sources
 
 - [Learning Predictive Ambiguity Sets for Decision-Focused Distributionally

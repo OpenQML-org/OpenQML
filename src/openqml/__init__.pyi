@@ -25,6 +25,9 @@ from .autodiff._linearization import ShiftLinearization as ShiftLinearization
 from .autodiff.adjoint import AdjointPlan as AdjointPlan
 from .autodiff.adjoint import adjoint_jvp as adjoint_jvp
 from .autodiff.adjoint import adjoint_vjp as adjoint_vjp
+from .autodiff.distance_aware import DistanceAwareQNM as DistanceAwareQNM
+from .autodiff.distance_aware import DistanceAwareResult as DistanceAwareResult
+from .autodiff.distance_aware import DistanceAwareState as DistanceAwareState
 from .autodiff.geometry import NaturalGradientResult as NaturalGradientResult
 from .autodiff.geometry import QuantumMetricPlan as QuantumMetricPlan
 from .autodiff.geometry import quantum_metric as quantum_metric
@@ -39,6 +42,7 @@ from .autodiff.optimization import CertifiedOptimization as CertifiedOptimizatio
 from .autodiff.optimization import OptimizationResult as OptimizationResult
 from .autodiff.optimization import optimize as optimize
 from .autodiff.optimization import optimize_verified as optimize_verified
+from .autodiff.optimizers import hybrid_qnm as hybrid_qnm
 from .errors import BackendError as BackendError
 from .errors import ConversionError as ConversionError
 from .errors import Diagnostic as Diagnostic
