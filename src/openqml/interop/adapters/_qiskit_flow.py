@@ -1,4 +1,4 @@
-"""Bounded continuation lowering for finite Qiskit loops with early exits."""
+"""Bounded control lowering with immutable continuations and mutable storage."""
 
 from dataclasses import dataclass
 from numbers import Integral
@@ -9,7 +9,7 @@ from ...ir.parameters import Expression
 
 
 def has_jumps(native):
-    from qiskit.circuit import BreakLoopOp, ContinueLoopOp
+    from qiskit.circuit import BreakLoopOp, ContinueLoopOp, Store
 
     pending, seen = [native], set()
     while pending:
@@ -17,8 +17,10 @@ def has_jumps(native):
         if id(body) in seen:
             continue
         seen.add(id(body))
+        if body.num_vars:
+            return True
         for item in body.data:
-            if isinstance(item.operation, (BreakLoopOp, ContinueLoopOp)):
+            if isinstance(item.operation, (BreakLoopOp, ContinueLoopOp, Store)):
                 return True
             pending.extend(getattr(item.operation, "blocks", ()))
     return False
@@ -35,10 +37,22 @@ class _Node:
 
 
 class _Lowering:
-    def __init__(self, native, expand, max_operations, max_depth, max_matrix_qubits, context):
+    def __init__(
+        self,
+        native,
+        expand,
+        max_operations,
+        max_depth,
+        max_matrix_qubits,
+        context,
+        classical_inputs=None,
+    ):
+        from ._qiskit_storage import _Storage
+
         self.native, self.expand = native, expand
         self.limit, self.max_depth, self.matrix_limit = max_operations, max_depth, max_matrix_qubits
-        self.width, self.bits = max(1, native.num_qubits), native.num_clbits
+        self.storage = _Storage(native, max_operations, classical_inputs)
+        self.width, self.bits = max(1, native.num_qubits), self.storage.bits
         self.context = context
         self.work = 0
         self.empty = _Node()
@@ -92,7 +106,9 @@ class _Lowering:
             condition = _condition(value, native, location)
         except ConversionError:
             bdd = _BDD(self.limit, self.max_depth, location)
-            root = _compile(value, native, bdd)
+            root = _compile(
+                value, native, bdd, classical_map=cmap, variable_bits=self.storage.variables
+            )
             self.charge(bdd.work)
             table = {0: low, 1: high}
             pending, reachable = [root], set()
@@ -105,15 +121,65 @@ class _Lowering:
             for index in sorted(reachable):
                 node = bdd.nodes[index]
                 bit, false, true = node
-                table[index] = self.branch(
-                    ClassicalCondition((cmap[bit],), 1), table[true], table[false]
-                )
+                table[index] = self.branch(ClassicalCondition((bit,), 1), table[true], table[false])
             return table[root]
         return self.branch(
             ClassicalCondition(tuple(cmap[bit] for bit in condition.bits), condition.value),
             high,
             low,
         )
+
+    def store(self, operation, native, cmap, location):
+        from ._classical_predicate import _BDD, _compile
+
+        bdd = _BDD(self.limit, self.max_depth, location)
+        roots = _compile(
+            operation.rvalue,
+            native,
+            bdd,
+            classical_map=cmap,
+            variable_bits=self.storage.variables,
+            return_bits=True,
+        )
+        targets = self.storage.targets(operation.lvalue, native, cmap)
+        if len(roots) != len(targets):
+            self.fail("Store widths differ.", location, "CLASSICAL_STORE_WIDTH")
+        self.charge(bdd.work)
+
+        def write(bit, value):
+            body = Circuit(self.width, num_clbits=self.bits).classical_set(bit, value)
+            return self.prefix(body, self.empty)
+
+        def decision(root, bit):
+            table, pending, seen = {0: write(bit, 0), 1: write(bit, 1)}, [root], set()
+            while pending:
+                index = pending.pop()
+                if index < 2 or index in seen:
+                    continue
+                seen.add(index)
+                pending.extend(bdd.nodes[index][1:])
+            for index in sorted(seen):
+                source, low, high = bdd.nodes[index]
+                table[index] = self.branch(
+                    ClassicalCondition((source,), 1), table[high], table[low]
+                )
+            return self.materialize(table[root])
+
+        result = Circuit(self.width, num_clbits=self.bits)
+        if all(root < 2 for root in roots):
+            for bit, root in zip(targets, roots, strict=True):
+                result = result.classical_set(bit, root)
+            return result
+        # Resolve every RHS bit before mutating any destination bit.
+        for i, root in enumerate(roots):
+            result = result.compose(decision(root, self.storage.scratch + i))
+        for i, bit in enumerate(targets):
+            result = result.if_else(
+                ClassicalCondition((self.storage.scratch + i,), 1),
+                self.materialize(write(bit, 1)),
+                self.materialize(write(bit, 0)),
+            )
+        return result
 
     def block(self, native, qmap, cmap, normal, break_to=None, continue_to=None, depth=0):
         from qiskit.circuit import (
@@ -196,15 +262,21 @@ class _Lowering:
                 )
                 current = self.guard(op.condition, native, cmap, true, false, location)
             elif isinstance(op, SwitchCaseOp):
-                target = op.target.var if isinstance(op.target, expr.Var) else op.target
-                if not isinstance(target, (Clbit, ClassicalRegister)):
+                target = op.target
+                if not isinstance(target, (Clbit, ClassicalRegister, expr.Var)):
                     self.fail(
                         "Switch targets must be bits or registers.",
                         location,
                         "CLASSICAL_SWITCH_TARGET",
                     )
                 fallback, branches, seen = current, [], set()
-                width = 1 if isinstance(target, Clbit) else len(target)
+                width = (
+                    len(self.storage.targets(target, native, cmap))
+                    if isinstance(target, expr.Var)
+                    else 1
+                    if isinstance(target, Clbit)
+                    else len(target)
+                )
                 for labels, body in op.cases_specifier():
                     payload = self.block(
                         body, quantum, classical, current, break_to, continue_to, depth + 1
@@ -227,7 +299,14 @@ class _Lowering:
                             branches.append((int(value), payload))
                 for value, payload in reversed(branches):
                     fallback = self.guard(
-                        (target, value), native, cmap, payload, fallback, location
+                        expr.equal(target, value)
+                        if isinstance(target, expr.Var)
+                        else (target, value),
+                        native,
+                        cmap,
+                        payload,
+                        fallback,
+                        location,
                     )
                 current = fallback
             elif isinstance(op, WhileLoopOp):
@@ -237,7 +316,11 @@ class _Lowering:
                     "CLASSICAL_CONTROL",
                 )
             else:
-                single = native.copy_empty_like()
+                from qiskit import QuantumCircuit
+
+                single = QuantumCircuit()
+                single.add_bits(native.qubits)
+                single.add_bits(native.clbits)
                 single.global_phase = 0
                 single.append(op, item.qubits, item.clbits)
                 local = from_qiskit(
@@ -246,6 +329,7 @@ class _Lowering:
                     max_operations=self.limit,
                     max_depth=self.max_depth - depth,
                     max_matrix_qubits=self.matrix_limit,
+                    _loop_budget={"remaining": self.limit},
                     _context=self.context,
                 )
                 mapped = Circuit(self.width, num_clbits=self.bits).compose(
@@ -295,9 +379,24 @@ class _Lowering:
         return cache[root]
 
 
-def lower_jumps(native, *, expand, max_operations, max_depth, max_matrix_qubits, context):
-    lowering = _Lowering(native, expand, max_operations, max_depth, max_matrix_qubits, context)
-    root = lowering.block(
-        native, tuple(range(native.num_qubits)), tuple(range(native.num_clbits)), lowering.empty
+def lower_jumps(
+    native, *, expand, max_operations, max_depth, max_matrix_qubits, context, classical_inputs=None
+):
+    lowering = _Lowering(
+        native, expand, max_operations, max_depth, max_matrix_qubits, context, classical_inputs
     )
-    return lowering.materialize(root)
+    if lowering.storage.mutable:
+        from ._qiskit_mutable import lower_mutable
+
+        program = lower_mutable(
+            lowering, native, tuple(range(native.num_qubits)), tuple(range(native.num_clbits))
+        )
+    else:
+        root = lowering.block(
+            native, tuple(range(native.num_qubits)), tuple(range(native.num_clbits)), lowering.empty
+        )
+        program = lowering.materialize(root)
+    result = Circuit(lowering.width, num_clbits=lowering.bits)
+    for bit, value in lowering.storage.initial:
+        result = result.classical_set(bit, value)
+    return result.compose(program)

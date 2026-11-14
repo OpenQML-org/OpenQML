@@ -396,6 +396,21 @@ def from_openqasm(
             for q, c in zip(qs, cs, strict=True):
                 append(Operation("measure", (q,), clbits=(c,)), location)
             continue
+        assignment = re.fullmatch(r"(.+?)\s*=\s*(true|false|\d+)", statement)
+        if assignment and version == 3:
+            targets = reference(assignment.group(1), cregs, location)
+            literal = assignment.group(2)
+            value = int(literal == "true") if literal in {"true", "false"} else int(literal)
+            if value.bit_length() > len(targets):
+                raise conversion_error(
+                    "CLASSICAL_STORE_WIDTH", "Assigned value exceeds its width.", location
+                )
+            for i, bit in enumerate(targets):
+                append(
+                    Operation("classical_set", (), (expression((value >> i) & 1),), (bit,)),
+                    location,
+                )
+            continue
         global_phase = re.fullmatch(r"gphase\s*\((.*)\)", statement, flags=re.S)
         if version == 3 and global_phase:
             work += 1
@@ -587,6 +602,10 @@ def _emit_qasm(circuit, version, *, max_output_statements, max_output_bytes, col
                 write(indent + "} else {")
                 emit_body(op.blocks[1], indent + "  ")
                 write(indent + "}")
+            elif op.name == "classical_set":
+                if version != 3:
+                    raise conversion_error("CLASSICAL_STORE_UNSUPPORTED", "Stores require QASM 3.")
+                write(indent + f"c[{op.clbits[0]}] = {int(op.params[0].constant)};")
             elif op.name == "measure":
                 q, c = op.qubits[0], op.clbits[0]
                 write(

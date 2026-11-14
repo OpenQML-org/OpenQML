@@ -144,6 +144,7 @@ from .qml.layers import LayerCheckpoint as LayerCheckpoint
 from .qml.layers import LayerSpec as LayerSpec
 from .qml.lindblad import LindbladPlan as LindbladPlan
 from .qml.lindblad import LindbladResult as LindbladResult
+from .qml.lindblad import LindbladUncertainty as LindbladUncertainty
 from .qml.measurement import QuantumPOVMPlan as QuantumPOVMPlan
 from .qml.models import Model as Model
 from .qml.multiscale import MultiscalePlan as MultiscalePlan

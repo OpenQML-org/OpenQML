@@ -893,7 +893,7 @@ class ExecutionResult:
 def _validate_counts(counts, circuit, shots):
     from numbers import Integral
 
-    width = circuit.num_clbits if circuit.has_measurements else circuit.num_qubits
+    width = circuit.num_clbits if circuit.has_classical_outputs else circuit.num_qubits
     if (
         not isinstance(counts, dict)
         or any(

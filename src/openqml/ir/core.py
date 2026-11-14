@@ -59,7 +59,9 @@ CHANNEL_GATES = frozenset(
 UNITARY_GATES = GATES_V3 - {"measure", "barrier"}
 GATES.update({name: (1, 1) for name in CHANNEL_GATES - {"kraus"}})
 GATES.update({"kraus": (None, 0), "reset": (1, 0), "if_else": (0, 0)})
-IR_VERSION = 4
+GATES_V4 = frozenset(GATES)
+GATES["classical_set"] = (0, 1)
+IR_VERSION = 5
 _ZERO_PHASE = Expression()
 GATES_V2 = GATES_V3 - {"unitary"}
 GATES_V1 = GATES_V2 - {"u", "sxdg", "cp", "crx", "cry", "crz", "ch", "cswap", "iswap"}
@@ -113,17 +115,25 @@ class Operation:
         qubits = tuple(integer(q, "qubit") for q in self.qubits)
         clbits = tuple(integer(c, "classical bit") for c in self.clbits)
         arity, nparams = GATES[self.name]
-        if (not qubits and self.name != "if_else") or (arity is not None and len(qubits) != arity):
+        if (not qubits and self.name not in {"if_else", "classical_set"}) or (
+            arity is not None and len(qubits) != arity
+        ):
             raise ValidationError(f"{self.name} expects {arity or 'one or more'} qubits.")
         if len(set(qubits)) != len(qubits):
             raise ValidationError("An operation cannot use the same qubit twice.")
         if len(self.params) != nparams:
             raise ValidationError(f"{self.name} expects {nparams} parameters.")
-        if len(clbits) != (1 if self.name == "measure" else 0):
-            raise ValidationError("Only measurement has one classical target bit.")
+        if len(clbits) != (1 if self.name in {"measure", "classical_set"} else 0):
+            raise ValidationError("Measurement and classical_set require one classical target bit.")
         object.__setattr__(self, "qubits", qubits)
         object.__setattr__(self, "clbits", clbits)
         object.__setattr__(self, "params", tuple(expression(p) for p in self.params))
+        if self.name == "classical_set" and (
+            not self.params[0].is_affine
+            or self.params[0].parameters
+            or self.params[0].constant not in {0, 1}
+        ):
+            raise ValidationError("classical_set requires a constant bit value zero or one.")
         if self.name == "unitary":
             value = np.asarray(self.matrix, dtype=complex)
             dimension = 2 ** len(qubits)
@@ -403,6 +413,10 @@ class Circuit(_CircuitGates):
         return any(op.name == "measure" for _, op in self.walk_operations())
 
     @property
+    def has_classical_outputs(self) -> bool:
+        return any(op.name in {"measure", "classical_set"} for _, op in self.walk_operations())
+
+    @property
     def has_effects(self):
         return any(op.name not in UNITARY_GATES | {"barrier"} for op in self.operations)
 
@@ -532,6 +546,13 @@ class Circuit(_CircuitGates):
         cbit = integer(qubit if cbit is None else cbit, "classical bit")
         return self._spawn(self._buffer, num_clbits=max(self.num_clbits, cbit + 1)).append(
             Operation("measure", (qubit,), clbits=(cbit,))
+        )
+
+    def classical_set(self, cbit, value) -> Circuit:
+        """Assign a constant classical bit without measuring or changing a qubit."""
+        cbit = integer(cbit, "classical bit")
+        return self._spawn(self._buffer, num_clbits=max(self.num_clbits, cbit + 1)).append(
+            Operation("classical_set", (), (expression(value),), (cbit,))
         )
 
     def measure_all(self) -> Circuit:
@@ -697,7 +718,7 @@ class Circuit(_CircuitGates):
             if (
                 payload["schema"] != "openqml.ir"
                 or type(payload["version"]) is not int
-                or payload["version"] not in {1, 2, 3, IR_VERSION}
+                or payload["version"] not in {1, 2, 3, 4, IR_VERSION}
                 or payload["bit_order"] != "q0-msb"
             ):
                 raise ValidationError("Unsupported IR schema, version, or bit order.")
@@ -715,7 +736,7 @@ class Circuit(_CircuitGates):
                 fields = {"name", "qubits", "clbits", "params"}
                 if payload["version"] >= 3:
                     fields.add("matrix")
-                if payload["version"] == 4:
+                if payload["version"] >= 4:
                     fields.update({"kraus", "condition", "blocks"})
                 if not isinstance(op, dict) or set(op) != fields:
                     raise ValidationError("Invalid operation fields.")
@@ -725,6 +746,8 @@ class Circuit(_CircuitGates):
                     raise ValidationError(
                         "This IR schema does not support quantum effects and control blocks."
                     )
+                if payload["version"] < 5 and op["name"] not in GATES_V4:
+                    raise ValidationError("This IR schema does not support classical assignment.")
                 if payload["version"] < 3 and op["name"] == "unitary":
                     raise ValidationError("This IR schema does not support matrix payloads.")
                 if any(not isinstance(op[key], list) for key in ("qubits", "clbits", "params")):
@@ -856,6 +879,13 @@ class CircuitBuilder(_CircuitGates):
         cbit = integer(qubit if cbit is None else cbit, "classical bit")
         return self._append_with_bits(
             Operation("measure", (qubit,), clbits=(cbit,)), max(self.num_clbits, cbit + 1)
+        )
+
+    def classical_set(self, cbit, value):
+        cbit = integer(cbit, "classical bit")
+        return self._append_with_bits(
+            Operation("classical_set", (), (expression(value),), (cbit,)),
+            max(self.num_clbits, cbit + 1),
         )
 
     def measure_all(self):

@@ -3,6 +3,7 @@
 EXPORTS = {
     "LindbladPlan": (".qml.lindblad", "LindbladPlan"),
     "LindbladResult": (".qml.lindblad", "LindbladResult"),
+    "LindbladUncertainty": (".qml.lindblad", "LindbladUncertainty"),
     "QuantumFisherPlan": (".autodiff.fisher", "QuantumFisherPlan"),
     "quantum_fisher": (".autodiff.fisher", "quantum_fisher"),
     "compile_circuit": (".sim.compiled", "compile_circuit"),
@@ -284,6 +285,7 @@ MODULES = {
 PUBLIC = [
     "LindbladPlan",
     "LindbladResult",
+    "LindbladUncertainty",
     "QuantumFisherPlan",
     "quantum_fisher",
     "compile_circuit",

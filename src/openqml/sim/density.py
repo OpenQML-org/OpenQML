@@ -170,7 +170,14 @@ def _evolve_steps(circuit, states, bindings, ops, records):
                     groups.pop(0)
             states = output
             continue
-        if op.name == "measure":
+        if op.name == "classical_set":
+            bit, value = op.clbits[0], int(op.params[0].constant)
+            output = {}
+            for key, rho in states.items():
+                target = ((key - {bit}) | ({bit} if value else set())) & step.live_after
+                output[target] = output[target] + rho if target in output else rho
+            states = output
+        elif op.name == "measure":
             bit = op.clbits[0]
             states = _forget(states, step.live_after - {bit})
             if bit not in step.live_after:
@@ -273,6 +280,12 @@ def _density_program(circuit, records):
                             walk(operation.blocks[index], group, step.blocks[index]).items()
                         )
                 states = merge(outputs)
+            elif name == "classical_set":
+                bit, value = operation.clbits[0], int(operation.params[0].constant)
+                states = merge(
+                    (((key - {bit}) | ({bit} if value else set())) & step.live_after, slot)
+                    for key, slot in states.items()
+                )
             elif name == "measure":
                 bit = operation.clbits[0]
                 states = merge(
@@ -627,7 +640,7 @@ def execute_density(
         max_qubits=max_qubits,
         max_memory_mb=max_memory_mb,
         max_branches=max_branches,
-        retain_classical=shots is not None and circuit.has_measurements,
+        retain_classical=shots is not None and circuit.has_classical_outputs,
         classical_bits=classical_bits,
     )
     dimension = 2**circuit.num_qubits
@@ -636,7 +649,7 @@ def execute_density(
     counts = None
     if shots is not None:
         rng = np.random.default_rng(seed)
-        if circuit.has_measurements:
+        if circuit.has_classical_outputs:
             width = circuit.num_clbits if classical_bits is None else len(classical_bits)
             if width > int(memory_budget(max_memory_mb) * 2**20):
                 raise ResourceError("Classical count strings exceed the working-memory budget.")

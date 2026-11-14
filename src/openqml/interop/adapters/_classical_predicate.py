@@ -1,8 +1,4 @@
-"""Bounded bit-vector/ROBDD lowering of pure Qiskit classical predicates.
-
-Every predicate is resolved before either payload executes. No scratch bits,
-truth-table enumeration, arithmetic guesses or mutable classical stores are used.
-"""
+"""Bounded bit-vector/ROBDD compilation of typed Qiskit classical expressions."""
 
 from ...errors import conversion_error
 from ...ir.core import Circuit, ClassicalCondition
@@ -179,7 +175,7 @@ class _BitVectors:
         return bits
 
 
-def _compile(value, native, bdd):
+def _compile(value, native, bdd, *, classical_map=None, variable_bits=None, return_bits=False):
     from qiskit.circuit import ClassicalRegister, Clbit
     from qiskit.circuit.classical import expr, types
 
@@ -221,8 +217,14 @@ def _compile(value, native, bdd):
             elif isinstance(current.var, ClassicalRegister):
                 bits = tuple(current.var)
             else:
-                fail("Standalone classical variables require native storage semantics.")
-            memo[identity] = tuple(bdd.node(native.find_bit(bit).index, 0, 1) for bit in bits)
+                if variable_bits is None or current.var not in variable_bits:
+                    fail("Standalone classical variables require declared storage semantics.")
+                memo[identity] = tuple(bdd.node(bit, 0, 1) for bit in variable_bits[current.var])
+                continue
+            indices = tuple(native.find_bit(bit).index for bit in bits)
+            if classical_map is not None:
+                indices = tuple(classical_map[bit] for bit in indices)
+            memo[identity] = tuple(bdd.node(bit, 0, 1) for bit in indices)
             continue
         if isinstance(current, expr.Value):
             if type(current.value) not in {bool, int} or not 0 <= current.value < (1 << size):
@@ -311,7 +313,7 @@ def _compile(value, native, bdd):
             else:
                 fail(f"Classical arithmetic operation {op!r} requires a native program route.")
         memo[identity] = result
-    return bdd.truth(memo[id(value)])
+    return memo[id(value)] if return_bits else bdd.truth(memo[id(value)])
 
 
 def lower_predicate(value, native, blocks, *, max_operations, max_depth, location):

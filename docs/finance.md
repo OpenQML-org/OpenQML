@@ -11,6 +11,7 @@ data, broker connection or extra core dependency is installed.
 | Joint return or path distributions | `ScenarioPlan(atoms)` | Conditional Born probabilities over fixed user-supplied joint atoms |
 | Factor risk | `factor_risk(returns, probabilities)` | Weighted centered factors plus shrinkage diagonal |
 | Differentiable allocation | `AllocationPlan.solve(mean, risk, ...)` | Long-only capped allocation with funding and turnover costs |
+| Joint path-tail decisions | `TailAllocationPlan.solve(paths, ...)` | Multi-period smoothed CVaR, W1 margin, strict budgets/caps and implicit derivatives |
 | Tail risk | `expected_shortfall`, `wasserstein_cvar` | Fractional weighted CVaR and a Wasserstein robustness margin |
 | Expectile risk | `expectile`, `wasserstein_expectile` | Coherent asymmetric-loss risk and an unrestricted-support W1 supremum |
 | Decision risk budgets | `risk_budget_projection(weights, scenarios, ...)` | Maximal funded cash-ray scaling under weighted robust CVaR |
@@ -20,6 +21,48 @@ data, broker connection or extra core dependency is installed.
 | Rolling model selection | `walk_forward(factory, inputs, targets, ...)` | Fresh hybrid models, nested validation and aligned out-of-sample predictions |
 | Discrete asset selection | `PortfolioSelection(...).problem` | Equal-weight fixed-cardinality financial QUBO |
 | Coherent financial expectations | `PayoffOraclePlan` and `AmplitudeEstimationPlan` | Signed bounded payoffs, control variates and finite-shot intervals |
+
+## Joint path-tail allocation
+
+`TailAllocationPlan.solve(scenarios, probabilities=..., caps=..., budget=...,
+previous=..., turnover=..., radius=..., smoothing=...)` consumes joint paths
+`[...,scenarios,horizon,assets]`. Every period has a separate cap vector and
+capital budget. The optimized loss of path `s` is `-sum(R[s,t,a]*w[t,a])`.
+Keeping the path axis intact retains dependence between future periods.
+`ScenarioPlan.tail_decision(probabilities, allocation=plan, ...)` uses predicted
+Born weights over its fixed path atoms, with gradients through normalization.
+
+The convex objective is risk aversion times softplus CVaR plus
+`radius*norm(w)/(1-confidence)`, minus expected P&L, plus ridge and quadratic
+changes from the previous position and between periods. A positive log barrier
+on both position boundaries keeps the optimizer strictly interior. Budgets
+must satisfy `0 < budget[t] < sum(caps[t])` and all caps must be positive.
+The smoothing temperature, risk aversion, ridge and barrier must be positive.
+
+`TailAllocationResult` reports weights, the optimized tail threshold, exact
+fractional empirical CVaR, the robust margin, smooth risk, the complete objective
+and the checked KKT residual. With threshold optimized, softplus increases CVaR
+by at most `smoothing*log(2)/(1-confidence)`; this statement excludes finite
+solver residual. The W1 margin uses a Euclidean ground norm on the flattened
+joint return path. It is sharp for unbounded support and conservative when
+returns are restricted; calibration of the radius is external.
+
+Newton steps and implicit adjoints use path-factor Hessian products and
+projected conjugate gradients. They do not construct a dense horizon KKT matrix
+or retain an optimization-iteration tape. Torch reverse/forward derivatives
+and JAX JIT/implicit-root derivatives include second derivatives of the strict
+interior optimum. Admission accounts for scenario storage and the declared
+Newton/CG budgets. Failed residual checks raise `ConvergenceError` at checked
+boundaries; raw JAX transforms can propagate invalid status as NaNs.
+
+Positions are open-loop exposures with additive dollar P&L. They are not a
+compound, funded sequence of executable orders. Use the funded execution and
+accounting interfaces for fees, cash, delay and price impact.
+The optimization-layer design follows decision-focused learning, including
+[Ma et al., ICML 2024](https://proceedings.mlr.press/v235/ma24j.html) and
+[Jeon et al., ICML 2026](https://proceedings.mlr.press/v306/jeon26a.html).
+This continuous path-tail optimizer does not implement mixed-integer selection
+or the latter paper's sparse tangency model.
 
 ## Rolling hybrid model selection
 

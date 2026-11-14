@@ -303,6 +303,21 @@ class ScenarioPlan:
         risk = self.horizon_risk(probabilities, shrinkage=shrinkage, variance_floor=variance_floor)
         return allocation.solve(risk.mean, risk, **options)
 
+    def tail_decision(self, probabilities, *, allocation=None, **options):
+        """Optimize joint-path tail losses through a predictive Born distribution."""
+        from ..errors import _require_instance
+        from .tail import TailAllocationPlan
+
+        if self.scenarios.ndim != 3:
+            raise ValidationError("Path-tail decisions require multi-period scenario paths.")
+        if allocation is None:
+            allocation = TailAllocationPlan(
+                max_memory_mb=self.max_memory_mb, max_work=self.max_work
+            )
+        _require_instance(allocation, TailAllocationPlan, "allocation")
+        ops = Ops(probabilities)
+        return allocation.solve(ops.array(self.scenarios), probabilities=probabilities, **options)
+
     def execution_decision(self, probabilities, proposal, *, step=None, **options):
         """Project a proposal using this Born distribution and after-cost risk.
 

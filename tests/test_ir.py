@@ -69,7 +69,7 @@ def test_expression_canonicalization_and_binding_errors():
 
 
 def test_duplicate_json_fields_rejected():
-    text = Circuit(1).to_json().replace('"version": 4', '"version": 9, "version": 4')
+    text = Circuit(1).to_json().replace('"version": 5', '"version": 9, "version": 5')
     with pytest.raises(ValidationError, match="Duplicate JSON field"):
         Circuit.from_json(text)
 

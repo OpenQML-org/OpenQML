@@ -5,6 +5,43 @@ Use `convert` to import, check compatibility and export in one call.
 JSON and IR targets work with the core installation. Install the corresponding
 extra when importing or exporting a native SDK object.
 
+## Classical variables and assignments
+
+IR v5 adds `Circuit.classical_set(bit, 0|1)`, a classical write with no quantum
+operand. Readers retain support for IR versions 1–4. `has_measurements` still
+means physical measurement; `has_classical_outputs` also includes assignments.
+NumPy counts, native density execution and conversion verification retain
+overwritten final storage and merge branches after dead writes.
+
+Qiskit Bool/Uint variables, bit/register assignments, statically addressed
+indexed targets and finite loops lower to classical bits and bounded decision
+graphs. Every RHS is resolved into a shared snapshot before any destination
+bit changes, including overlapping arithmetic assignments. Runtime variables
+are checked for definite assignment. A conservative check can reject a variable
+initialized only in a loop; initialize it before entering that loop.
+Runtime while loops and dynamically addressed assignment targets require
+native execution and receive explicit diagnostics.
+
+Original SDK classical bits retain their indices. Standalone variables,
+snapshots and finite-loop control flags use additional classical bits, with
+two reusable flow flags per active loop depth. No extra quantum wires are
+allocated. `CLASSICAL_STORAGE_LOWERED` reports the added storage; use ordered
+`classical_bits` to select original outputs when sampling. Input variables
+require `source_options={"classical_inputs": {name: integer}}`; unbound inputs,
+out-of-range values and undeclared input names are rejected.
+
+Qiskit, JSON, IR and OpenQASM 3 preserve lowered stores. The built-in QASM 3
+reader accepts constant assignments to bit/register targets. Rich expressions
+enter through the typed Qiskit frontend and export as portable guards/stores.
+Cirq, operation-only PennyLane tapes and QASM 2 reject unsupported assignments.
+The target hardware must independently support the exported operations.
+
+Assignment-by-copy follows the
+[OpenQASM specification](https://openqasm.com/language/classical.html).
+The separation of control storage and data follows compiler practice also
+discussed in [QuCtrl-BELL, arXiv:2605.22433](https://arxiv.org/abs/2605.22433).
+This lowering does not target its real-time controller or promise its timing.
+
 ## Convert a circuit
 
 ```python

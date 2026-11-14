@@ -19,6 +19,14 @@ A QPU executes compatible circuits. Classical projections, portfolio solvers
 and optimizer state remain native tensor calculations. Recurrent density carries
 require native execution; see the stateful-model guide for exporting unrolls.
 
+`LindbladPlan`, `LindbladResult` and `LindbladUncertainty` are available from the
+root namespace. Native `LindbladLayer` classes live in `qml.interfaces.torch`
+and `qml.interfaces.flax`. See [controlled open-system layers](models.md#controlled-open-system-layers).
+`finance.TailAllocationPlan` and `TailAllocationResult` expose joint path-tail
+allocation; see [the objective and solver contract](finance.md#joint-path-tail-allocation).
+`Circuit.classical_set` and `CircuitBuilder.classical_set` assign a constant bit
+and extend classical storage as needed. IR v5 serializes this operation.
+
 ## Input and failure contracts
 
 Circuit entry points validate `Circuit` instances before backend dispatch.

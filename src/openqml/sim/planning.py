@@ -28,6 +28,8 @@ def _topology(circuit):
     return tuple(
         ("measure", op.clbits[0])
         if op.name == "measure"
+        else ("classical_set", op.clbits[0], int(op.params[0].constant))
+        if op.name == "classical_set"
         else ("if_else", op.condition, tuple(_topology(b) for b in op.blocks))
         if op.name == "if_else"
         else None
@@ -39,7 +41,7 @@ def _written(topology):
     bits = set()
     for node in topology:
         if node is not None:
-            if node[0] == "measure":
+            if node[0] in {"measure", "classical_set"}:
                 bits.add(node[1])
             else:
                 for block in node[2]:
@@ -52,7 +54,7 @@ def _build_records(topology, live_out, possible_writes):
     for node in reversed(topology):
         if node is None:
             reverse.append(None)
-        elif node[0] == "measure":
+        elif node[0] in {"measure", "classical_set"}:
             reverse.append(_RecordStep(live))
             live = live - {node[1]}
         else:
@@ -65,7 +67,18 @@ def _build_records(topology, live_out, possible_writes):
 @lru_cache(maxsize=64)
 def _cached_records(topology, retain_classical, classical_bits, max_branches):
     possible = _written(topology)
-    if retain_classical and (classical_bits is None or possible.issubset(classical_bits)):
+    pending, has_store = [topology], False
+    while pending:
+        for node in pending.pop():
+            if node is not None and node[0] == "classical_set":
+                has_store = True
+            elif node is not None and node[0] == "if_else":
+                pending.extend(node[2])
+    if (
+        not has_store
+        and retain_classical
+        and (classical_bits is None or possible.issubset(classical_bits))
+    ):
         # Full-record key sets only grow; reject over-cap prefixes before snapshots.
         _, possible = _full_record_preflight(topology, {frozenset()}, max_branches)
     live = (
@@ -98,7 +111,11 @@ def _full_record_preflight(topology, initial, max_branches):
     for node in topology:
         if node is None:
             continue
-        if node[0] == "measure":
+        if node[0] == "classical_set":
+            bit, value = node[1:]
+            written.add(bit)
+            output = {(key - {bit}) | ({bit} if value else set()) for key in keys}
+        elif node[0] == "measure":
             bit, output = node[1], set()
             written.add(bit)
             for key in keys:
@@ -135,7 +152,12 @@ def _branch_plan(topology, initial, max_branches, records):
         if step is None:
             continue
         next_keys = set()
-        if node[0] == "measure":
+        if node[0] == "classical_set":
+            bit, value = node[1:]
+            next_keys = {
+                ((key - {bit}) | ({bit} if value else set())) & step.live_after for key in keys
+            }
+        elif node[0] == "measure":
             bit = node[1]
             for key in keys:
                 key = key & (step.live_after - {bit})

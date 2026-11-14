@@ -24,9 +24,11 @@ def validate_classical_bits(circuit, bits):
     if len(set(bits)) != len(bits):
         raise ValidationError("classical_bits cannot contain duplicate indices.")
     if circuit is not None and (
-        not circuit.has_measurements or max(bits, default=-1) >= circuit.num_clbits
+        not circuit.has_classical_outputs or max(bits, default=-1) >= circuit.num_clbits
     ):
-        raise ValidationError("classical_bits require measurements and declared storage indices.")
+        raise ValidationError(
+            "classical_bits require classical writes and declared storage indices."
+        )
     return bits
 
 

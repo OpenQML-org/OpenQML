@@ -116,7 +116,7 @@ def test_ir_v1_backwards_read_and_v2_gate_guard():
             op.pop(field, None)
     assert Circuit.from_dict(payload) == old
     payload = Circuit(1).u(0.1, 0.2, 0.3, 0).to_dict()
-    assert payload["version"] == 4
+    assert payload["version"] == 5
     payload["version"] = 1
     for op in payload["operations"]:
         for field in ("matrix", "kraus", "condition", "blocks"):

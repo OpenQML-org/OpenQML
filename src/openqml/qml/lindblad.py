@@ -21,6 +21,11 @@ class LindbladResult(NamedTuple):
     error_bound: object
 
 
+class LindbladUncertainty(NamedTuple):
+    state_error_bound: object
+    observable_error_bounds: object
+
+
 def _words(values, width):
     result = tuple(PauliString(x) if isinstance(x, str) else x for x in values)
     if any(not isinstance(x, PauliString) or len(x.paulis) != width for x in result):
@@ -138,6 +143,86 @@ class LindbladPlan:
             raise ValidationError("Lindblad controls must use one native framework.")
         result = ops.array(_checked(value), real_value=True)
         return ops.check(result, ops.xp.isfinite(result), "Lindblad controls must be finite.")
+
+    @compute_operation
+    def uncertainty_bound(
+        self,
+        coefficient_errors,
+        rate_errors,
+        durations=1,
+        *,
+        initial_error=0,
+        numerical_error=0,
+        mask=None,
+        backend="numpy",
+    ):
+        """Propagate absolute generator-error envelopes to final observable bounds.
+
+        Both generators must be CPTP and use this plan's operator family.
+        Envelopes have the same [...,time,term] layout as evolve controls.
+        This Duhamel/contraction bound is deterministic conditional on those
+        envelopes; calibrating statistical coverage remains the caller's job.
+        Supply evolve.error_bound as numerical_error to include splitting.
+        Initial and state errors use trace norm, without the half factor.
+        """
+        ops = _TensorOps(backend, coefficient_errors if backend != "numpy" else None)
+        h, r, dt, start, numerical = (
+            self._real(value, ops)
+            for value in (
+                coefficient_errors,
+                rate_errors,
+                durations,
+                initial_error,
+                numerical_error,
+            )
+        )
+        if (
+            h.ndim < 2
+            or r.ndim < 2
+            or (h.shape[-1] != len(self.hamiltonians) or r.shape[-1] != self.num_rates)
+        ):
+            raise ValidationError("Uncertainty envelopes require [...,time,term] control shapes.")
+        from ..sim.dense import _broadcast_shape
+
+        time = _broadcast_shape((h.shape[-2:-1], r.shape[-2:-1], dt.shape[-1:]))
+        if not time or time[0] < 1:
+            raise ValidationError("Uncertainty envelopes need at least one interval.")
+        active = ops.array(True if mask is None else mask, real_value=True)
+        prefix = _broadcast_shape(
+            (
+                h.shape[:-2],
+                r.shape[:-2],
+                dt.shape[:-1],
+                start.shape,
+                numerical.shape,
+                active.shape[:-1],
+            )
+        )
+        xp, shape = ops.xp, prefix + time
+        h = xp.broadcast_to(h, shape + (len(self.hamiltonians),))
+        r = xp.broadcast_to(r, shape + (self.num_rates,))
+        dt, active = xp.broadcast_to(dt, shape), xp.broadcast_to(active, shape)
+        start, numerical = xp.broadcast_to(start, prefix), xp.broadcast_to(numerical, prefix)
+        h = ops.check(h, h >= 0, "Coefficient error envelopes must be nonnegative.")
+        r = ops.check(r, r >= 0, "Rate error envelopes must be nonnegative.")
+        dt = ops.check(dt, dt >= 0, "Uncertainty durations must be nonnegative.")
+        active = ops.check(active, (active == 0) | (active == 1), "Use a boolean interval mask.")
+        start = ops.check(
+            start, (start >= 0) & (start <= 2), "Initial trace-norm error is in [0,2]."
+        )
+        numerical = ops.check(numerical, numerical >= 0, "Numerical error must be nonnegative.")
+        bound = dt * 0
+        for kind, index, _, scale in self._components:
+            bound = bound + (
+                2 * abs(scale) * h[..., index]
+                if kind == "hamiltonian"
+                else 2 * scale * scale * r[..., index]
+            )
+        terms = bound * dt * active
+        total = terms.sum(dim=-1) if ops.backend == "torch" else terms.sum(axis=-1)
+        total = xp.minimum(start + numerical + total, ops.array(2, real_value=True))
+        norms = ops.array([abs(p.coefficient) for p in self.observables], real_value=True)
+        return LindbladUncertainty(total, total[..., None] * norms)
 
     def _state(self, value, prefix, ops):
         n, xp = self.num_qubits, ops.xp

@@ -20,6 +20,7 @@ def from_qiskit(
     max_operations=100_000,
     max_depth=64,
     max_matrix_qubits=10,
+    classical_inputs=None,
     _loop_budget=None,
     _context=None,
 ) -> Circuit:
@@ -120,7 +121,10 @@ def from_qiskit(
             max_depth=max_depth,
             max_matrix_qubits=max_matrix_qubits,
             context=_context,
+            classical_inputs=classical_inputs,
         )
+    if classical_inputs:
+        raise conversion_error("CLASSICAL_STORAGE", "classical_inputs has no declared inputs.")
     # Empty SDK bodies can carry only a phase/control structure. Their internal
     # placeholder has no quantum operands and is mapped onto a parent wire.
     width = max(1, native.num_qubits)
@@ -559,6 +563,8 @@ def to_qiskit(circuit: Circuit, bindings=None, *, _symbols=None):
             native.unitary(reverse_local_basis(op.matrix), list(op.qubits))
         elif op.name == "measure":
             native.measure(op.qubits[0], op.clbits[0])
+        elif op.name == "classical_set":
+            native.store(native.clbits[op.clbits[0]], bool(op.params[0].constant))
         elif op.name == "barrier":
             native.barrier(*op.qubits)
         else:
@@ -608,13 +614,24 @@ def _condition(value, native, location):
     return ClassicalCondition(bits, sum(assignments[bit] << i for i, bit in enumerate(bits)))
 
 
-def static_loop_notes(native):
+def static_loop_notes(native, *, num_clbits=None):
     """Describe successful static control lowering without retaining SDK objects."""
     from qiskit.circuit import ForLoopOp, SwitchCaseOp
 
     from ...errors import Diagnostic
 
     notes = []
+    if num_clbits is not None and num_clbits > native.num_clbits:
+        notes.append(
+            Diagnostic(
+                "CLASSICAL_STORAGE_LOWERED",
+                f"Added {num_clbits - native.num_clbits} classical storage/snapshot bits; "
+                f"original storage remains in bits [0,{native.num_clbits}). "
+                "Select classical_bits to read the original output register.",
+                "classical_storage",
+                severity="info",
+            )
+        )
     stack = [(native, "")]
     while stack:
         body, prefix = stack.pop()

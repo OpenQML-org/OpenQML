@@ -17,6 +17,11 @@ implicit Sylvester derivatives, including repeated density eigenvalues.
 External Torch/JAX layers can pack forward and parameter-shift rows into one
 provider submission and reuse their linearization during backward.
 
+`LindbladPlan` and native PyTorch/Flax `LindbladLayer` learn continuous-time
+coherent and dissipative dynamics. Exact local CPTP maps preserve density
+constraints, while explicit discretization and generator-uncertainty bounds
+quantify the modeled readout error.
+
 ## Quantum–classical hybrid quantitative research
 
 Train scenario distributions, allocate constrained portfolios and project decisions onto explicit CVaR budgets with a funded cash position. Low-rank factor solves and native PyTorch/JAX derivatives connect financial objectives to hybrid models. Purged walk-forward refits and self-financing accounting preserve chronological evaluation, execution delays, fees and market impact. [Explore quantitative research](https://github.com/OpenQML-org/OpenQML/blob/main/docs/finance.md).
@@ -29,6 +34,9 @@ market impact while enforcing CVaR or expectile budgets.
 `MultiPeriodPlan` couples forecast-horizon decisions through turnover costs.
 `ScenarioPlan.horizon_decision` differentiates those decisions through predicted
 path probabilities without constructing a dense horizon KKT matrix.
+`TailAllocationPlan` jointly optimizes path CVaR, Wasserstein robustness and
+multi-period rebalancing with implicit first and higher derivatives.
+`ScenarioPlan.tail_decision` connects this optimizer to learned Born probabilities.
 
 ## Cross-framework quantum programming
 
@@ -44,6 +52,9 @@ Deferred Qiskit inverses, controls and numeric powers expand through the same
 checked conversion routes.
 Finite loops with `break` and `continue` preserve measurement feedback, nested
 exit targets and entry-time branch selection under explicit expansion budgets.
+Bool/Uint variables and runtime assignments lower to explicit classical storage
+in IR v5. Shared snapshots preserve overlapping assignments; liveness analysis
+merges overwritten records without allocating additional qubits.
 
 Simulate physical noise with amplitude/phase damping, depolarization and custom Kraus channels. Correct independent readout errors or extrapolate measured noise scales with explicit conditioning and sampling-overhead limits. Caller-initialized Qiskit V2 primitives connect real hardware; see [execution limits and mitigation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md#physical-noise-and-error-mitigation).
 

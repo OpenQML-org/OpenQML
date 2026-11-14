@@ -1,4 +1,5 @@
 from . import barrier as barrier
+from . import tail as tail
 from .allocation import AllocationPlan as AllocationPlan
 from .allocation import AllocationResult as AllocationResult
 from .api import allocate as allocate
@@ -35,6 +36,8 @@ from .risk import wasserstein_cvar as wasserstein_cvar
 from .scenario_tree import ScenarioTreePlan as ScenarioTreePlan
 from .scenario_tree import ScenarioTreeResult as ScenarioTreeResult
 from .scenario_tree import TreeRiskResult as TreeRiskResult
+from .tail import TailAllocationPlan as TailAllocationPlan
+from .tail import TailAllocationResult as TailAllocationResult
 from .trading import SelfFinancingPlan as SelfFinancingPlan
 from .trading import TradingResult as TradingResult
 from .trading import TradingState as TradingState

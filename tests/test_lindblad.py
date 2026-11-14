@@ -48,6 +48,50 @@ def _exact(plan, h, rates, duration, state):
 
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
+def test_generator_uncertainty_envelopes_bound_final_observable_error(backend):
+    if backend == "torch":
+        torch = pytest.importorskip("torch")
+
+        def array(x):
+            return torch.tensor(x, dtype=torch.float64)
+    elif backend == "jax":
+        pytest.importorskip("jax")
+        import jax.numpy as jnp
+
+        array = jnp.asarray
+    else:
+        array = np.asarray
+    plan = oq.LindbladPlan(1, ("X", "Z"), ("Z",), (0,), observables=("X", "Y", "Z"), substeps=24)
+    h = np.array([[0.4, 0.2], [-0.1, 0.3]])
+    r, dt = np.array([[0.2, 0.1], [0.1, 0.4]]), [0.3, 0.5]
+    dh, dr = np.full((2, 2), 0.002), np.full((2, 2), 0.001)
+    nominal = plan.evolve(array(h), array(r), array(dt), backend=backend)
+    changed = plan.evolve(array(h + dh), array(r + dr), array(dt), backend=backend)
+    certificate = plan.uncertainty_bound(
+        array(dh),
+        array(dr),
+        array(dt),
+        numerical_error=nominal.error_bound,
+        backend=backend,
+    )
+    actual = np.abs(np.asarray(nominal.outputs[-1]) - np.asarray(changed.outputs[-1]))
+    assert np.all(
+        actual <= np.asarray(certificate.observable_error_bounds) + np.asarray(changed.error_bound)
+    )
+    np.testing.assert_allclose(
+        certificate.state_error_bound, np.asarray(nominal.error_bound) + 0.0096, atol=2e-7
+    )
+    masked = plan.uncertainty_bound(
+        array(dh), array(dr), array(dt), backend=backend, mask=[1, 0], initial_error=0.01
+    )
+    assert float(masked.state_error_bound) == pytest.approx(0.0136, abs=2e-7)
+    capped = plan.uncertainty_bound(array(dh * 1000), array(dr * 1000), backend=backend)
+    assert float(capped.state_error_bound) == 2
+    with pytest.raises(oq.ValidationError):
+        plan.uncertainty_bound(array(-dh), array(dr), backend=backend)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
 def test_energy_decay_is_exact_and_finite_at_saturation(backend):
     if backend == "numpy":
         xp, dtype = np, np.float64

@@ -151,6 +151,14 @@ def diagnose(
     written = []
     for path, op in circuit.walk_operations():
         location = _operation_location(path)
+        if op.name == "classical_set" and target not in {"qiskit", "openqasm3", "ir", "json"}:
+            diagnostics.append(
+                Diagnostic(
+                    "CLASSICAL_STORE_UNSUPPORTED",
+                    f"{target} cannot preserve runtime classical assignments.",
+                    location,
+                )
+            )
         if op.name in CHANNEL_GATES:
             if target.startswith("openqasm"):
                 diagnostics.append(
@@ -689,7 +697,9 @@ def plan_conversion(
     if source == "qiskit" or (program is not None and program.framework == "qiskit"):
         from .adapters.qiskit import static_loop_notes
 
-        frontend_notes += static_loop_notes(value if source == "qiskit" else program.native)
+        frontend_notes += static_loop_notes(
+            value if source == "qiskit" else program.native, num_clbits=circuit.num_clbits
+        )
     if source == "cirq" and source_options.get("measurement_map"):
         frontend_notes += tuple(
             Diagnostic(

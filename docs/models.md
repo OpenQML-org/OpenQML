@@ -25,6 +25,47 @@ Convolution and graph constructors use masked mean readout. Set
 are also available. Hidden width stays fixed inside the residual stack.
 `depth` controls hybrid depth and `QuantumCellSpec.depth` controls circuit depth.
 
+## Controlled open-system layers
+
+`LindbladPlan(num_qubits, hamiltonians=..., pauli_jumps=..., damping_qubits=...)`
+defines a piecewise-constant Lindblad generator. Hamiltonian controls have shape
+`[...,time,H]`; nonnegative dissipation rates have shape `[...,time,J]`, with
+Pauli jumps followed by the selected amplitude-damping sites. `evolve` accepts
+scalar/per-interval durations, an explicit density carry and an interval mask.
+It returns all readouts, the final density and a trace-norm splitting bound.
+
+Each local propagator is an exact completely positive trace-preserving map.
+Symmetric splitting gives second-order convergence for noncommuting terms;
+commuting supported generators need no splitting correction. The conservative
+bound uses the induced trace-norm generator estimate, matching the two series
+through second order and summing local remainders by CPTP contraction. It
+excludes floating-point roundoff. `tolerance` rejects an inadequate discretization
+before allocating the time evolution. Increase `substeps` to tighten it.
+
+`uncertainty_bound(coefficient_errors, rate_errors, durations, ...)` propagates
+absolute parameter-error envelopes with the Duhamel/contraction inequality.
+`initial_error` and `numerical_error` add initial-state and splitting uncertainty.
+The result contains the final trace-norm bound and each Pauli observable's
+operator-norm-scaled error. Both compared generators must use this operator
+family and be CPTP. Statistical coverage of the supplied envelopes is external.
+
+`plan.torch_layer(input_features)` and `plan.flax_layer(input_features)` project
+time-series features into Hamiltonian controls and positive softplus rates.
+Their native parameters train with ordinary framework optimizers. Torch
+checkpoints validate the plan/readout identity. Evolution supports second
+derivatives, Torch non-reentrant checkpoints and JAX scan/rematerialization.
+Master arithmetic uses float32/float64; density storage still scales as `4**n`.
+No dense Liouvillian is constructed. Readouts describe a simulator trajectory;
+they do not implement a hardware sequence of noninvasive measurements.
+
+Related methods: Xie et al., *PRL* **136**, 010402 (2026),
+[controlled quantum–classical dynamics](https://doi.org/10.1103/7lsx-ssjl), and
+Kraft et al., *PRX* **16**, 031037 (2026),
+[generator uncertainty propagation](https://doi.org/10.1103/s96t-n8tx).
+The interface provides controlled dynamics and conditional deterministic
+envelopes; the papers' full stochastic environments, statistical estimators
+and hardware protocols are outside this implementation.
+
 ## Convolution
 
 The same trainable quantum filter is applied to every spatial window. 1D/2D
