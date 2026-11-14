@@ -1,4 +1,4 @@
-include README.md LICENSE
+include README.md CHANGELOG.md LICENSE
 exclude CONTRIBUTING.md GOVERNANCE.md SECURITY.md CODE_OF_CONDUCT.md
 prune tests
 prune docs

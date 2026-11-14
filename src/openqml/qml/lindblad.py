@@ -76,13 +76,22 @@ class LindbladPlan:
             for i, term in enumerate(terms)
             if term.coefficient != 0 and set(term.paulis) != {"I"}
         ) + tuple(("damping", len(jumps) + i, q, 1) for i, q in enumerate(sites))
-        words = tuple(c[2] for c in components if c[0] != "damping")
-        commuting = len(components) <= 1 or (
-            not sites
-            and all(
-                sum(a != b and a != "I" and b != "I" for a, b in zip(x, y, strict=True)) % 2 == 0
-                for i, x in enumerate(words)
-                for y in words[i + 1 :]
+        words = tuple(c for c in components if c[0] != "damping")
+        commuting = (
+            len(components) <= 1
+            or not words
+            or (
+                not sites
+                and all(
+                    (x[0] == y[0] == "pauli")
+                    or sum(
+                        a != b and a != "I" and b != "I" for a, b in zip(x[2], y[2], strict=True)
+                    )
+                    % 2
+                    == 0
+                    for i, x in enumerate(words)
+                    for y in words[i + 1 :]
+                )
             )
         )
         for name, value in (
@@ -108,7 +117,7 @@ class LindbladPlan:
         applications = sum(
             len(c[2].replace("I", "")) if c[0] != "damping" else 1 for c in self._components
         )
-        work = 64 * b * size * t * self.substeps * max(1, applications)
+        work = 64 * b * size * t * (1 if self._commuting else self.substeps) * max(1, applications)
         elements = b * (
             24 * size + t * (len(self.hamiltonians) + self.num_rates + len(self.observables) + 4)
         )
@@ -121,6 +130,7 @@ class LindbladPlan:
             primal_workspace_bytes=16 * elements,
             arithmetic_work_estimate=work,
             generator_matrix_materialized=False,
+            commuting_fast_path=self._commuting,
             excludes="autodiff_tapes_compiler_workspaces_and_allocator_reserves",
         )
 
@@ -143,6 +153,24 @@ class LindbladPlan:
             raise ValidationError("Lindblad controls must use one native framework.")
         result = ops.array(_checked(value), real_value=True)
         return ops.check(result, ops.xp.isfinite(result), "Lindblad controls must be finite.")
+
+    def _mask(self, value, ops):
+        if value is None:
+            return ops.array(1, real_value=True)
+        if _array_backend(value) not in {"numpy", ops.backend}:
+            raise ValidationError("Time masks must use the evolution's native framework.")
+        try:
+            if ops.backend == "torch":
+                value = ops.xp.as_tensor(value, device=ops.device)
+                if value.dtype == ops.xp.bool:
+                    value = value.to(dtype=ops.xp.int8)
+            else:
+                value = ops.xp.asarray(value)
+                if value.dtype == ops.xp.bool_:
+                    value = value.astype("int8")
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValidationError("Time masks require boolean or real numeric values.") from exc
+        return self._real(value, ops)
 
     @compute_operation
     def uncertainty_bound(
@@ -187,7 +215,7 @@ class LindbladPlan:
         time = _broadcast_shape((h.shape[-2:-1], r.shape[-2:-1], dt.shape[-1:]))
         if not time or time[0] < 1:
             raise ValidationError("Uncertainty envelopes need at least one interval.")
-        active = ops.array(True if mask is None else mask, real_value=True)
+        active = self._mask(mask, ops)
         prefix = _broadcast_shape(
             (
                 h.shape[:-2],
@@ -321,6 +349,10 @@ class LindbladPlan:
         )
 
     def _advance(self, rho, hamiltonian, rates, duration, ops):
+        if self._commuting:
+            for component in self._components:
+                rho = self._map(rho, component, hamiltonian, rates, duration, ops)
+            return rho
         dt = duration / self.substeps
         for _ in range(self.substeps):
             for component in self._components[:-1]:
@@ -367,7 +399,7 @@ class LindbladPlan:
         if type(checkpoint) is not bool:
             raise ValidationError("checkpoint must be a boolean.")
         state = None if state is None else ops.array(state)
-        active = ops.array(1 if mask is None else mask, real_value=True)
+        active = self._mask(mask, ops)
         if (
             h.ndim < 2
             or h.shape[-1] != len(self.hamiltonians)

@@ -139,6 +139,23 @@ def test_commuting_pauli_hamiltonian_and_jumps_have_zero_splitting_error():
     assert result.error_bound == 0
 
 
+def test_commuting_dissipators_use_exact_composition_with_matching_admission():
+    plan = oq.LindbladPlan(1, pauli_jumps=("X", "Y", "Z"), substeps=128, max_work=5000)
+    result = plan.evolve(np.empty((1, 0)), np.array([[0.3, 0.3, 0.3]]), 0.7)
+    decay = np.exp(-4 * 0.3 * 0.7)
+    np.testing.assert_allclose(
+        result.state, np.diag([(1 + decay) / 2, (1 - decay) / 2]), atol=2e-15
+    )
+    assert result.error_bound == 0 and plan.resource_profile(1)["commuting_fast_path"]
+    damping = oq.LindbladPlan(2, damping_qubits=(0, 1), substeps=128)
+    rho = np.diag([0, 0, 0, 1])
+    result = damping.evolve(np.empty((1, 0)), np.array([[0.2, 0.3]]), 0.7, state=rho)
+    s1, s2 = np.exp(-0.2 * 0.7), np.exp(-0.3 * 0.7)
+    expected = np.diag([(1 - s1) * (1 - s2), (1 - s1) * s2, s1 * (1 - s2), s1 * s2])
+    np.testing.assert_allclose(result.state, expected, atol=2e-15)
+    assert result.error_bound == 0 and damping.resource_profile(1)["commuting_fast_path"]
+
+
 @pytest.mark.parametrize("backend", ["torch", "jax"])
 def test_open_system_controls_keep_first_and_second_derivatives(backend):
     lib = pytest.importorskip(backend)
@@ -186,7 +203,7 @@ def test_masked_batched_paths_match_streamed_density_carry(backend):
     plan = oq.LindbladPlan(1, ("X",), (), (0,), substeps=2)
     h = xp.asarray([[[0.3], [0.2], [0.1]], [[0.4], [0.1], [0.5]]], dtype=dtype)
     rates = xp.ones_like(h) * 0.2
-    mask = xp.asarray([[1, 1, 0], [1, 0, 0]], dtype=dtype)
+    mask = xp.asarray([[True, True, False], [True, False, False]])
     full = plan.evolve(h, rates, 0.2, backend=backend, mask=mask)
     first = plan.evolve(h[:, :1], rates[:, :1], 0.2, backend=backend)
     second = plan.evolve(

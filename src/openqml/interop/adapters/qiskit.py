@@ -614,24 +614,31 @@ def _condition(value, native, location):
     return ClassicalCondition(bits, sum(assignments[bit] << i for i, bit in enumerate(bits)))
 
 
-def static_loop_notes(native, *, num_clbits=None):
+def classical_storage_notes(native, num_clbits):
+    from ...errors import Diagnostic
+
+    original = getattr(native, "num_clbits", num_clbits)
+    if num_clbits <= original:
+        return ()
+    return (
+        Diagnostic(
+            "CLASSICAL_STORAGE_LOWERED",
+            f"Added {num_clbits - original} classical storage/snapshot bits; "
+            f"original storage remains in bits [0,{original}). "
+            "Select classical_bits to read the original output register.",
+            "classical_storage",
+            severity="info",
+        ),
+    )
+
+
+def static_loop_notes(native):
     """Describe successful static control lowering without retaining SDK objects."""
     from qiskit.circuit import ForLoopOp, SwitchCaseOp
 
     from ...errors import Diagnostic
 
     notes = []
-    if num_clbits is not None and num_clbits > native.num_clbits:
-        notes.append(
-            Diagnostic(
-                "CLASSICAL_STORAGE_LOWERED",
-                f"Added {num_clbits - native.num_clbits} classical storage/snapshot bits; "
-                f"original storage remains in bits [0,{native.num_clbits}). "
-                "Select classical_bits to read the original output register.",
-                "classical_storage",
-                severity="info",
-            )
-        )
     stack = [(native, "")]
     while stack:
         body, prefix = stack.pop()

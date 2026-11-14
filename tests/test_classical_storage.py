@@ -187,6 +187,12 @@ def test_stores_and_feedback_have_native_parameter_gradients(backend):
         result = oq.expectation(circuit, oq.PauliString("Z"), {"angle": value}, backend="torch")
         gradient = torch.autograd.grad(result, value)[0]
         assert gradient.item() == pytest.approx(np.sin(0.4), abs=1e-12)
+        compiled = oq.compile_circuit(
+            circuit, (oq.PauliString("Z"),), backend="torch", like=value, compiler="aot_eager"
+        )
+        output = compiled({"angle": value})[0]
+        assert output.item() == pytest.approx(-np.cos(0.4), abs=1e-12)
+        assert torch.autograd.grad(output, value)[0].item() == pytest.approx(np.sin(0.4), abs=1e-12)
     else:
         jax = pytest.importorskip("jax")
         import jax.numpy as jnp
@@ -205,3 +211,28 @@ def test_storage_and_expression_expansion_budgets():
     with pytest.raises(oq.ConversionError) as error:
         oq.convert(native, target="ir", source_options={"max_operations": 20})
     assert error.value.diagnostics[0].code == "EXPANSION_LIMIT"
+
+
+def test_nested_mutable_loops_keep_break_and_continue_targets_separate():
+    qiskit, expr, types = _sdk()
+    if not hasattr(expr, "add"):
+        pytest.skip("Typed arithmetic requires a recent Qiskit.")
+    native = qiskit.QuantumCircuit(2, 2)
+    outer = native.add_var("outer", expr.Value(0, types.Uint(3)))
+    inner = native.add_var("inner", expr.Value(0, types.Uint(3)))
+    with native.for_loop(range(3)):
+        native.store(outer, expr.add(outer, 1))
+        with native.for_loop(range(4)):
+            native.store(inner, expr.add(inner, 1))
+            with native.if_test(expr.equal(inner, 2)):
+                native.continue_loop()
+            with native.if_test(expr.greater_equal(inner, 3)):
+                native.break_loop()
+            native.x(0)
+        with native.if_test(expr.equal(outer, 2)):
+            native.continue_loop()
+        native.x(1)
+    native.measure([0, 1], [0, 1])
+    circuit = oq.convert(native, target="ir").value
+    assert oq.execute(circuit, shots=13, classical_bits=(0, 1)).counts == {"10": 13}
+    assert len(list(circuit.walk_operations())) < 2000

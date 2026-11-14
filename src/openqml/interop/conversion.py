@@ -695,11 +695,11 @@ def plan_conversion(
         circuit = import_native(value, source, **source_options)
     _check_circuit_limits(circuit, max_operations=max_operations, max_depth=max_depth)
     if source == "qiskit" or (program is not None and program.framework == "qiskit"):
-        from .adapters.qiskit import static_loop_notes
+        from .adapters.qiskit import classical_storage_notes, static_loop_notes
 
-        frontend_notes += static_loop_notes(
-            value if source == "qiskit" else program.native, num_clbits=circuit.num_clbits
-        )
+        original = value if source == "qiskit" else program.native
+        frontend_notes += static_loop_notes(original)
+        frontend_notes += classical_storage_notes(original, circuit.num_clbits)
     if source == "cirq" and source_options.get("measurement_map"):
         frontend_notes += tuple(
             Diagnostic(

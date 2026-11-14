@@ -6,6 +6,8 @@
   completely positive maps, symmetric splitting, a trace-norm discretization
   bound, streaming state and masked time series. The implementation applies
   local operators without building a dense Liouvillian.
+  Commuting supported generators use exact composition without repeated
+  splitting, including mutually commuting Pauli dissipators and disjoint decay.
 - `qml/interfaces`: add trainable PyTorch and Flax Lindblad layers, positive
   dissipation rates, checkpointed time evolution and native higher derivatives.
 - `qml/lindblad.py`: propagate absolute generator-error envelopes into final
@@ -22,9 +24,13 @@
   exits with shared assignment snapshots and reusable loop flags. Reject
   undefined inputs and uninitialized reads. Preserve stores through Qiskit,
   JSON and OpenQASM 3 and diagnose unsupported targets.
+  Keep the existing loop-note hook signature while reporting added storage
+  separately, preserving importer-budget integrations.
 - `docs`: describe all three interfaces, their input domains, approximation
   bounds, resource limits and method sources. Remove an obsolete store path
   from the immutable-continuation compiler.
+- `MANIFEST.in`, `README.md`: include the change history in source distributions
+  and link it from the package description.
 - `tests/test_lindblad.py`: check analytic decay, independent matrix-exponential
   evolution, physical density constraints, discretization bounds, second
   derivatives, streaming and compiled PyTorch execution.

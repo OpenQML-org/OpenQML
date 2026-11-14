@@ -1,6 +1,6 @@
 # OpenQML
 
-[PyPI](https://pypi.org/project/openqml/) · [Documentation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/api.md) · [CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml)
+[PyPI](https://pypi.org/project/openqml/) · [Documentation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/api.md) · [Changes](https://github.com/OpenQML-org/OpenQML/blob/main/CHANGELOG.md) · [CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml)
 
 [Contributing](CONTRIBUTING.md) · [Governance](GOVERNANCE.md) · [Security](SECURITY.md)
 

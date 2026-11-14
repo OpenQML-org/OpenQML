@@ -36,7 +36,8 @@ It returns all readouts, the final density and a trace-norm splitting bound.
 
 Each local propagator is an exact completely positive trace-preserving map.
 Symmetric splitting gives second-order convergence for noncommuting terms;
-commuting supported generators need no splitting correction. The conservative
+commuting supported generators use exact composition without repeated splitting,
+including Pauli dissipators and independent local decay. The conservative
 bound uses the induced trace-norm generator estimate, matching the two series
 through second order and summing local remainders by CPTP contraction. It
 excludes floating-point roundoff. `tolerance` rejects an inadequate discretization
