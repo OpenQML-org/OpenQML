@@ -62,13 +62,15 @@ def _inputs(plan, bindings, vector, backend, sample_weights=None, sample_chunk_s
     vector = ops.check(vector, ops.xp.isfinite(vector), "Metric vectors must be finite.")
     # Model the largest sequential factor's primal/JVP/VJP state workspace.
     # Framework tapes, compiler workspaces and allocator pools remain separate.
-    workspace = max(
-        (
-            16 * (1 << p.circuit.num_qubits) * (16 + 8 * len(p.circuit.operations))
-            for p, _ in plan._plans
-        ),
-        default=0,
-    )
+    workspace = getattr(plan, "_native_workspace", None)
+    if workspace is None:
+        workspace = max(
+            (
+                16 * (1 << p.circuit.num_qubits) * (16 + 8 * len(p.circuit.operations))
+                for p, _ in plan._plans
+            ),
+            default=0,
+        )
     count = shape[0] if shape else 1
     if sample_chunk_size is not None:
         sample_chunk_size = integer(sample_chunk_size, "sample_chunk_size", 1)
@@ -84,7 +86,7 @@ def _inputs(plan, bindings, vector, backend, sample_weights=None, sample_chunk_s
 def native_matvec(
     plan, bindings, vector, *, backend="torch", sample_weights=None, sample_chunk_size=None
 ):
-    """Apply Re(QGT) with native JVP/VJP, without a dense parameter metric.
+    """Apply the selected geometry with native JVP/VJP, without a parameter matrix.
 
     Realifying the state gives the same convention in both frameworks. Remove
     its radial and global-phase tangent before the reverse pullback. Independent
@@ -145,6 +147,10 @@ def _apply_metric(plan, local, vector, mass, ops, backend, sample_chunk_size=Non
 def _metric_product(plan, local, vector, mass, ops, backend):
     if not plan.parameters:
         return vector * 0
+    if plan._metric_kind == "sld":
+        from .fisher import density_product
+
+        return density_product(plan, local, vector, mass, ops, backend)
     xp = ops.xp
     if backend == "torch":
         jvp, vjp = xp.func.jvp, xp.func.vjp
@@ -219,7 +225,7 @@ def native_natural_gradient(
     sample_chunk_size=None,
     **options,
 ):
-    """Solve (Re(QGT)+damping*I)d=g on the selected native device."""
+    """Solve (metric+damping*I)d=g on the selected native device."""
     ops, local, gradient, mass = _inputs(
         plan, bindings, gradient, backend, sample_weights, sample_chunk_size
     )

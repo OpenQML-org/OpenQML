@@ -153,8 +153,12 @@ device with the intended architecture, precision, batch size and execution path.
 ## Joint AdamW and Quantum Natural Muon
 
 `hybrid_qnm` owns a complete Torch module. Classical parameters use AdamW;
-active weights of native, unitary `QuantumLayer` modules use the stateful
-distance-aware quantum Fisher method. For example, after constructing a model
+active weights of native `QuantumLayer` modules use the stateful
+distance-aware quantum Fisher method. Unitary circuits retain pure-state
+geometry; noisy or dynamic circuits use regularized final-density SLD geometry.
+`fisher_options={"state_damping": 1e-4, "max_branches": 256}` configures that
+path. See [density-state geometry](native-geometry.md#density-state-fisher-geometry)
+for its marginal-state convention and resource costs. After constructing a model
 with a quantum submodule named `quantum` containing four active weights:
 
 ```python

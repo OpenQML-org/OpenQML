@@ -12,6 +12,8 @@ Train native quantum blocks with resumable, distance-aware Quantum Natural Muon
 and classical blocks with AdamW through one `hybrid_qnm` optimizer. Microbatch
 accumulation and DDP share an empirical, matrix-free quantum Fisher metric.
 Sample chunking bounds the active state workspace during geometry products.
+Noisy and dynamic circuits use regularized density-state Fisher geometry with
+implicit Sylvester derivatives, including repeated density eigenvalues.
 External Torch/JAX layers can pack forward and parameter-shift rows into one
 provider submission and reuse their linearization during backward.
 
@@ -24,6 +26,9 @@ Learn scenario probabilities, Wasserstein radii and anisotropic transport metric
 decisions. Exact piecewise quadratic projections fund proportional fees and
 market impact while enforcing CVaR or expectile budgets.
 `ScenarioPlan.tree` adds funded multi-stage policies and nested conditional risk.
+`MultiPeriodPlan` couples forecast-horizon decisions through turnover costs.
+`ScenarioPlan.horizon_decision` differentiates those decisions through predicted
+path probabilities without constructing a dense horizon KKT matrix.
 
 ## Cross-framework quantum programming
 
@@ -37,6 +42,8 @@ nonzero divisors. Correlated selector proofs admit bounded dynamic shifts and
 bit indexing while preserving atomic branch selection.
 Deferred Qiskit inverses, controls and numeric powers expand through the same
 checked conversion routes.
+Finite loops with `break` and `continue` preserve measurement feedback, nested
+exit targets and entry-time branch selection under explicit expansion budgets.
 
 Simulate physical noise with amplitude/phase damping, depolarization and custom Kraus channels. Correct independent readout errors or extrapolate measured noise scales with explicit conditioning and sampling-overhead limits. Caller-initialized Qiskit V2 primitives connect real hardware; see [execution limits and mitigation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md#physical-noise-and-error-mitigation).
 

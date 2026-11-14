@@ -83,6 +83,6 @@ batched shifting is requested.
 
 This adopts fixed-stencil job packing from
 [Training quantum neural networks one job at a time (November 2026)](https://arxiv.org/abs/2611.16365).
-It excludes the paper's sinusoid-search optimizer and does not reproduce its
-hardware accuracy or job-count comparisons. Callback behavior follows the
+The implemented scope is fixed-stencil submission packing; hardware accuracy
+and billed job counts depend on the selected provider. Callback behavior follows the
 [JAX I/O contract](https://docs.jax.dev/en/latest/_autosummary/jax.experimental.io_callback.html).

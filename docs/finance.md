@@ -320,7 +320,7 @@ provide distribution-shift coverage without separate statistical calibration.
 motivates contextual radii and anisotropic metrics. Its anisotropic metric was
 not empirically evaluated in that paper, and its portfolio results do not
 establish returns for this library. This implementation extends the existing
-specialized W1/CVaR cash-ray layer; it does not reproduce the full LPAS pipeline.
+specialized W1/CVaR cash-ray layer.
 
 `risk_budget_projection` takes a long-only proposal whose asset weights sum to
 at most one, a joint scenario table, optional Born probabilities, a CVaR budget
@@ -630,8 +630,8 @@ investment-performance or quantum-speedup claim follows from these operators.
 
 The integrated predictive/decision objective follows the direction of
 [Financially Guided Deep Portfolio Optimization](https://arxiv.org/abs/2605.28853),
-with OpenQML's own exact cash-ray projection. It does not reproduce that paper's
-full model or reported market results.
+with OpenQML's exact cash-ray projection. Its numerical certificate applies to
+the supplied model, rather than to future market outcomes.
 
 ## Multi-stage contingent policies
 
@@ -724,3 +724,43 @@ with no guarantee of a globally optimal policy or market performance.
 - [Anytime-Valid Quantum State Tomography via Confidence Sequences](https://arxiv.org/abs/2601.20761), IEEE Signal Processing Letters 33 (2026): time-uniform quantum inference; the implementation here concerns binomial amplitude estimation, not tomography.
 - [Time-uniform, nonparametric, nonasymptotic confidence sequences](https://arxiv.org/abs/1810.08240), Annals of Statistics 49(2), 1055–1080 (2021): mixture-martingale confidence sequences and optional-stopping coverage.
 - [Goldfarb–Idnani Revisited: Invariants, Certificates, and the Limits of Guessing](https://arxiv.org/abs/2608.30933) (2026): motivates certification of a proposed active set. OpenQML retains its specialized factor-risk solver and implicit derivatives.
+
+
+## Coupled horizon allocation
+
+`MultiPeriodPlan` solves one strictly convex allocation over
+`mean[...,horizon,assets]`. At each period it enforces long-only caps and a
+specified invested budget. Risk is represented by `FactorRisk` with stationary
+or per-period factors. Its objective sums quadratic portfolio risk minus
+expected return, ridge regularization, and
+`turnover/2 * sum_t ||w_t-w_previous_t||²`; the first previous position is
+supplied by the caller and later previous positions are earlier decisions.
+Future forecasts can therefore change the current action.
+
+`solve(mean,risk,previous=None,caps=1,budget=1,turnover=None,warm_start=None)`
+returns `MultiPeriodResult(weights,objective,residual,converged)`.
+`first_weights` selects the current action. The optional native turnover
+coefficient retains gradients. An initial projected solve identifies an active
+face. A constrained factor/temporal conjugate-gradient solve refines it, then
+checks both feasibility and the projected KKT residual. Insufficient work or
+precision raises `ConvergenceError`.
+
+Torch and JAX use implicit derivatives on the selected active face, including
+first and higher derivatives through means, factors, factor masses, specific
+variances, previous holdings and turnover. At a changing constraint face these
+are piecewise derivatives. Per-period tangent projections and temporal
+Hessian products avoid a dense `(horizon*assets)²` matrix. Runtime working
+storage scales with horizon, assets and factor rank. `resource_profile` admits
+memory and estimated arithmetic work before optimization; framework tapes and allocator
+reserves require separate budgets.
+
+`ScenarioPlan.horizon_risk(probabilities)` forms each period's factor risk from
+the same predicted distribution over whole return paths.
+`horizon_decision(probabilities,allocation=plan,...)` connects that distribution
+to the horizon solve without detaching it. A quantum generative model can
+therefore train its Born probabilities against a current-decision loss.
+The plan uses open-loop period marginals and quadratic turnover, rather than
+information-dependent future trades. Replan after observations. Apply
+`execution_decision(..., step=0)` to `first_weights` for fee/impact funding and
+CVaR/expectile checks before execution; the horizon objective alone supplies
+no after-cost risk certificate.

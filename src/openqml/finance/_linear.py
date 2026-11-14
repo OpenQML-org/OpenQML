@@ -4,6 +4,7 @@ import numpy as np
 
 from ..compute.kernel import _torch_compiling
 from ..errors import ConvergenceError
+from ._array import machine_epsilon
 
 
 def matmat(diagonal, factors, mass, value, ops):
@@ -44,7 +45,7 @@ def _solve(diagonal, factors, mass, rhs, iterations, tolerance, ops, *, return_i
         result = _woodbury(diagonal, factors, mass, rhs, ops)
     else:
         result = _pcg(diagonal, factors, mass, rhs, iterations, tolerance, ops)
-    eps = np.finfo(np.float64 if "64" in str(rhs.dtype) else np.float32).eps
+    eps = machine_epsilon(rhs, ops)
     residual = ops.norm(rhs - matmat(diagonal, factors, mass, result, ops), axis=-2)
     reference = ops.norm(rhs, axis=-2)
     valid = ops.xp.isfinite(residual) & (residual <= max(tolerance, 8 * eps) * reference)
@@ -64,7 +65,7 @@ def _pcg(diagonal, factors, mass, rhs, iterations, tolerance, ops):
     rhs_scale = ops.stop(ops.max(xp.abs(rhs), axis=-2, keepdims=True))
     rhs_scale = xp.where(rhs_scale > 0, rhs_scale, 1)
     rhs = rhs / rhs_scale
-    eps = np.finfo(np.float64 if "64" in str(rhs.dtype) else np.float32).eps
+    eps = machine_epsilon(rhs, ops)
     tolerance = max(tolerance, 8 * eps)
     weighted = factors * xp.sqrt(xp.abs(mass))[..., :, None]
     preconditioner = diagonal + ops.sum(weighted * weighted * xp.sign(mass)[..., :, None], axis=-2)

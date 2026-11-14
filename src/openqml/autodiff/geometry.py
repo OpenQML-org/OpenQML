@@ -52,6 +52,7 @@ class QuantumMetricPlan:
     max_work: int = 1_000_000
     _plans: tuple = field(init=False, repr=False)
     _row_mib: float = field(init=False, repr=False)
+    _metric_kind = "fubini-study"
 
     def __post_init__(self):
         _require_circuit(self.circuit)

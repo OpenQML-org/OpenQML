@@ -3,6 +3,8 @@
 from .._lazy import resolve as _resolve
 
 _EXPORTS = {
+    "QuantumFisherPlan": (".fisher", "QuantumFisherPlan"),
+    "quantum_fisher": (".fisher", "quantum_fisher"),
     "compile_compute": (".compilation", "compile_compute"),
     "parameter_shift": (".gradients", "parameter_shift"),
     "parameter_shift_jacobian": (".gradients", "parameter_shift_jacobian"),

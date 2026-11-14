@@ -28,6 +28,8 @@ from .autodiff.adjoint import adjoint_vjp as adjoint_vjp
 from .autodiff.distance_aware import DistanceAwareQNM as DistanceAwareQNM
 from .autodiff.distance_aware import DistanceAwareResult as DistanceAwareResult
 from .autodiff.distance_aware import DistanceAwareState as DistanceAwareState
+from .autodiff.fisher import QuantumFisherPlan as QuantumFisherPlan
+from .autodiff.fisher import quantum_fisher as quantum_fisher
 from .autodiff.geometry import NaturalGradientResult as NaturalGradientResult
 from .autodiff.geometry import QuantumMetricPlan as QuantumMetricPlan
 from .autodiff.geometry import quantum_metric as quantum_metric

@@ -34,8 +34,6 @@ def from_qiskit(
     from qiskit.circuit import (
         AnnotatedOperation,
         Barrier,
-        BreakLoopOp,
-        ContinueLoopOp,
         Delay,
         ForLoopOp,
         IfElseOp,
@@ -112,6 +110,17 @@ def from_qiskit(
         raise conversion_error("SOURCE_TYPE", "Expected a Qiskit QuantumCircuit.")
     if not native.num_qubits and not nested:
         raise conversion_error("NO_QUBITS", "A top-level IR circuit needs at least one qubit.")
+    from ._qiskit_flow import has_jumps, lower_jumps
+
+    if has_jumps(native):
+        return lower_jumps(
+            native,
+            expand=expand,
+            max_operations=max_operations,
+            max_depth=max_depth,
+            max_matrix_qubits=max_matrix_qubits,
+            context=_context,
+        )
     # Empty SDK bodies can carry only a phase/control structure. Their internal
     # placeholder has no quantum operands and is mapped onto a parent wire.
     width = max(1, native.num_qubits)
@@ -133,10 +142,6 @@ def from_qiskit(
 
     for index, item in enumerate(native.data):
         op, location = item.operation, f"operations[{index}]"
-        if isinstance(op, (BreakLoopOp, ContinueLoopOp)):
-            raise conversion_error(
-                "CLASSICAL_CONTROL", "break/continue cannot be statically unrolled.", location
-            )
         name = {"i": "id", "u1": "p", "u2": "u", "u3": "u", "cu1": "cp"}.get(op.name, op.name)
         if isinstance(op, AnnotatedOperation):
             from ._qiskit_annotations import annotated_definition

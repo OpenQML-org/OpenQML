@@ -135,6 +135,12 @@ class LayerSpec:
 
         return QuantumMetricPlan(self.circuit, self.weight_parameters, max_qubits, max_memory_mb)
 
+    def fisher_plan(self, **options):
+        """Prepare regularized density-state geometry in the ordered weight coordinates."""
+        from ..autodiff.fisher import quantum_fisher
+
+        return quantum_fisher(self.circuit, parameters=self.weight_parameters, **options)
+
     def reparameterize(self, mapping, *, input_parameters, weight_parameters):
         """Retie or transform symbols through the IR with explicit new ownership.
 

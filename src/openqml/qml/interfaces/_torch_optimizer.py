@@ -8,6 +8,7 @@ from collections.abc import Mapping
 import torch
 
 from ...autodiff.distance_aware import DistanceAwareQNM, DistanceAwareState
+from ...autodiff.fisher import quantum_fisher
 from ...autodiff.geometry import quantum_metric
 from ...compute.kernel import get_compute_kernel
 from ...errors import ValidationError
@@ -23,7 +24,7 @@ def _remove_hooks(handles):
 class HybridQNM(torch.optim.AdamW):
     """AdamW classical groups and QFIM/momentum/polar quantum groups.
 
-    Native unitary QuantumLayer weight vectors use empirical input geometry.
+    Native QuantumLayer weight vectors use pure-state or noisy-state geometry.
     Backward-selected inputs span microbatches. DDP reduces sample-weighted
     metric products, without a dense parameter matrix. Input tensors must not
     mutate between forward and backward. Use state_dict for portable state.
@@ -37,6 +38,7 @@ class HybridQNM(torch.optim.AdamW):
         quantum_lr=0.01,
         block_shapes=None,
         quantum_options=None,
+        fisher_options=None,
         weight_decay=0.01,
         **adam_options,
     ):
@@ -55,6 +57,11 @@ class HybridQNM(torch.optim.AdamW):
         if quantum_options is not None and not isinstance(quantum_options, Mapping):
             raise ValidationError("quantum_options must be a mapping.")
         options = dict(quantum_options or {})
+        if fisher_options is not None and not isinstance(fisher_options, Mapping):
+            raise ValidationError("fisher_options must be a mapping.")
+        fisher = dict(fisher_options or {})
+        if set(fisher) - {"state_damping", "max_branches", "max_work"}:
+            raise ValidationError("Use fisher_options for state_damping, max_branches or max_work.")
         if set(options) & {"plan", "block_shapes", "learning_rate"}:
             raise ValidationError("Use block_shapes and quantum_lr for group layout and rates.")
         layers = [
@@ -73,8 +80,8 @@ class HybridQNM(torch.optim.AdamW):
         self._quantum = []
         quantum_ids = set()
         for name, layer in layers:
-            if layer.execution_backend != "torch" or layer.circuit.has_effects:
-                raise ValidationError("HybridQNM needs native unitary pure-state Torch layers.")
+            if layer.execution_backend != "torch":
+                raise ValidationError("HybridQNM needs native Torch layers.")
             parameter = layer.weights
             if parameter.dtype not in (torch.float32, torch.float64):
                 raise ValidationError("Use float32/float64 quantum master weights with AMP.")
@@ -86,11 +93,13 @@ class HybridQNM(torch.optim.AdamW):
             if parameter.ndim != 1 or parameter.shape[0] != len(layer.weight_parameters):
                 raise ValidationError("Quantum weight vectors must preserve circuit ownership.")
             positions = tuple(layer.weight_parameters.index(n) for n in names)
-            plan = quantum_metric(
+            factory = quantum_fisher if layer.circuit.has_effects else quantum_metric
+            plan = factory(
                 layer.circuit,
                 parameters=names,
                 max_memory_mb=layer.limits["max_memory_mb"],
                 max_qubits=layer.limits["max_qubits"],
+                **(fisher if layer.circuit.has_effects else {}),
             )
             shapes = (
                 block_shapes.get(name) if isinstance(block_shapes, Mapping) else block_shapes

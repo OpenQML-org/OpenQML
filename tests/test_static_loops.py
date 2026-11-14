@@ -193,8 +193,8 @@ def test_static_loops_do_not_miscompile_break_or_continue(feature):
     with native.for_loop(range(3)):
         native.h(0)
         getattr(native, feature + "_loop")()
-    with pytest.raises(ConversionError, match="CLASSICAL_CONTROL"):
-        QuantumProgram.capture(native).to_ir()
+    result = QuantumProgram.capture(native).to_ir()
+    assert len(result.operations) == (1 if feature == "break" else 3)
 
 
 def test_expansion_disabled_requires_native_loop_execution():

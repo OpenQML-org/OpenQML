@@ -276,6 +276,33 @@ class ScenarioPlan:
         options.setdefault("max_work", self.max_work)
         return ScenarioTreePlan(self.scenarios, node_ids, **options)
 
+    def horizon_risk(self, probabilities, *, shrinkage=0.1, variance_floor=1e-8):
+        """Per-period factor risk from one predicted distribution over whole paths."""
+        if self.scenarios.ndim != 3:
+            raise ValidationError("Horizon risk requires multi-period scenario paths.")
+        ops = Ops(probabilities)
+        p = ops.probabilities(probabilities, self.num_scenarios)
+        return factor_risk(
+            ops.array(self.scenarios).swapaxes(-3, -2),
+            p[..., None, :],
+            shrinkage=shrinkage,
+            variance_floor=variance_floor,
+            max_memory_mb=self.max_memory_mb,
+        )
+
+    def horizon_decision(
+        self, probabilities, *, allocation=None, shrinkage=0.1, variance_floor=1e-8, **options
+    ):
+        """Differentiate a coupled open-loop horizon decision through Born path weights."""
+        from ..errors import _require_instance
+        from .multiperiod import MultiPeriodPlan
+
+        if allocation is None:
+            allocation = MultiPeriodPlan(max_memory_mb=self.max_memory_mb, max_work=self.max_work)
+        _require_instance(allocation, MultiPeriodPlan, "allocation")
+        risk = self.horizon_risk(probabilities, shrinkage=shrinkage, variance_floor=variance_floor)
+        return allocation.solve(risk.mean, risk, **options)
+
     def execution_decision(self, probabilities, proposal, *, step=None, **options):
         """Project a proposal using this Born distribution and after-cost risk.
 

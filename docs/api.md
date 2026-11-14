@@ -46,6 +46,10 @@ operate on native Torch/JAX parameter vectors. Their result types are
 `NativeMetricResult` and `SpectralStepResult`. See [native quantum geometry](native-geometry.md)
 for the metric convention, spectral block order, residual certificates and scope.
 
+`quantum_fisher` returns `QuantumFisherPlan`, with the same native interfaces
+for factorwise regularized SLD geometry of final density matrices. Set
+`state_damping` separately from the natural-gradient solve's `damping`.
+
 `DistanceAwareQNM` returns `DistanceAwareResult(step, state, natural, radius,
 alignment, restarted)`. `DistanceAwareState` is an explicit native tensor tree.
 `hybrid_qnm(model, ...)` creates a Torch optimizer for native unitary
@@ -293,6 +297,13 @@ The CLI exposes this control as `--max-output-bytes`.
 prepared topology. See [interoperability](interoperability.md).
 
 ## Scenario trees
+
+`finance.MultiPeriodPlan.solve(mean,risk,previous=...,caps=...,budget=...)`
+optimizes coupled horizon weights with a factor covariance and quadratic
+turnover. `MultiPeriodResult` contains `weights`, `objective`, `residual` and
+`converged`; `first_weights` selects the current action.
+`ScenarioPlan.horizon_risk` and `horizon_decision` retain derivatives through
+predicted whole-path probabilities. See [horizon allocation](finance.md#coupled-horizon-allocation).
 
 `finance.ScenarioTreePlan(paths,node_ids)` exposes `decision_keys`, `rollout` and
 `nested_risk`. `ScenarioPlan.tree(node_ids)` reuses its multi-period return atoms.

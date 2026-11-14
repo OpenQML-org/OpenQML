@@ -14,6 +14,10 @@ from ..compute.kernel import (
 from ..errors import ValidationError
 
 
+def machine_epsilon(value, ops):
+    return 2.220446049250313e-16 if value.dtype == ops.xp.float64 else 1.1920928955078125e-7
+
+
 class Ops(RealOps):
     def __init__(self, *values):
         values = tuple(v for v in values if v is not None)

@@ -31,6 +31,7 @@ across parameter sweeps, partial binding and verification.
 | Qiskit `if_else` | Atomic equality selection over explicit classical bits |
 | Qiskit `switch` | Bit/register selectors, grouped integer labels and a default branch |
 | Qiskit finite `for` | Bounded static expansion with explicit parameter binding |
+| Qiskit `break_loop` / `continue_loop` | Continuations preserve the nearest finite loop's exit or next iteration |
 | Repeated Qiskit definitions | One imported body per source object and option set, with fresh wire remapping |
 | Qiskit symbolic angles | Per-import expression reuse and iterative DAG export |
 | OpenQASM 3 guards | Bit/register/index-set equality and conjunctions, preserving arbitrary bit order |
@@ -142,6 +143,25 @@ Recent work on [structured quantum programs (September 2026)](https://arxiv.org/
 motivates retaining classical structure. The existing native program route
 continues to retain supported dynamic loops instead of flattening their runtime
 iterations; this addition handles bounded pure predicates in the portable IR.
+
+## Finite loops with early exits
+
+Finite Qiskit loops can contain nested `break_loop` and `continue_loop` nodes,
+including exits under typed predicates and grouped switch cases. Continuation
+lowering attaches each exit to its nearest lexical loop. A branch resolves its
+selector before the selected body can overwrite that selector. Loop parameters,
+wire maps, global phases and operations following the whole loop are preserved.
+
+The portable output uses existing atomic IR branches, with no mutable scratch
+bits. `max_operations` counts expanded branch payloads, including repeated
+continuations; `max_depth` bounds the resulting control nesting. Oversized
+programs fail before constructing their expanded output. Runtime while loops
+continue to require native program execution.
+
+Qiskit and OpenQASM 3 retain nested measurements and feedback. Cirq export is
+available when the resulting atomic payload is representable in Cirq; blocks
+containing further measurements or repeated record writes retain explicit
+compatibility diagnostics.
 
 ## Prepare once, bind many
 

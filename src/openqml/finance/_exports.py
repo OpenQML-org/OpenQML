@@ -1,6 +1,8 @@
 """Lazy financial API locations."""
 
 EXPORTS = {
+    "MultiPeriodPlan": (".multiperiod", "MultiPeriodPlan"),
+    "MultiPeriodResult": (".multiperiod", "MultiPeriodResult"),
     "ScenarioTreePlan": (".scenario_tree", "ScenarioTreePlan"),
     "ScenarioTreeResult": (".scenario_tree", "ScenarioTreeResult"),
     "TreeRiskResult": (".scenario_tree", "TreeRiskResult"),
@@ -50,6 +52,8 @@ EXPORTS = {
 }
 
 PUBLIC = [
+    "MultiPeriodPlan",
+    "MultiPeriodResult",
     "ScenarioTreePlan",
     "ScenarioTreeResult",
     "TreeRiskResult",
@@ -99,6 +103,7 @@ PUBLIC = [
 ]
 
 MODULES = {
+    "multiperiod": ".multiperiod",
     "scenario_tree": ".scenario_tree",
     "transport": ".transport",
     "barrier": ".barrier",

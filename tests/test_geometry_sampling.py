@@ -1,4 +1,4 @@
-"""Independent numerical and statistical checks of the research-backed additions."""
+"""Geometry and adaptive shot-allocation numerical contracts."""
 
 import numpy as np
 import pytest
@@ -84,7 +84,7 @@ def test_metric_invalid_domains_and_resource_limits():
         plan.matvec({"x": 0.1}, [1, 2])
 
 
-def test_adaptive_shot_budget_reproducibility_and_variance_allocation():
+def test_adaptive_shot_budget_seed_consistency_and_variance_allocation():
     observables = [oq.PauliString("Z"), oq.PauliString("X")]
     a = oq.estimate_adaptive([oq.Circuit(1)], observables, shots=2000, pilot_shots=32, seed=17)
     b = oq.estimate_adaptive([oq.Circuit(1)], observables, shots=2000, pilot_shots=32, seed=17)

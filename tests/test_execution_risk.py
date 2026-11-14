@@ -121,7 +121,7 @@ def test_funding_bound_context_batches_and_zero_proposals():
 
 
 @pytest.mark.parametrize("measure,level", [("cvar", 0.8), ("expectile", 0.9)])
-def test_returned_post_cost_targets_reproduce_self_financing_ledger(measure, level):
+def test_returned_post_cost_targets_match_self_financing_ledger(measure, level):
     f = oq.finance
     previous = np.array([0.3, 0.2])
     fee, impact = np.array([0.001, 0.002]), np.array([0.02, 0.03])

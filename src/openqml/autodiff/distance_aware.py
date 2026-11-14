@@ -10,6 +10,7 @@ from ..compute.kernel import _array_backend, compute_operation, get_compute_kern
 from ..errors import ResourceError, ValidationError
 from ..ir.core import integer
 from ..ir.parameters import real
+from .fisher import QuantumFisherPlan
 from .geometry import QuantumMetricPlan
 from .native_geometry import _inputs, _natural_solve, _polar_mix, _spectral_shapes
 
@@ -35,13 +36,14 @@ class DistanceAwareResult(NamedTuple):
 class DistanceAwareQNM:
     """QFIM solve -> natural momentum -> active polar mixing -> distance radius.
 
-    Uses F=4*Re(QGT). Selected coordinates are shared scalar bindings; auxiliary
+    Uses F=4*Re(QGT) for pure states, or the supplied regularized SLD metric.
+    Selected coordinates are shared scalar bindings; auxiliary
     circuit inputs may carry the existing weighted sample axis. State is an
     explicit Torch/JAX tree, detached between steps and checked against this
     circuit, parameter order and optimizer configuration. No parameters mutate.
     """
 
-    plan: QuantumMetricPlan
+    plan: QuantumMetricPlan | QuantumFisherPlan
     block_shapes: tuple
     damping: float = 0.01
     momentum: float = 0.9
@@ -62,8 +64,11 @@ class DistanceAwareQNM:
             object.__setattr__(
                 self, "sample_chunk_size", integer(self.sample_chunk_size, "sample_chunk_size", 1)
             )
-        if not isinstance(self.plan, QuantumMetricPlan) or not self.plan.parameters:
-            raise ValidationError("Distance-aware QNM needs a nonempty QuantumMetricPlan.")
+        if (
+            not isinstance(self.plan, (QuantumMetricPlan, QuantumFisherPlan))
+            or not self.plan.parameters
+        ):
+            raise ValidationError("Distance-aware QNM needs a nonempty quantum geometry plan.")
         shapes = _spectral_shapes(self.block_shapes, len(self.plan.parameters))
         object.__setattr__(self, "block_shapes", shapes)
         settings = {}
@@ -116,6 +121,8 @@ class DistanceAwareQNM:
             sort_keys=True,
         ).encode()
         digest = hashlib.sha256(payload)
+        if isinstance(self.plan, QuantumFisherPlan):
+            digest.update(f"regularized-SLD:{self.plan.state_damping!r}".encode())
         digest.update(
             self.plan.circuit.to_json(
                 indent=None, max_bytes=int(self.plan.max_memory_mb * 2**20)
@@ -194,7 +201,7 @@ class DistanceAwareQNM:
             mass,
             ops,
             backend,
-            metric_scale=4,
+            metric_scale=4 if isinstance(self.plan, QuantumMetricPlan) else 1,
             metric_reducer=metric_reducer,
             sample_chunk_size=self.sample_chunk_size,
             damping=self.damping,

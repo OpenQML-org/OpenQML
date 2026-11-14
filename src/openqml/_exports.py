@@ -1,6 +1,8 @@
 """Lazy public APIs; implementation modules live in responsibility packages."""
 
 EXPORTS = {
+    "QuantumFisherPlan": (".autodiff.fisher", "QuantumFisherPlan"),
+    "quantum_fisher": (".autodiff.fisher", "quantum_fisher"),
     "compile_circuit": (".sim.compiled", "compile_circuit"),
     "ReadoutMitigation": (".sim.mitigation", "ReadoutMitigation"),
     "MitigatedEstimate": (".sim.mitigation", "MitigatedEstimate"),
@@ -278,6 +280,8 @@ MODULES = {
 }
 
 PUBLIC = [
+    "QuantumFisherPlan",
+    "quantum_fisher",
     "compile_circuit",
     "ReadoutMitigation",
     "MitigatedEstimate",

@@ -9,7 +9,7 @@ from ..compute.kernel import compute_operation, memory_budget
 from ..errors import ValidationError
 from ..ir.core import integer
 from ..ir.parameters import real
-from ._array import Ops, admission, rows
+from ._array import Ops, admission, machine_epsilon, rows
 
 
 class TradingState(NamedTuple):
@@ -99,7 +99,7 @@ class SelfFinancingPlan:
             r, xp.isfinite(r) & (r >= -1), "Arithmetic returns must be finite and at least -1."
         )
         w = ops.check(w, xp.isfinite(w) & (w >= 0), "Trading targets must be finite and long-only.")
-        eps = np.finfo(np.float64 if "64" in str(w.dtype) else np.float32).eps
+        eps = machine_epsilon(w, ops)
         w = ops.check(
             w,
             (ops.sum(w) <= 1 + 8 * n * eps)[..., None],

@@ -9,13 +9,11 @@ matrix-free constrained solve refines it and supplies piecewise implicit AD.
 from dataclasses import dataclass
 from typing import NamedTuple
 
-import numpy as np
-
 from ..compute.kernel import _torch_compiling, compute_operation
 from ..errors import ConvergenceError, ValidationError, _require_instance
 from ..ir.core import integer
 from ..ir.parameters import real
-from ._array import Ops, admission, rows
+from ._array import Ops, admission, machine_epsilon, rows
 from ._linear import linear_solve, matmat
 from .projection import _prox
 from .risk import FactorRisk, prepare_risk
@@ -119,7 +117,7 @@ class AllocationPlan:
         previous = ops.check(
             previous, previous >= 0, "Long-only previous weights must be nonnegative."
         )
-        eps = np.finfo(np.float64 if "64" in str(mean.dtype) else np.float32).eps
+        eps = machine_epsilon(mean, ops)
         tolerance = max(self.tolerance, 64 * eps)
         capacity = ops.sum(caps)
         budget = ops.check(
@@ -290,7 +288,7 @@ class AllocationPlan:
         center = ops.clip(previous, 0, caps)
         initial = _prox(previous, center, caps, xp.zeros_like(fees), budget, ops)
         initial_state = (initial, initial, ops.array(1), xp.full_like(budget, float("inf")))
-        eps = np.finfo(np.float64 if "64" in str(linear.dtype) else np.float32).eps
+        eps = machine_epsilon(linear, ops)
         threshold = max(1e-10, 8 * eps)
 
         def advance(state):

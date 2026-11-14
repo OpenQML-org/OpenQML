@@ -29,10 +29,8 @@ def _planning_limit(circuit, max_qubits, max_memory_mb, batch_size=1, max_branch
     """Bound metadata enumeration by memory before allocating branch-key sets."""
     integer(max_branches, "max_branches", 1)
     _resource_check(circuit, max_qubits, max_memory_mb, batch_size)
-    numerator, denominator = memory_budget(max_memory_mb).as_integer_ratio()
-    capacity = ((numerator << 20) // (denominator * 64 * max(1, batch_size))) >> (
-        2 * circuit.num_qubits
-    )
+    budget = get_compute_kernel()._prepare_budget(max_memory_mb)
+    capacity = (budget.max_bytes // (64 * max(1, batch_size))) >> (2 * circuit.num_qubits)
     return max(1, min(max_branches, capacity))
 
 

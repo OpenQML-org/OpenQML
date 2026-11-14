@@ -1,6 +1,6 @@
 # Native quantum geometry
 
-`QuantumMetricPlan` now supports resident PyTorch/JAX metric products, damped
+`QuantumMetricPlan` supports resident PyTorch/JAX metric products, damped
 natural-gradient solves and an optional spectral step. Use the parameter order
 declared by the plan. Native bindings may be scalars or share one visible
 sample axis. A real floating vector selects a common coordinate displacement.
@@ -30,6 +30,44 @@ The unitary pure-state representation still costs exponential storage in the
 largest connected factor. Admission models conservative primal/JVP/VJP state
 storage for the visible sample batch; compiler buffers, allocator pools, hidden transform
 batch axes and autodiff tapes require separate application budgets.
+
+## Density-state Fisher geometry
+
+`quantum_fisher(circuit, parameters=None, state_damping=1e-4, ...)` prepares a
+`QuantumFisherPlan` for noise channels, resets, measurements and classical
+feedback. It exposes the same native product, natural-gradient and spectral
+interfaces. `LayerSpec.fisher_plan(...)` selects its ordered weight coordinates.
+Classical record bookkeeping is compiled once into an immutable density
+register program and reused across native products and optimizer steps.
+
+For each independent connected factor, the plan solves
+`(rho L + L rho)/2 + state_damping*L = d_rho` and pulls `L` back through the
+density-state Jacobian. Parameter reuse adds contributions in shared coordinates.
+Positive state damping defines a regularized SLD metric; its zero-damping
+limit is the factor's quantum Fisher information. Regularization is applied
+factor by factor, rather than to a single assembled product density.
+
+The Sylvester factorization uses an implicit derivative of its defining linear
+equation. It avoids differentiating eigenvectors at repeated eigenvalues,
+including the maximally mixed state. Torch and JAX retain native first and
+higher derivatives; state and metric work stays on the selected device.
+Full-graph compilation of native Torch JVP geometry requires Torch 2.4 or later;
+the supported Torch 2.2 path uses eager native transforms.
+`state_damping` regularizes the density equation, while `damping` regularizes
+the outer parameter-space natural-gradient solve. They are separate controls.
+
+Final density states marginalize classical measurement records. The metric
+therefore describes that quantum marginal, including lost information after a
+measurement or reset. It excludes information available only in recorded
+outcomes. Density storage is exponential as `4**q` in the largest connected
+factor and Sylvester factorization is cubic in its state dimension. Branch,
+sample and memory admission still apply; no parameter-by-parameter metric is
+materialized. `to_dict()` reports the selected scope and factor workspace.
+
+`DistanceAwareQNM` accepts either geometry plan. Pure-state plans retain
+`F=4*Re(QGT)`; density plans supply their regularized SLD metric directly.
+Optimizer state includes the density damping in its identity and rejects
+checkpoints from a different geometry configuration.
 
 ## Streamed empirical geometry
 

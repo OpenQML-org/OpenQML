@@ -1,9 +1,7 @@
 """Exact sorted-breakpoint proximal maps for capped, cost-aware portfolios."""
 
-import numpy as np
-
 from ..errors import ConvergenceError, ValidationError
-from ._array import Ops, admission, rows
+from ._array import Ops, admission, machine_epsilon, rows
 
 
 def _prox(values, center, caps, penalty, budget, ops):
@@ -48,7 +46,7 @@ def _prox(values, center, caps, penalty, budget, ops):
     at_knot = intercept + slope * knots
     # Floating-point cancellation at the last knot cannot leave gather out of
     # range; the candidate's mass is checked by the caller/optimizer as well.
-    eps = np.finfo(np.float64 if "64" in str(values.dtype) else np.float32).eps
+    eps = machine_epsilon(values, ops)
     roundoff = 8 * eps * knots.shape[-1] * (1 + ops.max(xp.abs(knots)))
     reached = at_knot <= (budget + roundoff)[..., None]
     count = (
@@ -86,7 +84,7 @@ def cost_aware_projection(values, *, previous=None, caps=1, penalty=0, budget=1,
     budget = ops.broadcast(budget, prefix)
     caps = ops.check(caps, caps >= 0, "Position caps must be nonnegative.")
     penalty = ops.check(penalty, penalty >= 0, "Trading penalties must be nonnegative.")
-    eps = np.finfo(np.float64 if "64" in str(values.dtype) else np.float32).eps
+    eps = machine_epsilon(values, ops)
     capacity = ops.sum(caps)
     budget = ops.check(
         budget,

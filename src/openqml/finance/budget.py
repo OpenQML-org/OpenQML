@@ -2,11 +2,9 @@
 
 from typing import NamedTuple
 
-import numpy as np
-
 from ..errors import ValidationError
 from ..ir.parameters import real
-from ._array import Ops, admission, rows
+from ._array import Ops, admission, machine_epsilon, rows
 from .risk import expected_shortfall
 
 
@@ -134,7 +132,7 @@ def _project(
     radius = ops.check(radius, radius >= 0, "Robust radii must be nonnegative.")
     w = ops.check(w, w >= 0, "Risk-budget proposals must be long-only.")
     total = ops.sum(w)
-    eps = np.finfo(np.float64 if "64" in str(w.dtype) else np.float32).eps
+    eps = machine_epsilon(w, ops)
     total = ops.check(
         total, total <= 1 + 16 * eps * w.shape[-1], "Risk-budget proposals must be fully funded."
     )
