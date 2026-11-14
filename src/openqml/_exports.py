@@ -1,6 +1,8 @@
 """Lazy public APIs; implementation modules live in responsibility packages."""
 
 EXPORTS = {
+    "LindbladPlan": (".qml.lindblad", "LindbladPlan"),
+    "LindbladResult": (".qml.lindblad", "LindbladResult"),
     "QuantumFisherPlan": (".autodiff.fisher", "QuantumFisherPlan"),
     "quantum_fisher": (".autodiff.fisher", "quantum_fisher"),
     "compile_circuit": (".sim.compiled", "compile_circuit"),
@@ -280,6 +282,8 @@ MODULES = {
 }
 
 PUBLIC = [
+    "LindbladPlan",
+    "LindbladResult",
     "QuantumFisherPlan",
     "quantum_fisher",
     "compile_circuit",

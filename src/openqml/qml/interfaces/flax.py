@@ -14,6 +14,7 @@ except ImportError as exc:
     ) from exc
 
 from ._flax_channels import ChannelLayer as ChannelLayer
+from ._flax_lindblad import LindbladLayer as LindbladLayer
 from ._flax_network import HybridNetwork as HybridNetwork
 from ._jax_training import accumulate_gradients as accumulate_gradients
 from ._jax_training import make_train_step as make_train_step

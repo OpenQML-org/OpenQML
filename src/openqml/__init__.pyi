@@ -142,6 +142,8 @@ from .qml.interfaces import torch as torch
 from .qml.iqp import IQPGraph as IQPGraph
 from .qml.layers import LayerCheckpoint as LayerCheckpoint
 from .qml.layers import LayerSpec as LayerSpec
+from .qml.lindblad import LindbladPlan as LindbladPlan
+from .qml.lindblad import LindbladResult as LindbladResult
 from .qml.measurement import QuantumPOVMPlan as QuantumPOVMPlan
 from .qml.models import Model as Model
 from .qml.multiscale import MultiscalePlan as MultiscalePlan

@@ -31,6 +31,7 @@ from ._torch_deep import QuantumDeepNetwork as QuantumDeepNetwork
 from ._torch_hybrid import HyperQuantumAdapter as HyperQuantumAdapter
 from ._torch_hybrid import IQPQuantumLayer as IQPQuantumLayer
 from ._torch_hybrid import _quantum_precision
+from ._torch_lindblad import LindbladLayer as LindbladLayer
 from ._torch_network import HybridNetwork as HybridNetwork
 from ._torch_network import NetworkTrainer as NetworkTrainer
 from ._torch_training import HybridTrainer as HybridTrainer

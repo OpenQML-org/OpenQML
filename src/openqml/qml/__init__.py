@@ -3,6 +3,8 @@
 from .._lazy import resolve as _resolve
 
 _EXPORTS = {
+    "LindbladPlan": (".lindblad", "LindbladPlan"),
+    "LindbladResult": (".lindblad", "LindbladResult"),
     "Model": (".models", "Model"),
     "HybridArchitecture": (".architecture", "HybridArchitecture"),
     "QuantumCellSpec": (".architecture", "QuantumCellSpec"),
