@@ -1,7 +1,7 @@
 name: Test and build
 on:
   push:
-    branches: [main]
+    branches: [main, 'build/*']
   pull_request:
   workflow_dispatch:
 concurrency:
@@ -52,7 +52,7 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: python -m pip install ".[jax,qiskit,dev]"
-      - run: python -m pytest -q tests/test_distance_aware.py tests/test_execution_risk.py tests/test_hybrid_qnm.py tests/test_submission_training.py tests/test_expectile_risk.py tests/test_integer_division.py tests/test_classical_arithmetic.py tests/test_native_geometry.py tests/test_transport_geometry.py tests/test_classical_predicates.py tests/test_compilation_portability.py tests/test_package_layout.py
+      - run: python -m pytest -q tests/test_streamed_geometry.py tests/test_scenario_tree.py tests/test_annotated_operations.py tests/test_distance_aware.py tests/test_execution_risk.py tests/test_hybrid_qnm.py tests/test_submission_training.py tests/test_expectile_risk.py tests/test_integer_division.py tests/test_classical_arithmetic.py tests/test_native_geometry.py tests/test_transport_geometry.py tests/test_classical_predicates.py tests/test_compilation_portability.py tests/test_package_layout.py
   public-types:
     runs-on: ubuntu-latest
     steps:
@@ -125,7 +125,7 @@ jobs:
       - run: python -m pip install "torch==2.2.2" --index-url https://download.pytorch.org/whl/cpu
       - run: python -m pip install "numpy==1.26.4" "jax==0.4.30" "jaxlib==0.4.30" "optax==0.2.3" "chex==0.1.87"
       - run: python -m pip install ".[dev]"
-      - run: python -m pytest -q tests/test_distance_aware.py tests/test_execution_risk.py tests/test_hybrid_qnm.py tests/test_submission_training.py tests/test_expectile_risk.py tests/test_compilation_portability.py tests/test_native_geometry.py tests/test_transport_geometry.py tests/test_native_fusion.py tests/test_execution_hotpaths.py tests/test_package_layout.py tests/test_compute_kernel.py tests/test_reliability.py tests/test_entry_contracts.py tests/test_prepared_workflows.py tests/test_register_programs.py tests/test_accelerators.py tests/test_native_gpu.py tests/test_native_constant_cache.py
+      - run: python -m pytest -q tests/test_streamed_geometry.py tests/test_scenario_tree.py tests/test_annotated_operations.py tests/test_distance_aware.py tests/test_execution_risk.py tests/test_hybrid_qnm.py tests/test_submission_training.py tests/test_expectile_risk.py tests/test_compilation_portability.py tests/test_native_geometry.py tests/test_transport_geometry.py tests/test_native_fusion.py tests/test_execution_hotpaths.py tests/test_package_layout.py tests/test_compute_kernel.py tests/test_reliability.py tests/test_entry_contracts.py tests/test_prepared_workflows.py tests/test_register_programs.py tests/test_accelerators.py tests/test_native_gpu.py tests/test_native_constant_cache.py
   compiled-transforms:
     runs-on: ubuntu-latest
     steps:
@@ -135,7 +135,7 @@ jobs:
           python-version: '3.11'
       - run: python -m pip install "torch==2.4.1" --index-url https://download.pytorch.org/whl/cpu
       - run: python -m pip install "numpy==1.26.4" . pytest
-      - run: python -m pytest -q tests/test_distance_aware.py tests/test_execution_risk.py tests/test_hybrid_qnm.py tests/test_submission_training.py tests/test_expectile_risk.py tests/test_compilation_portability.py tests/test_native_geometry.py tests/test_transport_geometry.py tests/test_native_fusion.py tests/test_activation_checkpointing.py tests/test_execution_hotpaths.py tests/test_package_layout.py
+      - run: python -m pytest -q tests/test_streamed_geometry.py tests/test_scenario_tree.py tests/test_annotated_operations.py tests/test_distance_aware.py tests/test_execution_risk.py tests/test_hybrid_qnm.py tests/test_submission_training.py tests/test_expectile_risk.py tests/test_compilation_portability.py tests/test_native_geometry.py tests/test_transport_geometry.py tests/test_native_fusion.py tests/test_activation_checkpointing.py tests/test_execution_hotpaths.py tests/test_package_layout.py
   portable-install:
     strategy:
       fail-fast: false
@@ -175,7 +175,7 @@ jobs:
           }
       - run: python -m pip check
       - run: python -m openqml doctor --extra all --check-imports --sizes --output environment-report.json
-      - run: python -m pytest -q tests/test_distance_aware.py tests/test_execution_risk.py tests/test_hybrid_qnm.py tests/test_submission_training.py tests/test_expectile_risk.py tests/test_integer_division.py tests/test_classical_arithmetic.py tests/test_compilation_portability.py tests/test_native_fusion.py tests/test_register_programs.py tests/test_native_geometry.py tests/test_transport_geometry.py tests/test_classical_predicates.py
+      - run: python -m pytest -q tests/test_streamed_geometry.py tests/test_scenario_tree.py tests/test_annotated_operations.py tests/test_distance_aware.py tests/test_execution_risk.py tests/test_hybrid_qnm.py tests/test_submission_training.py tests/test_expectile_risk.py tests/test_integer_division.py tests/test_classical_arithmetic.py tests/test_compilation_portability.py tests/test_native_fusion.py tests/test_register_programs.py tests/test_native_geometry.py tests/test_transport_geometry.py tests/test_classical_predicates.py
       - run: python -m pytest -q tests/test_compute_kernel.py tests/test_reliability.py tests/test_entry_contracts.py tests/test_prepared_workflows.py tests/test_accelerators.py tests/test_native_gpu.py tests/test_precision_regressions.py tests/test_audit_regressions.py tests/test_switch_lowering.py tests/test_risk_budget.py tests/test_tensor_streaming.py tests/test_model_checkpoint.py tests/test_model_selection.py tests/test_walk_forward.py tests/test_conversion_sweeps.py tests/test_finance_execution.py tests/test_simple_api.py tests/test_adaptive_amplitude.py tests/test_amplitude.py tests/test_finance.py tests/test_frontier_models.py tests/test_algorithmic_execution.py tests/test_network_operators.py tests/test_architecture.py tests/test_deep_learning.py tests/test_cost_scheduling.py tests/test_calibration.py tests/test_distributed_compute.py tests/test_multiscale_execution.py tests/test_gradient_accumulation.py tests/test_program_compilation.py tests/test_distributed_training.py tests/test_compute_contractions.py tests/test_contraction_compiler.py tests/test_runtime.py tests/test_hybrid_training.py tests/test_sparse_scaling.py tests/test_research_methods.py tests/test_public_api.py tests/test_package_scope.py tests/test_package_layout.py tests/test_execution_hotpaths.py tests/test_mitigation.py tests/test_model_streaming.py tests/test_backends.py tests/test_providers.py tests/test_shared_readouts.py tests/test_conversion_plan.py tests/test_resource_audit.py tests/test_source_boundaries.py tests/test_resource_profiles.py tests/test_environment_report.py tests/test_scientific_scale.py tests/test_semantic_compiler.py tests/test_adaptive_execution.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()

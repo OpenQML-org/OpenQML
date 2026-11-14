@@ -633,6 +633,76 @@ The integrated predictive/decision objective follows the direction of
 with OpenQML's own exact cash-ray projection. It does not reproduce that paper's
 full model or reported market results.
 
+## Multi-stage contingent policies
+
+`ScenarioTreePlan(paths, node_ids)` connects finite return paths `[S,H,N]` to
+information nodes `[S,H+1]`. There is one root and one distinct terminal per
+path. A shared node must have the same parent and incoming observed return.
+These checks enforce the supplied information partition. One policy row per
+decision node prevents different actions for paths sharing that node.
+
+```python
+import openqml as oq
+
+paths = [
+    [[-0.06, 0.02], [-0.12, 0.01]],
+    [[-0.06, 0.02], [0.08, -0.04]],
+    [[0.05, -0.03], [-0.04, -0.09]],
+    [[0.05, -0.03], [0.12, 0.06]],
+]
+scenarios = oq.finance.ScenarioPlan(paths)
+tree = scenarios.tree([[0, 1, 0], [0, 1, 1], [0, 2, 2], [0, 2, 3]])
+result = tree.rollout(
+    [[0.4, 0.3], [0.55, 0.2], [0.2, 0.5]],
+    probabilities=[0.1, 0.2, 0.3, 0.4],
+    previous=[0.3, 0.2],
+    budget=0.045,
+    fees=0.001,
+    impact=0.005,
+    risk_measure="expectile",
+    confidence=0.7,
+)
+print(tree.decision_keys, result.terminal_wealth, result.risk.value)
+```
+
+`decision_keys` gives the stage/label order for proposals `[...,D,N]`.
+Probabilities `[...,S]` may come from a quantum Born distribution. `budget`,
+`radius` and `cash_returns` accept scalars or a final axis of length D, including
+`[...,1]` broadcasting. Fees and impact are scalar or asset-vector rates.
+Transport metrics may have batch axes and are shared across the decision nodes.
+All conditional probabilities derive from the current leaf masses. Zero-mass
+subtrees use a finite uniform conditional extension; derivatives at probability
+boundaries and active-set changes are piecewise defined.
+
+At each node, marked holdings and cash determine pre-trade wealth. The exact
+after-cost projection selects a funded position before the next return, and
+the child state carries its marked values. Trades include drift from prior
+returns. `wealth`, `positions`, `cash` and `costs` use units of initial NAV;
+at decision nodes, positions plus cash plus costs equal pre-trade wealth.
+Terminal nodes contain marked holdings and cash, with zero new costs. Bankruptcy
+remains at zero wealth. `scale` and `robust_risk` retain the decision-node axis.
+
+`nested_risk(losses, probabilities, ...)` composes conditional CVaR or coherent
+expectile backward through the tree. This dynamic risk differs from applying
+one terminal CVaR to all leaves. `TreeRiskResult` contains the root value,
+conditional node values and node masses. The rollout's `risk` applies this
+nominal nested measure to terminal losses `1-terminal_wealth`. Per-node robust
+risk constraints do not constitute a global Wasserstein bound on compounded
+terminal wealth.
+
+Torch/JAX gradients connect probabilities, policy rows, fees, impact, radii and
+transport parameters to terminal wealth and nested risk. Combine
+`scenarios.energy_score(probabilities, observed_path)` with `result.risk.value`
+for a calibrated decision objective. Fit scenario atoms, node partitions and
+predictive features from training data; node sharing alone cannot detect
+future information already supplied to a predictor.
+
+This rollout models a trade immediately before each scenario transition. Use
+`SelfFinancingPlan` for delayed fills on an observed chronological market
+stream. Scenario trees have O(SHN) input storage; explicit branching remains a
+finite-model cost. The method supplies funded policies and risk evaluation,
+with no guarantee of a globally optimal policy or market performance.
+
 ## Method sources
 
 - [Learning Predictive Ambiguity Sets for Decision-Focused Distributionally

@@ -71,6 +71,25 @@ symbolic parameter identity, global phase, wire mappings and operation budgets;
 subsequent calls import the current source object afresh. Numerical bindings and
 target objects remain independent across exported artifacts.
 
+## Deferred quantum modifiers
+
+The Qiskit frontend expands `AnnotatedOperation` with ordered inverse,
+control and numeric power modifiers. Nested modifiers retain operand order;
+open controls and controlled global phases enter the resulting gate semantics.
+Integer powers use bounded repetition and inverse operations. Fractional
+powers use the SDK's concrete gate operation under the matrix-width admission.
+Symbolic rotation parameters remain symbolic when that operation supports it.
+
+`max_operations` and `max_depth` bound expansion, including large powers and
+control widths. `source_options={"max_matrix_qubits": 5}` sets the matrix limit.
+Unresolved or nonunitary modifiers raise structured conversion diagnostics.
+Normalized definitions are reused within one conversion. The source SDK may
+allocate its own synthesis workspace. Export then follows the existing IR
+routes to OpenQASM, Cirq, Qiskit or PennyLane within each target's supported set.
+
+The source representation follows
+[Qiskit's AnnotatedOperation API](https://quantum.cloud.ibm.com/docs/api/qiskit/qiskit.circuit.AnnotatedOperation).
+
 ## Typed classical predicates
 
 The Qiskit IR route additionally accepts pure `Bool`/`Uint` expressions over

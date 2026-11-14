@@ -11,6 +11,7 @@ Build and train hybrid neural networks with PyTorch, JAX or Flax. Use `Model.fit
 Train native quantum blocks with resumable, distance-aware Quantum Natural Muon
 and classical blocks with AdamW through one `hybrid_qnm` optimizer. Microbatch
 accumulation and DDP share an empirical, matrix-free quantum Fisher metric.
+Sample chunking bounds the active state workspace during geometry products.
 External Torch/JAX layers can pack forward and parameter-shift rows into one
 provider submission and reuse their linearization during backward.
 
@@ -22,6 +23,7 @@ Learn scenario probabilities, Wasserstein radii and anisotropic transport metric
 `ScenarioPlan.execution_loss` connects proper-score calibration to after-cost
 decisions. Exact piecewise quadratic projections fund proportional fees and
 market impact while enforcing CVaR or expectile budgets.
+`ScenarioPlan.tree` adds funded multi-stage policies and nested conditional risk.
 
 ## Cross-framework quantum programming
 
@@ -33,6 +35,8 @@ executes, including payloads that overwrite a measured predicate input.
 Fixed-width unsigned arithmetic includes division with symbolically proved
 nonzero divisors. Correlated selector proofs admit bounded dynamic shifts and
 bit indexing while preserving atomic branch selection.
+Deferred Qiskit inverses, controls and numeric powers expand through the same
+checked conversion routes.
 
 Simulate physical noise with amplitude/phase damping, depolarization and custom Kraus channels. Correct independent readout errors or extrapolate measured noise scales with explicit conditioning and sampling-overhead limits. Caller-initialized Qiskit V2 primitives connect real hardware; see [execution limits and mitigation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md#physical-noise-and-error-mitigation).
 

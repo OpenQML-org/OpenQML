@@ -31,6 +31,24 @@ largest connected factor. Admission models conservative primal/JVP/VJP state
 storage for the visible sample batch; compiler buffers, allocator pools, hidden transform
 batch axes and autodiff tapes require separate application budgets.
 
+## Streamed empirical geometry
+
+Pass `sample_chunk_size` to `native_matvec`, `native_natural_gradient` or
+`spectral_step`. The same option is available on `DistanceAwareQNM` and through
+`hybrid_qnm(..., quantum_options={"sample_chunk_size": 32})`.
+
+Each product accumulates sample blocks using the original globally normalized
+weights. It computes the full empirical metric, including its parameter and
+sample-weight derivatives. CG reuses staged bindings and masses across its
+products. JAX uses a rematerialized scan; Torch processes native tensor blocks.
+JAX padding repeats a valid final input with zero additional probability mass.
+
+The primal state/JVP/VJP workspace scales with the active block size. Input
+storage, returned tensors, allocator pools and retained Torch higher-order
+autodiff tapes remain separate costs. State storage is still exponential in the
+largest connected circuit factor. Changing the block size preserves optimizer
+checkpoint identity, with ordinary floating-point accumulation differences.
+
 ## Geometry-first spectral steps
 
 ```python

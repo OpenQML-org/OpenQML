@@ -268,6 +268,14 @@ class ScenarioPlan:
             max_memory_mb=self.max_memory_mb,
         )
 
+    def tree(self, node_ids, **options):
+        """Build a causal tree over this plan's multi-period return atoms."""
+        from .scenario_tree import ScenarioTreePlan
+
+        options.setdefault("max_memory_mb", self.max_memory_mb)
+        options.setdefault("max_work", self.max_work)
+        return ScenarioTreePlan(self.scenarios, node_ids, **options)
+
     def execution_decision(self, probabilities, proposal, *, step=None, **options):
         """Project a proposal using this Born distribution and after-cost risk.
 

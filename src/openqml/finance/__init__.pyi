@@ -30,6 +30,9 @@ from .risk import factor_risk as factor_risk
 from .risk import portfolio_variance as portfolio_variance
 from .risk import quantile_loss as quantile_loss
 from .risk import wasserstein_cvar as wasserstein_cvar
+from .scenario_tree import ScenarioTreePlan as ScenarioTreePlan
+from .scenario_tree import ScenarioTreeResult as ScenarioTreeResult
+from .scenario_tree import TreeRiskResult as TreeRiskResult
 from .trading import SelfFinancingPlan as SelfFinancingPlan
 from .trading import TradingResult as TradingResult
 from .trading import TradingState as TradingState

@@ -54,9 +54,14 @@ class DistanceAwareQNM:
     tolerance: float = 1e-6
     max_iterations: int = 32
     alignment_guard: bool = True
+    sample_chunk_size: int | None = None
     _signature: tuple = field(init=False, repr=False)
 
     def __post_init__(self):
+        if self.sample_chunk_size is not None:
+            object.__setattr__(
+                self, "sample_chunk_size", integer(self.sample_chunk_size, "sample_chunk_size", 1)
+            )
         if not isinstance(self.plan, QuantumMetricPlan) or not self.plan.parameters:
             raise ValidationError("Distance-aware QNM needs a nonempty QuantumMetricPlan.")
         shapes = _spectral_shapes(self.block_shapes, len(self.plan.parameters))
@@ -142,7 +147,9 @@ class DistanceAwareQNM:
         direction lacks positive observed gradient alignment. It is not a line
         search or a loss-decrease certificate.
         """
-        ops, local, gradient, mass = _inputs(self.plan, bindings, gradient, backend, sample_weights)
+        ops, local, gradient, mass = _inputs(
+            self.plan, bindings, gradient, backend, sample_weights, self.sample_chunk_size
+        )
         if any(local[name].ndim for name in self.plan.parameters):
             raise ValidationError(
                 "Stateful QNM selected coordinates must be shared scalar bindings."
@@ -189,6 +196,7 @@ class DistanceAwareQNM:
             backend,
             metric_scale=4,
             metric_reducer=metric_reducer,
+            sample_chunk_size=self.sample_chunk_size,
             damping=self.damping,
             tolerance=self.tolerance,
             max_iterations=self.max_iterations,

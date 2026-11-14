@@ -155,11 +155,20 @@ class QuantumMetricPlan:
             result[:, j] = self._product(columns, direction)
         return (result + result.T) * 0.5
 
-    def native_matvec(self, bindings, vector, *, backend="torch", sample_weights=None):
+    def native_matvec(
+        self, bindings, vector, *, backend="torch", sample_weights=None, sample_chunk_size=None
+    ):
         """Apply the exact metric on native Torch/JAX tensors and their device."""
         from .native_geometry import native_matvec
 
-        return native_matvec(self, bindings, vector, backend=backend, sample_weights=sample_weights)
+        return native_matvec(
+            self,
+            bindings,
+            vector,
+            backend=backend,
+            sample_weights=sample_weights,
+            sample_chunk_size=sample_chunk_size,
+        )
 
     def native_natural_gradient(self, bindings, gradient, *, backend="torch", **options):
         """Certified native CG with gradients retained through metric products."""

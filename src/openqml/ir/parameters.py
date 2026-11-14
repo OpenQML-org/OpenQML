@@ -145,15 +145,29 @@ def _tree_profile(value, profile=None):
     return profile[id(value)]
 
 
+def _native_scalar(value, like):
+    if not isinstance(value, (int, float, np.generic)):
+        return value
+    from ..compute.kernel import _array_backend
+
+    if _array_backend(like) == "torch":
+        xp = _namespace(like)
+        if like.dtype in (xp.float32, xp.float64):
+            return xp.as_tensor(value, dtype=like.dtype, device=like.device)
+    return value
+
+
 def _leaf_value(value, bindings):
-    result = value.constant
+    result = None if value.constant == 0 and value.terms else value.constant
     for name, coefficient in value.terms:
         if name not in bindings:
             raise ValidationError(f"Missing parameter binding: {name}.")
         bound = _checked(bindings[name])
-        _broadcast_operands(result, bound)
+        if result is not None:
+            _broadcast_operands(result, bound)
         try:
-            result = result + coefficient * bound
+            term = bound if coefficient == 1 else _native_scalar(coefficient, bound) * bound
+            result = term if result is None else _native_scalar(result, term) + term
         except (TypeError, ValueError, OverflowError) as exc:
             raise ValidationError(
                 f"Parameter binding {name!r} cannot be evaluated as broadcastable real values."
@@ -164,6 +178,8 @@ def _leaf_value(value, bindings):
 def _apply(op, args):
     if len(args) == 2:
         _broadcast_operands(*args)
+        if op != "pow":
+            args = _native_scalar(args[0], args[1]), _native_scalar(args[1], args[0])
     try:
         if op == "add":
             result = args[0] + args[1]

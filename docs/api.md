@@ -292,6 +292,14 @@ The CLI exposes this control as `--max-output-bytes`.
 `plan.export_many(rows,...)` returns a tuple. Compatible symbolic targets reuse
 prepared topology. See [interoperability](interoperability.md).
 
+## Scenario trees
+
+`finance.ScenarioTreePlan(paths,node_ids)` exposes `decision_keys`, `rollout` and
+`nested_risk`. `ScenarioPlan.tree(node_ids)` reuses its multi-period return atoms.
+`ScenarioTreeResult` contains the node ledger and terminal wealth;
+`TreeRiskResult` contains the nested root risk, node risks and probability mass.
+See [multi-stage policies](finance.md#multi-stage-contingent-policies).
+
 ## Risk-budget projection
 
 `oq.finance.risk_budget_projection(weights,scenarios,probabilities=None,confidence=0.95,`

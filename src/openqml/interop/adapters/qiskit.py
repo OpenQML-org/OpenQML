@@ -32,6 +32,7 @@ def from_qiskit(
     qiskit = dependency("qiskit", "qiskit")
     library = dependency("qiskit.circuit.library", "qiskit")
     from qiskit.circuit import (
+        AnnotatedOperation,
         Barrier,
         BreakLoopOp,
         ContinueLoopOp,
@@ -137,6 +138,43 @@ def from_qiskit(
                 "CLASSICAL_CONTROL", "break/continue cannot be statically unrolled.", location
             )
         name = {"i": "id", "u1": "p", "u2": "u", "u3": "u", "cu1": "cp"}.get(op.name, op.name)
+        if isinstance(op, AnnotatedOperation):
+            from ._qiskit_annotations import annotated_definition
+
+            if not expand or max_depth == 0:
+                raise conversion_error(
+                    "EXPANSION_LIMIT", "Deferred gates require admitted expansion depth.", location
+                )
+            key = id(op), max_depth, max_matrix_qubits
+            cache = _context.setdefault("annotations", {})
+            cached = cache.get(key)
+            if cached is not None and cached[0] is op:
+                definition = cached[1]
+            else:
+                definition = annotated_definition(
+                    op,
+                    max_operations=max_operations - used,
+                    max_depth=max_depth,
+                    max_matrix_qubits=max_matrix_qubits,
+                    location=location,
+                )
+                cache[key] = op, definition
+            child = from_qiskit(
+                definition,
+                expand=True,
+                max_operations=max_operations - used,
+                max_depth=max_depth - 1,
+                max_matrix_qubits=max_matrix_qubits,
+                _loop_budget=_loop_budget,
+                _context=_context,
+            )
+            mapped = Circuit(width, num_clbits=native.num_clbits).compose(
+                child, qubits=tuple(native.find_bit(q).index for q in item.qubits)
+            )
+            for operation in mapped.operations:
+                append(operation, location)
+            phase += child.global_phase
+            continue
         if isinstance(op, SwitchCaseOp):
             from ._qiskit_switch import lower_switch
 

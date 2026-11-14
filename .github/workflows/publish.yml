@@ -65,3 +65,56 @@ jobs:
       - name: Publish to PyPI
         if: github.event_name == 'push' || inputs.index == 'pypi'
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
+
+  verify:
+    needs: publish
+    if: github.event_name == 'push' || inputs.index == 'pypi'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Verify the published core package
+        run: |
+          python - <<'PY'
+          import hashlib
+          import importlib.metadata
+          import pathlib
+          import subprocess
+          import sys
+          import time
+          import tomllib
+
+          root = pathlib.Path.cwd()
+          version = tomllib.loads((root / 'pyproject.toml').read_text())['project']['version']
+          for attempt in range(6):
+              result = subprocess.run([
+                  sys.executable, '-m', 'pip', 'install', '--no-cache-dir',
+                  '--index-url', 'https://pypi.org/simple', f'openqml=={version}',
+              ])
+              if result.returncode == 0:
+                  break
+              if attempt == 5:
+                  raise SystemExit(result.returncode)
+              time.sleep(10)
+          import openqml as oq
+
+          assert oq.__version__ == importlib.metadata.version('openqml') == version
+          namespace = {}
+          exec('from openqml import *', namespace)
+          assert not {'torch', 'jax', 'qiskit', 'cirq', 'pennylane'}.intersection(sys.modules)
+          installed = pathlib.Path(oq.__file__).parent
+          for source in (root / 'src' / 'openqml').rglob('*'):
+              if source.suffix in {'.py', '.pyi'} or source.name == 'py.typed':
+                  target = installed / source.relative_to(root / 'src' / 'openqml')
+                  assert target.is_file(), target
+                  assert hashlib.sha256(source.read_bytes()).digest() == hashlib.sha256(target.read_bytes()).digest(), source
+          paths = [[[-.1], [.2]], [[-.1], [-.2]], [[.1], [.3]], [[.1], [-.1]]]
+          nodes = [[0, 1, 0], [0, 1, 1], [0, 2, 2], [0, 2, 3]]
+          tree = oq.finance.ScenarioTreePlan(paths, nodes)
+          result = tree.rollout([[.5], [.6], [.4]], [.2, .3, .25, .25], budget=.5)
+          assert result.terminal_wealth.shape == (4,)
+          assert result.risk.value < 1
+          print(f'Published openqml {version} verified')
+          PY

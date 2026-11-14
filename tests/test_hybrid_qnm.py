@@ -34,14 +34,19 @@ def _model():
     return Model()
 
 
-def _trainer(model, microbatch):
+def _trainer(model, microbatch, chunk_size=None):
     from openqml.qml.interfaces.torch import HybridTrainer
 
     optimizer = oq.hybrid_qnm(
         model,
         quantum_lr=0.03,
         block_shapes={"q" if not hasattr(model, "module") else "module.q": ((2, 2),)},
-        quantum_options={"damping": 0.1, "tolerance": 1e-9, "max_iterations": 12},
+        quantum_options={
+            "damping": 0.1,
+            "tolerance": 1e-9,
+            "max_iterations": 12,
+            "sample_chunk_size": chunk_size,
+        },
     )
     return HybridTrainer(model, optimizer, microbatch_size=microbatch, max_grad_norm=None)
 
@@ -65,6 +70,22 @@ def test_quantum_and_classical_parameters_train_with_microbatch_invariant_geomet
     assert all(not torch.equal(p, old) for p, old in zip(first.parameters(), original, strict=True))
     assert a.optimizer.state[first.q.weights]["openqml_qnm"]["steps"] == 3
     assert not a.optimizer._capture and a.optimizer._captured_bytes == 0
+    a.optimizer.close()
+    b.optimizer.close()
+
+
+def test_chunked_quantum_geometry_matches_full_joint_training_and_checkpoint_identity():
+    torch = pytest.importorskip("torch")
+    first, second = _model(), _model()
+    a, b = _trainer(first, 3), _trainer(second, 3, 2)
+    x = torch.arange(14, dtype=torch.float64).reshape(7, 2) / 7
+    batch = x, x.sum(-1, keepdim=True).sin()
+    for _ in range(2):
+        a.step(batch, _loss)
+        b.step(batch, _loss)
+    for p, q in zip(first.parameters(), second.parameters(), strict=True):
+        torch.testing.assert_close(p, q, rtol=1e-10, atol=1e-12)
+    a.load_state_dict(b.state_dict())
     a.optimizer.close()
     b.optimizer.close()
 

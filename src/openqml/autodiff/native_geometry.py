@@ -26,7 +26,7 @@ class SpectralStepResult(NamedTuple):
     used_natural_direction: object
 
 
-def _inputs(plan, bindings, vector, backend, sample_weights=None):
+def _inputs(plan, bindings, vector, backend, sample_weights=None, sample_chunk_size=None):
     if backend not in {"torch", "jax"} or _array_backend(vector) != backend:
         raise ValidationError("Provide a native Torch/JAX vector and its explicit backend.")
     if vector.shape != (len(plan.parameters),):
@@ -70,22 +70,79 @@ def _inputs(plan, bindings, vector, backend, sample_weights=None):
         default=0,
     )
     count = shape[0] if shape else 1
-    coordinates = sum(count if local[name].ndim else 1 for name in plan.parameters)
+    if sample_chunk_size is not None:
+        sample_chunk_size = integer(sample_chunk_size, "sample_chunk_size", 1)
+    active = count if sample_chunk_size is None else min(count, sample_chunk_size)
+    coordinates = sum(value.shape[0] if value.ndim else 1 for value in local.values())
     get_compute_kernel().admit(
-        (count * workspace + 64 * coordinates + 64 * count + 7) // 8, plan.max_memory_mb
+        (active * workspace + 64 * coordinates + 64 * count + 7) // 8, plan.max_memory_mb
     )
     return ops, local, vector, mass
 
 
 @compute_operation
-def native_matvec(plan, bindings, vector, *, backend="torch", sample_weights=None):
+def native_matvec(
+    plan, bindings, vector, *, backend="torch", sample_weights=None, sample_chunk_size=None
+):
     """Apply Re(QGT) with native JVP/VJP, without a dense parameter metric.
 
     Realifying the state gives the same convention in both frameworks. Remove
     its radial and global-phase tangent before the reverse pullback. Independent
     state factors add their metrics, including reused global parameters.
     """
-    ops, local, vector, mass = _inputs(plan, bindings, vector, backend, sample_weights)
+    ops, local, vector, mass = _inputs(
+        plan, bindings, vector, backend, sample_weights, sample_chunk_size
+    )
+    return _apply_metric(plan, local, vector, mass, ops, backend, sample_chunk_size)
+
+
+def _apply_metric(plan, local, vector, mass, ops, backend, sample_chunk_size=None):
+    if sample_chunk_size is None or not mass.ndim or mass.shape[0] <= sample_chunk_size:
+        return _metric_product(plan, local, vector, mass, ops, backend)
+    size, total = sample_chunk_size, mass.shape[0]
+    if backend == "jax":
+        import jax
+
+        padding = (-total) % size
+        weights = ops.xp.pad(mass, (0, padding))
+        columns = {
+            name: ops.xp.pad(value, (0, padding), mode="edge")
+            if value.ndim and value.shape[0] != 1
+            else value
+            for name, value in local.items()
+        }
+
+        def step(result, start):
+            selected = {
+                name: jax.lax.dynamic_slice_in_dim(value, start, size)
+                if value.ndim and value.shape[0] != 1
+                else value
+                for name, value in columns.items()
+            }
+            weight = jax.lax.dynamic_slice_in_dim(weights, start, size)
+            return result + _metric_product(plan, selected, vector, weight, ops, backend), None
+
+        value, _ = jax.lax.scan(
+            jax.checkpoint(step), vector * 0, ops.xp.arange(0, total + padding, size)
+        )
+        return ops.check(
+            value, ops.xp.isfinite(value), "Native quantum geometry exceeds finite precision."
+        )
+    result = vector * 0
+    for start in range(0, total, size):
+        selected = {
+            name: value[start : start + size] if value.ndim and value.shape[0] != 1 else value
+            for name, value in local.items()
+        }
+        result = result + _metric_product(
+            plan, selected, vector, mass[start : start + size], ops, backend
+        )
+    return ops.check(
+        result, ops.xp.isfinite(result), "Native quantum geometry exceeds finite precision."
+    )
+
+
+def _metric_product(plan, local, vector, mass, ops, backend):
     if not plan.parameters:
         return vector * 0
     xp = ops.xp
@@ -153,15 +210,36 @@ def native_matvec(plan, bindings, vector, *, backend="torch", sample_weights=Non
 
 @compute_operation
 def native_natural_gradient(
-    plan, bindings, gradient, *, backend="torch", sample_weights=None, **options
+    plan,
+    bindings,
+    gradient,
+    *,
+    backend="torch",
+    sample_weights=None,
+    sample_chunk_size=None,
+    **options,
 ):
     """Solve (Re(QGT)+damping*I)d=g on the selected native device."""
-    ops, local, gradient, mass = _inputs(plan, bindings, gradient, backend, sample_weights)
-    return _natural_solve(plan, local, gradient, mass, ops, backend, **options)
+    ops, local, gradient, mass = _inputs(
+        plan, bindings, gradient, backend, sample_weights, sample_chunk_size
+    )
+    return _natural_solve(
+        plan, local, gradient, mass, ops, backend, sample_chunk_size=sample_chunk_size, **options
+    )
 
 
 def _natural_solve(
-    plan, local, gradient, mass, ops, backend, *, metric_scale=1, metric_reducer=None, **options
+    plan,
+    local,
+    gradient,
+    mass,
+    ops,
+    backend,
+    *,
+    metric_scale=1,
+    metric_reducer=None,
+    sample_chunk_size=None,
+    **options,
 ):
     from ..qml._native_training import solve_metric
 
@@ -169,8 +247,8 @@ def _natural_solve(
         raise ValidationError("A natural-gradient solve needs selected parameters.")
 
     def product(value):
-        result = metric_scale * native_matvec(
-            plan, local, value["coordinates"], backend=backend, sample_weights=mass
+        result = metric_scale * _apply_metric(
+            plan, local, value["coordinates"], mass, ops, backend, sample_chunk_size
         )
         if metric_reducer is not None:
             result = metric_reducer(result)
@@ -220,6 +298,7 @@ def spectral_step(
     max_step_norm=0.1,
     backend="torch",
     sample_weights=None,
+    sample_chunk_size=None,
     **options,
 ):
     """Mix active polar factors AFTER natural preconditioning, then bound the step.
@@ -233,12 +312,14 @@ def spectral_step(
     if not 0 <= mixing <= 1 or rate <= 0 or radius <= 0:
         raise ValidationError("Use mixing in [0,1] and positive learning rate/step bound.")
     shapes = _spectral_shapes(block_shapes, len(plan.parameters))
-    ops, local, gradient, mass = _inputs(plan, bindings, gradient, backend, sample_weights)
+    ops, local, gradient, mass = _inputs(
+        plan, bindings, gradient, backend, sample_weights, sample_chunk_size
+    )
     get_compute_kernel().admit(
         32 * len(plan.parameters) + 8 * sum(min(s) ** 2 for s in shapes), plan.max_memory_mb
     )
-    natural = native_natural_gradient(
-        plan, local, gradient, backend=backend, sample_weights=mass, **options
+    natural = _natural_solve(
+        plan, local, gradient, mass, ops, backend, sample_chunk_size=sample_chunk_size, **options
     )
     xp = ops.xp
     direction = _polar_mix(natural.direction, shapes, mixing, ops, backend)
