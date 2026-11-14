@@ -6,7 +6,7 @@ from numbers import Integral
 from ...errors import conversion_error
 
 
-def _variables(value):
+def _variables(value, limit=100_000):
     from qiskit.circuit import ClassicalRegister, Clbit
     from qiskit.circuit.classical import expr
 
@@ -14,12 +14,16 @@ def _variables(value):
         value = value[0]
     if isinstance(value, (Clbit, ClassicalRegister)):
         return set()
-    pending, seen, result = [value], set(), set()
+    pending, seen, result = [value], {}, set()
     while pending:
         node = pending.pop()
         if id(node) in seen:
             continue
-        seen.add(id(node))
+        seen[id(node)] = node
+        if len(seen) > limit:
+            raise conversion_error(
+                "CLASSICAL_EXPRESSION_LIMIT", "Storage expression analysis exceeds its budget."
+            )
         if isinstance(node, expr.Var):
             if not isinstance(node.var, (Clbit, ClassicalRegister)):
                 result.add(node.var)
@@ -39,13 +43,13 @@ class _Storage:
 
         self.bits, self.variables, self.names = native.num_clbits, {}, {}
         self.inputs, self.initial, self.scratch_width = {}, [], 0
-        self.mutable, self.remaining = False, 8 * limit
-        pending, seen = [native], set()
+        self.mutable, self.remaining, self.limit = False, 8 * limit, limit
+        pending, seen = [native], {}
         while pending:
             body = pending.pop()
             if id(body) in seen:
                 continue
-            seen.add(id(body))
+            seen[id(body)] = body
             for variable in body.iter_vars():
                 self.mutable = True
                 if variable.var in self.variables:
@@ -84,12 +88,12 @@ class _Storage:
         self.bits += self.scratch_width
         self.control_start, self.loop_depth = self.bits, 0
         if self.mutable:
-            pending, seen = [(native, 0)], set()
+            pending, seen = [(native, 0)], {}
             while pending:
                 body, level = pending.pop()
                 if (id(body), level) in seen:
                     continue
-                seen.add((id(body), level))
+                seen[id(body), level] = body
                 if level > 128 or len(seen) > limit:
                     self.fail("Loop storage analysis exceeds its budget.", "EXPANSION_LIMIT")
                 self.loop_depth = max(self.loop_depth, level)
@@ -139,7 +143,7 @@ class _Storage:
         initialized = initialized - {v.var for v in native.iter_declared_vars()}
 
         def read(value):
-            missing = _variables(value) - initialized
+            missing = _variables(value, self.limit) - initialized
             if missing:
                 names = ", ".join(sorted(self.names[v] for v in missing))
                 self.fail(f"Read before definite assignment: {names}.", "CLASSICAL_UNINITIALIZED")
@@ -154,7 +158,7 @@ class _Storage:
                 from qiskit.circuit.classical import expr
 
                 if isinstance(op.lvalue, expr.Var):
-                    initialized.update(_variables(op.lvalue))
+                    initialized.update(_variables(op.lvalue, self.limit))
                 else:
                     read(op.lvalue)
             elif isinstance(op, IfElseOp):

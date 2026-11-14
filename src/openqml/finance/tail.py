@@ -224,8 +224,13 @@ def _positions(value, parameters, ops):
 
 
 def _sigmoid(value, ops):
-    exponential = ops.xp.exp(-ops.xp.abs(value))
-    return ops.xp.where(value >= 0, 1 / (1 + exponential), exponential / (1 + exponential))
+    if ops.name == "torch":
+        return ops.xp.sigmoid(value)
+    if ops.name == "jax":
+        from jax.nn import sigmoid
+
+        return sigmoid(value)
+    return ops.xp.exp(-ops.xp.logaddexp(0, -value))
 
 
 def _smooth(losses, threshold, probability, smoothing, plan, ops):

@@ -11,12 +11,12 @@ from ...ir.parameters import Expression
 def has_jumps(native):
     from qiskit.circuit import BreakLoopOp, ContinueLoopOp, Store
 
-    pending, seen = [native], set()
+    pending, seen = [native], {}
     while pending:
         body = pending.pop()
         if id(body) in seen:
             continue
-        seen.add(id(body))
+        seen[id(body)] = body
         if body.num_vars:
             return True
         for item in body.data:

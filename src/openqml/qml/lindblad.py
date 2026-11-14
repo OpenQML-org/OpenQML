@@ -199,6 +199,14 @@ class LindbladPlan:
             )
         )
         xp, shape = ops.xp, prefix + time
+        elements = math.prod(shape) * (len(self.hamiltonians) + self.num_rates + 16)
+        get_compute_kernel().admit(
+            8 * elements,
+            self.max_memory_mb,
+            itemsize=16,
+            work=8 * elements,
+            max_work=self.max_work,
+        )
         h = xp.broadcast_to(h, shape + (len(self.hamiltonians),))
         r = xp.broadcast_to(r, shape + (self.num_rates,))
         dt, active = xp.broadcast_to(dt, shape), xp.broadcast_to(active, shape)
@@ -212,15 +220,19 @@ class LindbladPlan:
         )
         numerical = ops.check(numerical, numerical >= 0, "Numerical error must be nonnegative.")
         bound = dt * 0
+        safe_dt = xp.where(dt > 0, dt, 1)
         for kind, index, _, scale in self._components:
-            bound = bound + (
-                2 * abs(scale) * h[..., index]
-                if kind == "hamiltonian"
-                else 2 * scale * scale * r[..., index]
+            envelope = h[..., index] if kind == "hamiltonian" else r[..., index]
+            safe_error = xp.where(envelope > 0, envelope, 1)
+            power = 1 if kind == "hamiltonian" else 2
+            logarithm = (
+                math.log(2) + power * math.log(abs(scale)) + xp.log(safe_dt) + xp.log(safe_error)
             )
-        terms = bound * dt * active
-        total = terms.sum(dim=-1) if ops.backend == "torch" else terms.sum(axis=-1)
-        total = xp.minimum(start + numerical + total, ops.array(2, real_value=True))
+            term = xp.exp(xp.minimum(logarithm, ops.array(math.log(2), real_value=True)))
+            bound = bound + xp.where((envelope > 0) & (dt > 0) & (active != 0), term, 0)
+        total = bound.sum(dim=-1) if ops.backend == "torch" else bound.sum(axis=-1)
+        two = ops.array(2, real_value=True)
+        total = xp.minimum(start + xp.minimum(numerical, two) + total, two)
         norms = ops.array([abs(p.coefficient) for p in self.observables], real_value=True)
         return LindbladUncertainty(total, total[..., None] * norms)
 

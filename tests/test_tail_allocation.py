@@ -169,6 +169,18 @@ def test_jax_path_tail_jit_gradient_and_hessian():
     np.testing.assert_allclose(hessian, np.asarray(hessian).T, atol=1e-4)
 
 
+def test_torch_tail_derivatives_at_zero_logistic_argument():
+    torch = pytest.importorskip("torch")
+    plan = TailAllocationPlan(confidence=0.5, smoothing=0.1, tolerance=1e-10)
+    returns = torch.zeros((2, 1, 2), dtype=torch.float64, requires_grad=True)
+
+    def decision(value):
+        return plan.solve(value).weights
+
+    assert torch.autograd.gradcheck(decision, (returns,), fast_mode=True, atol=1e-6)
+    assert torch.autograd.gradgradcheck(decision, (returns,), fast_mode=True, atol=2e-5)
+
+
 def test_born_path_tail_decision_gradient():
     torch = pytest.importorskip("torch")
     from openqml.finance import ScenarioPlan
