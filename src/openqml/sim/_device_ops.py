@@ -27,12 +27,26 @@ def supports_device_kernel(state, matrix, torch):
     )
 
 
-def matrix_cotangent(state, cotangent, wires, width, ops):
+def matrix_cotangent(state, cotangent, wires, width, ops, matrix_shape=None):
+    if (
+        matrix_shape is not None
+        and ops.backend == "torch"
+        and state.is_cuda
+        and len(wires) <= 3
+        and not ops.xp.is_grad_enabled()
+        and supports_device_kernel(state, cotangent, ops.xp)
+    ):
+        from ._triton_kernels import launch_gate_cotangent
+
+        return launch_gate_cotangent(state, cotangent, wires, width, matrix_shape)
     from .dense import _local_blocks
 
     left, _ = _local_blocks(cotangent, wires, width, ops)
     right, _ = _local_blocks(state, wires, width, ops)
-    return ops.matmul(left, ops.conj(right).swapaxes(-1, -2))
+    result = ops.matmul(left, ops.conj(right).swapaxes(-1, -2))
+    if matrix_shape is not None and ops.backend == "torch":
+        return result.sum_to_size(matrix_shape)
+    return result
 
 
 @lru_cache(maxsize=1)
@@ -62,7 +76,7 @@ def _differentiable_gate():
                 else:
                     dx = launch_gate(gradient, adjoint, wires, width)
             if ctx.needs_input_grad[1]:
-                dm = matrix_cotangent(state, gradient, wires, width, ops).sum_to_size(matrix.shape)
+                dm = matrix_cotangent(state, gradient, wires, width, ops, matrix.shape)
             return dx, dm, None, None
 
     return Gate

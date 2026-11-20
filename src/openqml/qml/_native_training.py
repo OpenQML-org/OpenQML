@@ -18,7 +18,11 @@ class NativeNaturalGradientResult(NamedTuple):
     damping: float
 
 
-def solve_metric(
+def solve_metric(matvec, gradient, ops, **options):
+    return _solve_metric(matvec, gradient, ops, **options)[0]
+
+
+def _solve_metric(
     matvec,
     gradient,
     ops,
@@ -27,6 +31,9 @@ def solve_metric(
     tolerance=1e-6,
     max_iterations=32,
     require_convergence=True,
+    preconditioner_rank=0,
+    max_memory_mb=256,
+    reserved_bytes=0,
 ):
     """Bounded CG with a fresh damped-system residual certificate.
 
@@ -42,6 +49,15 @@ def solve_metric(
     if not gradient:
         raise ValidationError("Native metric solve requires a nonempty parameter gradient.")
     keys = tuple(gradient)
+    rank = integer(preconditioner_rank, "preconditioner_rank")
+    if rank:
+        from ..autodiff._nystrom import preconditioner
+
+        condition = preconditioner(
+            matvec, gradient, ops, rank, damping, max_memory_mb, reserved_bytes
+        )
+    else:
+        condition = None
     scale = stop(global_norm(gradient.values(), ops.xp, ops.backend), ops.backend)
     scale = ops.xp.where((scale > 0) & ops.xp.isfinite(scale), scale, 1)
     gradient = {key: value / scale for key, value in gradient.items()}
@@ -55,26 +71,34 @@ def solve_metric(
 
     direction = {k: gradient[k] * 0 for k in keys}
     residual = dict(gradient)
-    search = dict(residual)
-    squared = dot(residual, residual)
-    threshold = ops.xp.maximum(tolerance * ops.xp.sqrt(squared), tolerance / scale)
-    active = ops.xp.sqrt(squared) > threshold
+    search = condition(residual) if condition is not None else dict(residual)
+    squared = dot(residual, search)
+    residual_norm = ops.xp.sqrt(dot(residual, residual))
+    threshold = ops.xp.maximum(tolerance * residual_norm, tolerance / scale)
+    active = residual_norm > threshold
     iterations = ops.array(0, real_value=True)
+    breakdown = False
 
     def iteration(_, state):
+        nonlocal breakdown
         direction, residual, search, squared, active, iterations = state
         product = apply(search)
         curvature = dot(search, product)
-        valid = active & ops.xp.isfinite(curvature) & (curvature > 0)
+        valid = active & ops.xp.isfinite(curvature) & (curvature > 0) & (squared > 0)
+        if ops.backend == "numpy" and active and not valid:
+            breakdown = True
         denominator = ops.xp.where(valid, curvature, 1.0)
         step = ops.xp.where(valid, squared / denominator, 0.0)
         direction = {k: direction[k] + step * search[k] for k in keys}
         residual = {k: residual[k] - step * product[k] for k in keys}
-        updated = dot(residual, residual)
+        z = condition(residual) if condition is not None else residual
+        updated = dot(residual, z)
         beta = ops.xp.where(valid, updated / ops.xp.where(squared > 0, squared, 1.0), 0.0)
-        search = {k: residual[k] + beta * search[k] for k in keys}
+        search = {k: z[k] + beta * search[k] for k in keys}
         iterations = iterations + active
-        active = valid & (ops.xp.sqrt(updated) > threshold)
+        active = valid & (
+            ops.xp.sqrt(dot(residual, residual) if condition is not None else updated) > threshold
+        )
         squared = updated
         return direction, residual, search, squared, active, iterations
 
@@ -120,7 +144,7 @@ def solve_metric(
         iterations.to(dtype=ops.xp.int64)
         if ops.backend == "torch"
         else iterations.astype(ops.xp.int32),
-        products,
+        products + rank,
         norm,
         damping,
-    )
+    ), breakdown

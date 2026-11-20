@@ -27,9 +27,25 @@ def _emit(labels, children, root, merge):
 
 
 def depth_first(labels, steps, merge):
+    """Minimize estimated peak over all depth-first child orders of this tree."""
     if not steps:
         return steps
-    children, root = _tree(labels, steps)
+    size = [1 << len(row) for row in labels]
+    delta = [0] * len(labels)
+    peak = [0] * len(labels)
+    children = {}
+    for k, (a, b, _, _, _, out) in enumerate(steps, len(labels)):
+        output = 1 << len(out)
+        # Raw leaves are live on entry. After a subtree completes the live
+        # volume has changed by delta, which can be negative.
+        join = delta[a] + delta[b] + 2 * (size[a] + size[b]) + 3 * output
+        ab = max(peak[a], delta[a] + peak[b], join)
+        ba = max(peak[b], delta[b] + peak[a], join)
+        children[k] = (b, a) if ba < ab else (a, b)
+        peak.append(min(ab, ba))
+        delta.append(delta[a] + delta[b] + output - size[a] - size[b])
+        size.append(output)
+    root = len(size) - 1
     return _emit(labels, children, root, merge)
 
 
@@ -49,8 +65,9 @@ def portfolio(labels, charge, greedy, merge, profile, target_peak, trials):
         depth_first(labels, greedy(labels, charge, objective=objective), merge)
         for objective in ("size", "flops", "balanced")
     ]
-    current = min(candidates, key=score)
-    current_score = score(current)
+    current_score, current = min(
+        ((score(path), path) for path in candidates), key=lambda entry: entry[0]
+    )
     children, root = _tree(labels, current)
     # Visit expensive joins first. trials bounds candidate subtrees, while
     # charge accounts for the full path emitted/profiled for every proposal.
@@ -70,7 +87,7 @@ def portfolio(labels, charge, greedy, merge, profile, target_peak, trials):
             for keep, remaining in ((first, second), (second, first)):
                 old_parent, old_child = children[parent], children[child]
                 children[child], children[parent] = (keep, other), (child, remaining)
-                proposed = _emit(labels, children, root, merge)
+                proposed = depth_first(labels, _emit(labels, children, root, merge), merge)
                 proposed_score = score(proposed)
                 if proposed_score < current_score:
                     current, current_score = proposed, proposed_score
@@ -82,3 +99,30 @@ def portfolio(labels, charge, greedy, merge, profile, target_peak, trials):
             # the next ranked join rather than reusing its old sibling pair.
             break
     return current
+
+
+def slice_index(labels, steps, candidates, target_peak, trials, charge):
+    """Rank separators by their effect on the whole live schedule and both slices."""
+    charge(sum(map(len, candidates)))
+    sizes = {}
+    for row in candidates:
+        for digit in row:
+            sizes[digit] = sizes.get(digit, 0) + (1 << len(row))
+    if not sizes:
+        return None
+    shortlist = sorted(sizes, key=lambda digit: (-sizes[digit], digit))[:trials]
+    charge(len(shortlist) * (len(labels) + len(steps)))
+
+    def score(digit):
+        live = [1 << (len(row) - (digit in row)) for row in labels]
+        total = peak = sum(live)
+        work = 0
+        for a, b, la, lb, shared, out in steps:
+            size = 1 << (len(out) - (digit in out))
+            peak = max(peak, total + 2 * (live[a] + live[b]) + 3 * size)
+            work += 8 << (len(la) + len(lb) - len(shared) - int(digit in la or digit in lb))
+            total += size - live[a] - live[b]
+            live.append(size)
+        return (False, 2 * work, peak) if peak <= target_peak else (True, peak, 2 * work)
+
+    return min(shortlist, key=score)

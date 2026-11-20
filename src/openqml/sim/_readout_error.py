@@ -33,7 +33,9 @@ def _rewind(word, name, wires, mask, table, generator):
 
 
 class ReadoutErrorBudget:
-    def __init__(self, circuit, observables, absolute_error, splits, max_work, workspace):
+    def __init__(
+        self, circuit, observables, absolute_error, splits, max_work, workspace, initial_order
+    ):
         from ._mps import _routed
 
         count, width = len(observables), circuit.num_qubits
@@ -65,7 +67,7 @@ class ReadoutErrorBudget:
         self.index = 0
         if not splits:
             return
-        order = list(range(width))
+        order = list(initial_order)
         gates = [
             (gate.name if gate is not None else "swap", wires)
             for gate, wires in _routed(circuit, order)

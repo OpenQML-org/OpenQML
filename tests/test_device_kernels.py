@@ -8,24 +8,28 @@ import pytest
 def _runtime():
     torch = pytest.importorskip("torch")
     pytest.importorskip("triton", minversion="3.4")
-    if os.environ.get("TRITON_INTERPRET") != "1":
-        pytest.skip("CPU kernel execution requires the Triton interpreter")
-    return torch
+    if os.environ.get("TRITON_INTERPRET") == "1":
+        return torch, "cpu"
+    if not torch.cuda.is_available() or torch.cuda.get_device_capability()[0] < 8:
+        pytest.skip("Device execution requires SM80 or a configured interpreter.")
+    return torch, "cuda"
 
 
 @pytest.mark.parametrize("precision", ["complex64", "complex128"])
 @pytest.mark.parametrize("wires", [(2,), (4, 0), (2, 0, 3)])
 def test_gate_kernel_matches_portable_complex_vjp(wires, precision):
-    torch = _runtime()
+    torch, device = _runtime()
     from openqml.sim._device_ops import _differentiable_gate
     from openqml.sim.dense import _apply_matrix_portable, _TensorOps
 
     dtype = getattr(torch, precision)
     dimension = 1 << len(wires)
-    state = torch.randn(2, 3, 256, dtype=dtype)[..., ::2].requires_grad_()
+    state = torch.randn(2, 3, 256, dtype=dtype, device=device)[..., ::2].requires_grad_()
     ops = _TensorOps("torch", state.real)
     for shape in ((), (2, 1), (1, 3), (2, 3)):
-        gate = torch.randn(*shape, dimension, dimension, dtype=dtype).mH.requires_grad_()
+        gate = torch.randn(
+            *shape, dimension, dimension, dtype=dtype, device=device
+        ).mH.requires_grad_()
         expected = _apply_matrix_portable(state, gate, wires, 7, ops)
         actual = _differentiable_gate().apply(state, gate, wires, 7)
         cotangent = torch.randn_like(actual)
@@ -46,7 +50,7 @@ def test_gate_kernel_matches_portable_complex_vjp(wires, precision):
 @pytest.mark.parametrize("shared", ["", "j", "jk", "jkl"])
 @pytest.mark.parametrize("precision", ["complex64", "complex128"])
 def test_strided_contraction_kernel_and_gradient(shared, precision):
-    torch = _runtime()
+    torch, device = _runtime()
     from openqml.compute._contraction_program import ContractionKernel
     from openqml.sim._device_ops import _differentiable_contraction
     from openqml.sim.dense import _TensorOps
@@ -54,8 +58,12 @@ def test_strided_contraction_kernel_and_gradient(shared, precision):
     dtype = getattr(torch, precision)
     left_axes, right_axes = "ac" + shared[::-1] + "bf", "d" + shared + "ze"
     plan = ContractionKernel.compile(left_axes, right_axes, shared)
-    left = torch.randn(2, 1, *(2,) * len(left_axes), dtype=dtype).transpose(-1, -2).conj()
-    right = torch.randn(1, 3, *(2,) * len(right_axes), dtype=dtype).transpose(-1, -3)
+    left = (
+        torch.randn(2, 1, *(2,) * len(left_axes), dtype=dtype, device=device)
+        .transpose(-1, -2)
+        .conj()
+    )
+    right = torch.randn(1, 3, *(2,) * len(right_axes), dtype=dtype, device=device).transpose(-1, -3)
     left.requires_grad_()
     right.requires_grad_()
     ops = _TensorOps("torch", left.real)
@@ -72,6 +80,26 @@ def test_strided_contraction_kernel_and_gradient(shared, precision):
         torch.testing.assert_close(a, b, atol=tol, rtol=tol)
 
 
+@pytest.mark.parametrize("precision", ["complex64", "complex128"])
+@pytest.mark.parametrize("matrix_batch", [(), (1, 3), (2, 1), (2, 3)])
+def test_gate_cotangent_reduces_strided_amplitudes_and_shared_batches(precision, matrix_batch):
+    torch, device = _runtime()
+    from openqml.sim._triton_kernels import launch_gate_cotangent
+    from openqml.sim.dense import _apply_matrix_portable, _TensorOps
+
+    dtype = getattr(torch, precision)
+    wires = (7, 1)
+    state = torch.randn(3, 2, 1024, dtype=dtype, device=device).transpose(0, 1)[..., ::2].conj()
+    grad = torch.randn(2, 3, 1024, dtype=dtype, device=device)[..., 1::2].conj()
+    gate = torch.randn(*matrix_batch, 4, 4, dtype=dtype, device=device, requires_grad=True)
+    result = _apply_matrix_portable(state, gate, wires, 9, _TensorOps("torch", state.real))
+    (expected,) = torch.autograd.grad(result, gate, grad)
+    got = launch_gate_cotangent(state, grad, wires, 9, gate.shape)
+    torch.testing.assert_close(
+        got, expected, atol=5e-5 if precision == "complex64" else 1e-11, rtol=1e-5
+    )
+
+
 @pytest.mark.parametrize("precision", ["fp32", "fp64"])
 def test_offline_cuda_codegen(precision):
     pytest.importorskip("torch")
@@ -81,7 +109,7 @@ def test_offline_cuda_codegen(precision):
     from triton.backends.compiler import GPUTarget
     from triton.compiler import ASTSource, compile
 
-    from openqml.sim._triton_kernels import _apply_gate, _contract
+    from openqml.sim._triton_kernels import _apply_gate, _contract, _gate_cotangent
 
     def compile_kernel(fn, constants, scalars):
         signature = {name: scalars.get(name, "constexpr") for name in fn.arg_names}
@@ -93,17 +121,43 @@ def test_offline_cuda_codegen(precision):
         assert ".target sm_80" in compiled.asm["ptx"] and compiled.asm["cubin"]
 
     pointers = {name: "*" + precision for name in ("state", "gate", "output")}
+    compile_kernel(
+        _gate_cotangent,
+        dict(
+            GROUPS=128,
+            COUNT=384,
+            PARTS=3,
+            DIM=4,
+            MASKS=(2, 128),
+            WIRE_BITS=(128, 2),
+            SHAPE=(3, 2),
+            BROADCAST=(True, False),
+            XS=(2048, 1024),
+            GS=(1024, 3072),
+            X_LAST=2,
+            G_LAST=1,
+            X_CONJ=True,
+            G_CONJ=False,
+            BLOCK=128,
+        ),
+        {name: "*" + precision for name in ("state", "grad", "partial")},
+    )
     for masks, offsets in [((8,), (0, 8)), ((2, 16), (0, 16, 2, 18)), ((1, 2, 4), tuple(range(8)))]:
         compile_kernel(
             _apply_gate,
             dict(
                 GROUPS=128,
-                GATE_STRIDE=0,
                 MASKS=masks,
                 OFFSETS=offsets,
                 BLOCK=64,
                 BATCH_SHAPE=(3, 2),
                 MATRIX_STRIDES=(0, len(offsets) ** 2),
+                STATE_STRIDES=(1024, 3072),
+                STATE_LAST=2,
+                GATE_ROW=1,
+                GATE_COL=len(offsets),
+                STATE_CONJ=True,
+                GATE_CONJ=True,
             ),
             pointers,
         )

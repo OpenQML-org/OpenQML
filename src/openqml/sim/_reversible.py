@@ -45,7 +45,7 @@ def evolve_reversible(state, operations, bindings, width, ops, fusion, budget):
             inverse = ops.conj(matrix).swapaxes(-1, -2)
             before = _apply_matrix(final, inverse, gate.qubits, width, ops)
             if pullback is not None:
-                dm = matrix_cotangent(before, gradient, gate.qubits, width, ops)
+                dm = matrix_cotangent(before, gradient, gate.qubits, width, ops, matrix.shape)
                 for key, delta in zip(keys, pullback(dm), strict=True):
                     i = slots[key]
                     gradients[i] = gradients[i] + delta
@@ -137,7 +137,7 @@ def evolve_reversible(state, operations, bindings, width, ops, fusion, budget):
                     matrix = build(*leaves)
 
                 def apply(dm):
-                    return torch.autograd.grad(matrix, leaves, dm.sum_to_size(matrix.shape))
+                    return torch.autograd.grad(matrix, leaves, dm)
 
                 return matrix.detach(), apply
 

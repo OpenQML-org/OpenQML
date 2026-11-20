@@ -39,7 +39,7 @@ def certify_class(
     spec, bindings, *, head=None, bias=None, absolute_error=0.01, backend=None, options=None
 ):
     """Cancel shared Pauli terms before certifying pairwise logit differences."""
-    backend = MPSBackend() if backend is None else backend
+    backend = MPSBackend(layout="auto") if backend is None else backend
     options = ExecutionOptions() if options is None else options
     if not isinstance(backend, MPSBackend) or not isinstance(options, ExecutionOptions):
         raise ValidationError("Specify an MPSBackend and ExecutionOptions.")

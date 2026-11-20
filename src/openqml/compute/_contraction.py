@@ -227,7 +227,7 @@ class TensorNetworkPlan:
             raw_storage = sum(1 << len(row) for row in original)
             while True:
                 labels = tuple(tuple(x for x in row if x not in sliced) for row in original)
-                from ._contraction_path import depth_first, portfolio
+                from ._contraction_path import depth_first, portfolio, slice_index
 
                 if self.optimizer == "portfolio":
                     steps = portfolio(
@@ -243,7 +243,7 @@ class TensorNetworkPlan:
                     steps = _cotengra(labels, self.search_trials, charge)
                 else:
                     steps = _greedy(labels, charge)
-                if self.reuse_intermediates:
+                if self.reuse_intermediates and self.optimizer != "portfolio":
                     steps = depth_first(labels, steps, _step)
                 peak, flops, largest = _profile(labels, steps)
                 needed = 16 * (peak + raw_storage)
@@ -252,14 +252,24 @@ class TensorNetworkPlan:
                 if (1 << (len(sliced) + 1)) > self.max_slices:
                     raise ResourceError("No contraction path fits max_memory_mb within max_slices.")
                 candidates = list(labels) + [s[-1] for s in steps]
-                worst = max(candidates, key=len)
-                if not worst:
+                if self.optimizer == "portfolio":
+                    selected = slice_index(
+                        labels,
+                        steps,
+                        candidates,
+                        capacity // 16 - raw_storage,
+                        self.search_trials,
+                        charge,
+                    )
+                else:
+                    worst = max(candidates, key=len)
+                    selected = max(
+                        worst,
+                        key=lambda x: sum(1 << len(row) for row in candidates if x in row),
+                        default=None,
+                    )
+                if selected is None:
                     raise ResourceError("Tensor input/slicing workspace exceeds the memory budget.")
-                # Slice a wire occurring in the largest live separator. Every
-                # binary assignment is summed; no amplitude is pruned.
-                selected = max(
-                    worst, key=lambda x: sum(1 << len(row) for row in candidates if x in row)
-                )
                 sliced.append(selected)
             total_flops += flops * (1 << len(sliced))
             if total_flops > self.max_flops:
@@ -573,17 +583,9 @@ class TensorNetworkPlan:
                     result = program.run_flat(raw, assignment, ops, _statistics)
                     total = total + ops.real(result)
                     continue
-                fixed = {index: (assignment >> j) & 1 for j, index in enumerate(sliced)}
                 values = {}
                 for j, value in enumerate(raw):
-                    prefix = value.ndim - len(original[j])
-                    select = (slice(None),) * prefix + tuple(
-                        fixed.get(index, slice(None)) for index in original[j]
-                    )
-                    selected = value[select]
-                    values[j] = (
-                        selected if _executor is None else _executor.input(selected, labels[j])
-                    )
+                    values[j] = _executor.input(program.select(j, value, assignment), labels[j])
                 for k, (a, b, la, lb, shared, _) in enumerate(steps):
                     left, right = values.pop(a), values.pop(b)
                     result = _executor.contract(left, right, la, lb, shared, graph_index, k)
@@ -591,8 +593,7 @@ class TensorNetworkPlan:
                     if _statistics is not None:
                         _statistics["contractions_executed"] += 1
                 result = next(iter(values.values()))
-                if _executor is not None:
-                    result = _executor.finish(result)
+                result = _executor.finish(result)
                 total = total + ops.real(result)
             readouts.append(total)
         outputs = []

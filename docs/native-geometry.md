@@ -15,6 +15,16 @@ solve, and batched state evolution avoids a Python circuit call per example.
 | `spectral_step(bindings, gradient, block_shapes=..., ...)` | Bounded spectral-natural displacement and the original CG certificate |
 | `DistanceAwareQNM(plan, block_shapes, ...).step(...)` | Stateful quantum Fisher momentum, active polar mixing and a trajectory-dependent displacement bound |
 
+`preconditioner_rank=r` enables a bounded Nyström preconditioner for NumPy,
+PyTorch and JAX natural-gradient solves and the distance-aware optimizer.
+For $p$ coordinates, $r$ deterministic orthonormal cosine probes form
+$Y=F\Omega$ and $W=\Omega^T Y$. A regularized rank-space solve applies the
+inverse of the damped low-rank approximation during conjugate gradient.
+The additional storage is $O(pr+r^2)$. A rank of zero runs ordinary CG.
+The reported metric product count includes the $r$ setup products and the
+fresh residual check against the full damped system. The gain depends on the
+metric spectrum, probe overlap and requested accuracy. [Frangella, Tropp and Udell, SIAM Journal on Matrix Analysis and Applications](https://doi.org/10.1137/21M1466244)
+
 The metric is `G = Re(J* (I - |psi><psi|) J)`, with quantum Fisher information
 `F = 4G`. Forward and reverse native differentiation evaluate `Gv` without a
 parameter-by-parameter metric matrix. Real and imaginary state coordinates

@@ -40,7 +40,7 @@ def certified_vjp(
     options=None,
     strict=True,
 ):
-    engine = MPSBackend() if backend is None else backend
+    engine = MPSBackend(layout="auto") if backend is None else backend
     options = ExecutionOptions() if options is None else options
     if not isinstance(engine, MPSBackend) or not isinstance(options, ExecutionOptions):
         raise ValidationError("Specify an MPSBackend and ExecutionOptions.")

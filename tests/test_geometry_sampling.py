@@ -225,3 +225,29 @@ def test_verified_optimizer_checks_symbolic_and_feedback_optimizations():
     result = oq.optimize_verified(source)
     assert result.proof.proven
     assert result.proof.check(source, result.circuit)
+
+
+def test_low_rank_preconditioner_certifies_full_metric_and_admits_probe_storage():
+    p = [oq.Parameter(f"v{i}") for i in range(18)]
+    rng = np.random.default_rng(391)
+    basis = np.linalg.qr(rng.normal(size=(len(p), 5)))[0]
+    eigenvalues = np.geomspace(8000, 0.1, 5)
+    circuit = oq.Circuit(5)
+    for i, scale in enumerate(2 * np.sqrt(eigenvalues)):
+        circuit = circuit.ry(scale * sum(basis[j, i] * p[j] for j in range(len(p))), i)
+    plan = oq.quantum_metric(circuit, parameters=tuple(v.name for v in p))
+    bind = {v.name: 0.03 for v in p}
+    g = rng.normal(size=len(p))
+    options = dict(damping=0.005, tolerance=1e-8)
+    basic = plan.natural_gradient(bind, g, **options)
+    result = plan.natural_gradient(bind, g, preconditioner_rank=5, **options)
+    model = (basis * eigenvalues) @ basis.T + 0.005 * np.eye(len(p))
+    assert np.linalg.norm(model @ result.direction - g) < 5e-8
+    assert result.converged and result.iterations < basic.iterations
+    assert result.metric_products == result.iterations + 6
+    with pytest.raises(oq.ValidationError):
+        plan.natural_gradient(bind, g, preconditioner_rank=len(p) + 1)
+    direct = oq.quantum_metric(oq.Circuit(1).ry(p[0], 0), max_memory_mb=0.02)
+    with oq.compute_context(policy=oq.ComputePolicy(max_memory_mb=0.0001)):
+        with pytest.raises(oq.ResourceError):
+            direct.natural_gradient({p[0].name: 0.2}, [1.0], preconditioner_rank=1)

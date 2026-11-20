@@ -57,6 +57,7 @@ class DistanceAwareQNM:
     max_iterations: int = 32
     alignment_guard: bool = True
     sample_chunk_size: int | None = None
+    preconditioner_rank: int = 0
     _signature: tuple = field(init=False, repr=False)
 
     def __post_init__(self):
@@ -70,6 +71,10 @@ class DistanceAwareQNM:
         ):
             raise ValidationError("Distance-aware QNM needs a nonempty quantum geometry plan.")
         shapes = _spectral_shapes(self.block_shapes, len(self.plan.parameters))
+        rank = integer(self.preconditioner_rank, "preconditioner_rank")
+        if rank > len(self.plan.parameters):
+            raise ValidationError("preconditioner_rank exceeds the selected coordinates.")
+        object.__setattr__(self, "preconditioner_rank", rank)
         object.__setattr__(self, "block_shapes", shapes)
         settings = {}
         for name in (
@@ -121,6 +126,8 @@ class DistanceAwareQNM:
             sort_keys=True,
         ).encode()
         digest = hashlib.sha256(payload)
+        if rank:
+            digest.update(f"nystrom-rank:{rank}".encode())
         if isinstance(self.plan, QuantumFisherPlan):
             digest.update(f"regularized-SLD:{self.plan.state_damping!r}".encode())
         digest.update(
@@ -207,6 +214,7 @@ class DistanceAwareQNM:
             damping=self.damping,
             tolerance=self.tolerance,
             max_iterations=self.max_iterations,
+            preconditioner_rank=self.preconditioner_rank,
         )
         momentum = self.momentum * state.momentum + (1 - self.momentum) * natural.direction
         direction = _polar_mix(momentum, self.block_shapes, self.mixing, ops, backend)

@@ -16,7 +16,9 @@ from ..runtime.backends import BackendCapabilities, ExecutionOptions
 
 def _routed(circuit, order):
     """Maintain a logical-to-site permutation, including across remote gates."""
-    position = list(order)
+    position = [0] * len(order)
+    for site, wire in enumerate(order):
+        position[wire] = site
 
     def exchange(a, b):
         order[a], order[b] = order[b], order[a]
@@ -43,7 +45,46 @@ def _routed(circuit, order):
         yield gate, (a, b)
 
 
-def _layout(circuit, max_bond_dimension, max_work, *, truncate=False):
+def _interaction_order(circuit):
+    """Pack frequent two-site interactions into disjoint open chains."""
+    width = circuit.num_qubits
+    counts = {}
+    for gate in circuit.operations:
+        if len(gate.qubits) == 2 and gate.name not in {"swap", "barrier"}:
+            edge = tuple(sorted(gate.qubits))
+            counts[edge] = counts.get(edge, 0) + 1
+    neighbors = [[] for _ in range(width)]
+    roots = list(range(width))
+
+    def root(q):
+        while roots[q] != q:
+            roots[q] = roots[roots[q]]
+            q = roots[q]
+        return q
+
+    for a, b in sorted(counts, key=lambda edge: (-counts[edge], edge)):
+        if len(neighbors[a]) == 2 or len(neighbors[b]) == 2:
+            continue
+        x, y = root(a), root(b)
+        if x != y:
+            neighbors[a].append(b)
+            neighbors[b].append(a)
+            roots[y] = x
+    ordered, seen = [], set()
+    for start, linked in enumerate(neighbors):
+        if len(linked) != 1 or start in seen:
+            continue
+        current, prev = start, None
+        while current is not None:
+            ordered.append(current)
+            seen.add(current)
+            other = next((q for q in neighbors[current] if q != prev), None)
+            prev, current = current, other
+    ordered.extend(q for q in range(width) if q not in seen)
+    return tuple(ordered)
+
+
+def _layout(circuit, max_bond_dimension, max_work, *, truncate=False, initial_order=None):
     width = circuit.num_qubits
     if width > max_work or len(circuit.operations) > max_work:
         return None, "MPS site or operation bookkeeping exceeds max_work."
@@ -51,10 +92,10 @@ def _layout(circuit, max_bond_dimension, max_work, *, truncate=False):
         return None, "MPS requires a unitary circuit."
     if any(len(g.qubits) > 2 and g.name != "barrier" for g in circuit.operations):
         return None, "MPS requires one/two-wire gates."
-    order = list(range(width))
+    order = list(range(width) if initial_order is None else initial_order)
     work, swaps, center, splits = len(circuit.operations), 0, 0, 0
     bonds = [1] * (width + 1)
-    payload, peak, maximum = width * 288, width * 288 + 128, 1
+    payload, peak, maximum, svd_work = width * 288, width * 288 + 128, 1, 0
     for op, wires in _routed(circuit, order):
         if op is None:
             swaps += 1
@@ -74,6 +115,7 @@ def _layout(circuit, max_bond_dimension, max_work, *, truncate=False):
         left, old, right = bonds[cut - 1], bonds[cut], bonds[cut + 1]
         # A full SVD of (2*left, 2*right) retains exactly this many columns.
         size = 2 * min(left, right)
+        svd_work += 4 * left * right * size
         if truncate:
             size = min(size, max_bond_dimension)
         maximum = max(maximum, size)
@@ -98,6 +140,7 @@ def _layout(circuit, max_bond_dimension, max_work, *, truncate=False):
         "workspace_bytes": peak,
         "analysis_complete": True,
         "routing_swaps": swaps,
+        "svd_work": svd_work,
         "splits": splits,
         "truncation": "canonical_Schmidt" if truncate else "none_full_SVD_columns_retained",
     }, "Routed MPS tensor shapes and workspace admitted."
@@ -147,25 +190,6 @@ def _move_center(sites, center, target):
         center -= 1
 
 
-def _read_word(sites, word):
-    from .dense import _I, _X, _Y, _Z
-
-    matrices = {"I": _I, "X": _X, "Y": _Y, "Z": _Z}
-    environment = np.ones((1, 1), dtype=complex)
-    for site, pauli in zip(sites, word, strict=True):
-        matrix = matrices[pauli]
-        result = np.zeros((site.shape[2], site.shape[2]), dtype=complex)
-        for s in range(2):
-            for t in range(2):
-                if matrix[s, t]:
-                    product = get_compute_kernel().matmul(environment, site[:, t, :])
-                    result += matrix[s, t] * (
-                        get_compute_kernel().matmul(site[:, s, :].conj().T, product)
-                    )
-        environment = result
-    return float(environment[0, 0].real)
-
-
 @dataclass(frozen=True)
 class MPSReadout:
     """Observable values and truncation-only error bounds in input order."""
@@ -176,6 +200,7 @@ class MPSReadout:
     max_bond_dimension: int
     routing_swaps: int
     simulated_wires: tuple[int, ...] | None = None
+    readout_transfers: int = 0
 
 
 @dataclass(frozen=True)
@@ -190,8 +215,11 @@ class MPSBackend:
         native_expectations=True, deterministic_expectations=True, exact_expectations=True
     )
     max_discarded_weight: float | None = None
+    layout: str = "source"
 
     def __post_init__(self):
+        if self.layout not in ("source", "auto"):
+            raise ValidationError("MPS layout must be source or auto.")
         for name in ("max_bond_dimension", "max_operations", "max_work"):
             integer(getattr(self, name), name, 1)
         if self.max_discarded_weight is not None:
@@ -235,6 +263,36 @@ class MPSBackend:
         profile, reason = _layout(
             circuit, self.max_bond_dimension, self.max_work, truncate=tolerance is not None
         )
+        initial_order = range(circuit.num_qubits)
+        inputs = len(circuit.operations)
+        if (
+            self.layout == "auto"
+            and 384 * (circuit.num_qubits + inputs) <= budget
+            and 4 * circuit.num_qubits + inputs * (4 + inputs.bit_length()) <= self.max_work
+        ):
+            candidate = _interaction_order(circuit)
+            if any(q != i for i, q in enumerate(candidate)):
+                trial, trial_reason = _layout(
+                    circuit,
+                    self.max_bond_dimension,
+                    self.max_work,
+                    truncate=tolerance is not None,
+                    initial_order=candidate,
+                )
+
+                def score(p):
+                    if p is None or not p["analysis_complete"]:
+                        return (True, True)
+                    return (
+                        False,
+                        p["workspace_bytes"] > budget,
+                        p["svd_work"],
+                        p["routing_swaps"],
+                        p["workspace_bytes"],
+                    )
+
+                if score(trial) < score(profile):
+                    initial_order, profile, reason = candidate, trial, trial_reason
         if profile is None or not profile["analysis_complete"]:
             raise ResourceError("MPS admission rejected the circuit: " + reason)
         if profile["workspace_bytes"] > budget:
@@ -250,8 +308,9 @@ class MPSBackend:
                 profile["splits"],
                 self.max_work,
                 budget - profile["workspace_bytes"],
+                initial_order,
             )
-        order = list(range(circuit.num_qubits))
+        order = list(initial_order)
         sites = [np.array([[[1], [0]]], dtype=complex) for _ in order]
         ops, center, angle, peak = _TensorOps(), 0, 0.0, 1
         for gate, wires in _routed(circuit, order):
@@ -281,9 +340,24 @@ class MPSBackend:
                 angle += math.asin(math.sqrt(weight))
                 peak = max(peak, size)
         distance = math.sin(min(angle, math.pi / 2))
-        values, bounds, cache = [], [], {}
-        for observable in observables:
-            terms = observable.terms if isinstance(observable, Hamiltonian) else (observable,)
+        from ._mps_readout import read_words
+
+        targets = achieved = None
+        if controller is not None:
+            targets, achieved = controller.targets, controller.used
+            del controller
+        terms_by_output = tuple(
+            o.terms if isinstance(o, Hamiltonian) else (o,) for o in observables
+        )
+        words = dict.fromkeys(
+            t.paulis
+            for row in terms_by_output
+            for t in row
+            if t.coefficient and t.paulis.count("I") < len(order)
+        )
+        cache, transfers = read_words(sites, order, words, budget - profile["workspace_bytes"])
+        values, bounds = [], []
+        for terms in terms_by_output:
             value, norm = 0.0, 0.0
             for term in terms:
                 if not term.coefficient:
@@ -291,22 +365,26 @@ class MPSBackend:
                 if term.paulis.count("I") == len(order):
                     value += term.coefficient
                     continue
-                if term.paulis not in cache:
-                    word = "".join(term.paulis[q] for q in order)
-                    cache[term.paulis] = _read_word(sites, word)
                 value += term.coefficient * cache[term.paulis]
                 norm += abs(term.coefficient)
             if not math.isfinite(value) or not math.isfinite(norm):
                 raise ValidationError("MPS observable exceeds finite precision.")
             values.append(value)
             bounds.append(2 * distance * norm)
-        if controller is not None:
-            bounds = np.minimum(bounds, controller.used)
-            if strict and np.any(bounds > controller.targets):
+        if achieved is not None:
+            bounds = np.minimum(bounds, achieved)
+            if strict and np.any(bounds > targets):
                 raise ResourceError(
                     "MPS bond or workspace did not meet the requested readout tolerance."
                 )
-        return MPSReadout(tuple(values), tuple(bounds), distance, peak, profile["routing_swaps"])
+        return MPSReadout(
+            tuple(values),
+            tuple(bounds),
+            distance,
+            peak,
+            profile["routing_swaps"],
+            readout_transfers=transfers,
+        )
 
     def expectations_batch(self, circuits, observables, *, options):
         from .batch import _observables

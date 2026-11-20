@@ -63,7 +63,7 @@ class ReadoutPlan:
         from ..runtime.backends import ExecutionOptions
         from ._mps import MPSBackend
 
-        backend = MPSBackend() if backend is None else backend
+        backend = MPSBackend(layout="auto") if backend is None else backend
         options = ExecutionOptions() if options is None else options
         if not isinstance(backend, MPSBackend) or not isinstance(options, ExecutionOptions):
             raise ValidationError("Specify an MPSBackend and ExecutionOptions.")
@@ -246,7 +246,7 @@ def certified_readout(
     from ._mps import MPSBackend
     from .batch import _observables
 
-    backend = MPSBackend() if backend is None else backend
+    backend = MPSBackend(layout="auto") if backend is None else backend
     options = ExecutionOptions() if options is None else options
     if not isinstance(backend, MPSBackend) or not isinstance(options, ExecutionOptions):
         raise ValidationError("Certified readouts require an MPSBackend and ExecutionOptions.")

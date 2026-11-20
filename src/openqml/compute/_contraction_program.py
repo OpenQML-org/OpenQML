@@ -104,6 +104,15 @@ class ContractionProgram:
         self.selectors, self.kernels = tuple(selectors), tuple(kernels)
         self.steps, self.input_count = steps, len(desc)
 
+    def select(self, node, value, assignment):
+        if not self.masks[node]:
+            return value
+        selector = self.selectors[node]
+        return value[
+            (slice(None),) * (value.ndim - len(selector))
+            + tuple((assignment >> bit) & 1 if bit >= 0 else slice(None) for bit in selector)
+        ]
+
     def run(self, raw, assignment, cache, ops, statistics=None):
         root = self.input_count + len(self.steps) - 1
         pending, values = [(root, False)], {}
@@ -118,15 +127,7 @@ class ContractionProgram:
                     statistics["subtree_cache_hits"] += 1
                 continue
             if leaf:
-                value = raw[node]
-                selector = self.selectors[node]
-                prefix = value.ndim - len(selector)
-                values[node] = value[
-                    (slice(None),) * prefix
-                    + tuple(
-                        (assignment >> bit) & 1 if bit >= 0 else slice(None) for bit in selector
-                    )
-                ]
+                values[node] = self.select(node, raw[node], assignment)
             elif ready:
                 k = node - self.input_count
                 a, b = self.steps[k][:2]
@@ -143,16 +144,8 @@ class ContractionProgram:
     def run_flat(self, raw, assignment, ops, statistics=None):
         """Execute precompiled slots without per-node dictionaries or tree walks."""
         values = [None] * (self.input_count + len(self.steps))
-        for node, (value, selector) in enumerate(zip(raw, self.selectors, strict=True)):
-            if self.masks[node]:
-                prefix = value.ndim - len(selector)
-                value = value[
-                    (slice(None),) * prefix
-                    + tuple(
-                        (assignment >> bit) & 1 if bit >= 0 else slice(None) for bit in selector
-                    )
-                ]
-            values[node] = value
+        for node, value in enumerate(raw):
+            values[node] = self.select(node, value, assignment)
         for k, ((a, b, *_), kernel) in enumerate(zip(self.steps, self.kernels, strict=True)):
             value = kernel.apply(values[a], values[b], ops)
             values[a] = values[b] = None

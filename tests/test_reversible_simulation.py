@@ -202,3 +202,30 @@ def test_phase_only_parameter_retains_native_second_derivative():
     (first,) = torch.autograd.grad(state[0].imag, x, create_graph=True)
     (second,) = torch.autograd.grad(first, x)
     torch.testing.assert_close(second, -x.sin() / math.sqrt(2))
+
+
+def test_mps_interaction_order_and_bidirectional_readout_sweeps():
+    n = 24
+    c = oq.Circuit(n)
+    for i in range(n // 2):
+        c = c.ry(0.1 + i / 80, i).cx(i, n - 1 - i)
+    words = tuple(oq.PauliString("I" * i + "Z" + "I" * (n - i - 1)) for i in range(n))
+    source = oq.sim.MPSBackend(max_bond_dimension=4, max_discarded_weight=0).readout(c, words)
+    auto = oq.sim.MPSBackend(layout="auto", max_bond_dimension=4, max_discarded_weight=0).readout(
+        c, words
+    )
+    assert auto.routing_swaps == 0 < source.routing_swaps
+    assert auto.readout_transfers == 3 * n - 2 and auto.readout_transfers < n * n
+    np.testing.assert_allclose(
+        auto.values, [np.cos(0.1 + min(i, n - 1 - i) / 80) for i in range(n)], atol=1e-12
+    )
+    # A noninvolutive physical order must agree for complex two-site coherences,
+    # virtual SWAPs, and the actual loss of each routed Schmidt split.
+    c = oq.Circuit(5).h(0).ry(0.25, 3).cx(0, 3).s(3).rxx(0.4, 1, 4).swap(3, 2).cx(0, 2)
+    words = tuple(oq.PauliString(s) for s in ("ZIIZI", "XYZZX", "IZIIY", "IYIIY", "YIIII", "IIIIZ"))
+    ref = oq.expectations(c, words, backend="numpy")
+    for cap in (1, 8):
+        r = oq.sim.MPSBackend(layout="auto", max_bond_dimension=cap).readout(
+            c, words, absolute_error=0.001, strict=False
+        )
+        assert np.all(abs(np.array(r.values) - ref) <= np.array(r.absolute_error_bounds) + 1e-12)

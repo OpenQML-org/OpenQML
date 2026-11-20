@@ -9,17 +9,17 @@ Research background: https://arxiv.org/abs/1909.02108 and
 https://arxiv.org/abs/2011.02991. This is not the nonlinear CQNG algorithm.
 """
 
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..compute.kernel import compute_operation, get_compute_kernel, memory_budget
+from ..compute.kernel import compute_operation, memory_budget
 from ..errors import ResourceError, ValidationError
 from ..ir._structure import split_circuit
 from ..ir.compiler import _check_circuit_limits
 from ..ir.core import _require_circuit, integer
 from ..ir.observables import PauliString
-from ..ir.parameters import real
 from ._common import _binding_columns, _names, _real_array
 from .adjoint import AdjointPlan, _check_adjoint, _reverse, _tangent_forward
 
@@ -187,63 +187,50 @@ class QuantumMetricPlan:
 
     @compute_operation
     def natural_gradient(
-        self, bindings, gradient, *, damping=1e-3, tolerance=1e-10, max_iterations=64
+        self,
+        bindings,
+        gradient,
+        *,
+        damping=1e-3,
+        tolerance=1e-10,
+        max_iterations=64,
+        preconditioner_rank=0,
     ):
         """Solve (metric + damping*I) direction = gradient by linear CG.
 
         Convergence and a freshly recomputed residual are reported explicitly.
         This is not a promise of convergence to the global optimum of a loss.
         """
-        damping, tolerance = real(damping), real(tolerance)
-        if damping <= 0 or tolerance <= 0:
-            raise ValidationError("Metric damping and tolerance must be positive.")
-        integer(max_iterations, "max_iterations", 1)
+        from ..qml._native_training import _solve_metric
+        from ..sim.dense import _TensorOps
+
         columns = self._bindings(bindings)
         gradient = _real_array(gradient, (len(self.parameters),), "Gradient")
-        direction, residual = np.zeros_like(gradient), gradient.copy()
-        search = residual.copy()
-        squared = float(get_compute_kernel().matmul(residual, residual))
-        if not np.isfinite(squared):
-            raise ValidationError("Gradient norm exceeds finite precision.")
-        threshold = tolerance * max(1.0, np.sqrt(squared))
-        iterations = products = 0
-        reason = "converged" if np.sqrt(squared) <= threshold else "iteration_limit"
-
-        def apply(value):
-            nonlocal products
-            products += 1
-            return self._product(columns, value) + damping * value
-
-        if reason != "converged":
-            for iteration in range(max_iterations):
-                iterations = iteration + 1
-                product = apply(search)
-                curvature = float(get_compute_kernel().matmul(search, product))
-                if not np.isfinite(curvature) or curvature <= 0:
-                    reason = "nonpositive_numeric_curvature"
-                    break
-                step = squared / curvature
-                direction += step * search
-                if not np.isfinite(direction).all():
-                    raise ValidationError("Natural-gradient direction exceeds finite precision.")
-                residual -= step * product
-                updated = float(get_compute_kernel().matmul(residual, residual))
-                if np.sqrt(updated) <= threshold:
-                    break
-                search = residual + (updated / squared) * search
-                squared = updated
-        true_residual = float(np.linalg.norm(gradient - apply(direction)))
-        converged = true_residual <= threshold
-        if converged:
-            reason = "converged"
+        result, breakdown = _solve_metric(
+            lambda row: {"coordinates": self._product(columns, row["coordinates"])},
+            {"coordinates": gradient},
+            _TensorOps(),
+            damping=damping,
+            tolerance=tolerance,
+            max_iterations=max_iterations,
+            preconditioner_rank=preconditioner_rank,
+            max_memory_mb=self.max_memory_mb,
+            reserved_bytes=math.ceil(self._row_mib * 2**20),
+            require_convergence=False,
+        )
+        reason = (
+            "converged"
+            if result.converged
+            else ("nonpositive_numeric_curvature" if breakdown else "iteration_limit")
+        )
         return NaturalGradientResult(
-            direction,
+            result.direction["coordinates"],
             self.parameters,
-            converged,
-            iterations,
-            products,
-            true_residual,
-            damping,
+            bool(result.converged),
+            int(result.iterations),
+            int(result.metric_products),
+            float(result.residual_norm),
+            result.damping,
             reason,
         )
 

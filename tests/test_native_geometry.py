@@ -56,7 +56,8 @@ def test_native_metric_factorization_phase_nullspace_and_parameter_derivatives(b
 
 
 @pytest.mark.parametrize("backend", ["torch", "jax"])
-def test_native_cg_certifies_the_actual_system_and_preserves_native_results(backend):
+@pytest.mark.parametrize("rank", [0, 2])
+def test_native_cg_certifies_the_actual_system_and_preserves_native_results(backend, rank):
     lib = pytest.importorskip(backend)
     xp = lib if backend == "torch" else lib.numpy
     plan, bindings = _plan(), {"a": 0.3, "b": 0.4, "phase": 0.7}
@@ -64,7 +65,13 @@ def test_native_cg_certifies_the_actual_system_and_preserves_native_results(back
 
     def run(value):
         return plan.native_natural_gradient(
-            bindings, value, backend=backend, damping=0.05, max_iterations=8, tolerance=1e-5
+            bindings,
+            value,
+            backend=backend,
+            damping=0.05,
+            max_iterations=8,
+            tolerance=1e-5,
+            preconditioner_rank=rank,
         )
 
     result = run(gradient) if backend == "torch" else lib.jit(run)(gradient)
@@ -77,7 +84,16 @@ def test_native_cg_certifies_the_actual_system_and_preserves_native_results(back
     )
     assert residual < 1e-5
     assert float(result.residual_norm) < 1e-5
-    assert int(result.metric_products) >= int(result.iterations) + 1
+    assert int(result.metric_products) >= int(result.iterations) + 1 + rank
+    if rank:
+        if backend == "torch":
+            g = gradient.detach().requires_grad_()
+            derivative = lib.autograd.grad(run(g).direction.sum(), g)[0]
+        else:
+            derivative = lib.jit(lib.grad(lambda g: run(g).direction.sum()))(gradient)
+        np.testing.assert_allclose(
+            _array(derivative, backend), np.linalg.solve(matrix, np.ones(3)), atol=3e-4, rtol=3e-4
+        )
 
 
 @pytest.mark.parametrize("backend", ["torch", "jax"])

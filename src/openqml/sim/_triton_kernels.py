@@ -1,5 +1,7 @@
 """OpenQML CUDA statevector kernels. Import only after selecting a supported device."""
 
+from math import prod
+
 import torch
 import triton
 import triton.language as tl
@@ -11,12 +13,17 @@ def _apply_gate(
     gate,
     output,
     GROUPS: tl.constexpr,
-    GATE_STRIDE: tl.constexpr,
     MASKS: tl.constexpr,
     OFFSETS: tl.constexpr,
     BLOCK: tl.constexpr,
-    BATCH_SHAPE: tl.constexpr = (),
-    MATRIX_STRIDES: tl.constexpr = (),
+    BATCH_SHAPE: tl.constexpr,
+    STATE_STRIDES: tl.constexpr,
+    MATRIX_STRIDES: tl.constexpr,
+    STATE_LAST: tl.constexpr,
+    GATE_ROW: tl.constexpr,
+    GATE_COL: tl.constexpr,
+    STATE_CONJ: tl.constexpr,
+    GATE_CONJ: tl.constexpr,
 ):
     # A lane owns every amplitude of one local subspace. Insert zero bits at
     # target positions, then OR in the local basis bits in circuit wire order.
@@ -31,25 +38,30 @@ def _apply_gate(
         base = ((base & ~low) << 1) | (base & low)
     dimension: tl.constexpr = len(OFFSETS)
     start = batch * (GROUPS * dimension)
-    gate_start = batch * GATE_STRIDE
+    input_start, gate_start = batch * 0, batch * 0
     remainder = batch
     for axis in tl.static_range(len(BATCH_SHAPE)):
-        gate_start += (remainder % BATCH_SHAPE[axis]) * MATRIX_STRIDES[axis]
+        digit = remainder % BATCH_SHAPE[axis]
+        input_start += digit * STATE_STRIDES[axis]
+        gate_start += digit * MATRIX_STRIDES[axis]
         remainder = remainder // BATCH_SHAPE[axis]
     matrix = gate + 2 * gate_start
     # Read each input amplitude once and reuse it across local output rows.
     re = ()
     im = ()
     for col in tl.static_range(dimension):
-        index = 2 * (start + (base | OFFSETS[col]))
+        index = 2 * (input_start + (base | OFFSETS[col]) * STATE_LAST)
         re += (tl.load(state + index, active, 0.0),)
-        im += (tl.load(state + index + 1, active, 0.0),)
+        value = tl.load(state + index + 1, active, 0.0)
+        im += (-value if STATE_CONJ else value,)
     for row in tl.static_range(dimension):
         yr = tl.full((BLOCK,), 0, state.dtype.element_ty)
         yi = tl.full((BLOCK,), 0, state.dtype.element_ty)
         for col in tl.static_range(dimension):
-            element = matrix + 2 * (row * dimension + col)
+            element = matrix + 2 * (row * GATE_ROW + col * GATE_COL)
             mr, mi = tl.load(element), tl.load(element + 1)
+            if GATE_CONJ:
+                mi = -mi
             yr += mr * re[col] - mi * im[col]
             yi += mr * im[col] + mi * re[col]
         index = 2 * (start + (base | OFFSETS[row]))
@@ -70,32 +82,140 @@ def launch_gate(state, matrix, qubits, width):
     output = torch.empty_like(state, memory_format=torch.contiguous_format)
     if state.numel() == 0:
         return output
-    matrix = matrix.resolve_conj().resolve_neg().contiguous()
-    batch_shape, matrix_strides = (), ()
-    stride = 0 if matrix.numel() == dimension**2 else dimension**2
-    if stride and matrix.numel() // stride != state.numel() // state.shape[-1]:
-        view = matrix.expand(state.shape[:-1] + (dimension, dimension))
-        batch_shape = tuple(reversed(view.shape[:-2]))
-        matrix_strides = tuple(reversed(view.stride()[:-2]))
-        stride = 0
+    state = state.resolve_neg()
+    matrix = matrix.resolve_neg().expand(state.shape[:-1] + (dimension, dimension))
     block = 64
     grid = (state.numel() // state.shape[-1] * triton.cdiv(groups, block),)
     # The interpreter accepts host tensors. Production dispatch supplies CUDA tensors.
     with torch.cuda.device(state.device) if state.is_cuda else nullcontext():
         _apply_gate[grid](
-            torch.view_as_real(state.resolve_conj().resolve_neg().contiguous()),
-            torch.view_as_real(matrix),
+            torch.view_as_real(state.conj() if state.is_conj() else state),
+            torch.view_as_real(matrix.conj() if matrix.is_conj() else matrix),
             torch.view_as_real(output),
             groups,
-            stride,
             tuple(sorted(masks)),
             offsets,
             block,
-            batch_shape,
-            matrix_strides,
+            tuple(reversed(state.shape[:-1])),
+            state.stride()[:-1][::-1],
+            matrix.stride()[:-2][::-1],
+            state.stride(-1),
+            matrix.stride(-2),
+            matrix.stride(-1),
+            state.is_conj(),
+            matrix.is_conj(),
             num_warps=2,
         )
     return output
+
+
+@triton.jit
+def _gate_cotangent(
+    state,
+    grad,
+    partial,
+    GROUPS: tl.constexpr,
+    COUNT: tl.constexpr,
+    PARTS: tl.constexpr,
+    DIM: tl.constexpr,
+    MASKS: tl.constexpr,
+    WIRE_BITS: tl.constexpr,
+    SHAPE: tl.constexpr,
+    BROADCAST: tl.constexpr,
+    XS: tl.constexpr,
+    GS: tl.constexpr,
+    X_LAST: tl.constexpr,
+    G_LAST: tl.constexpr,
+    X_CONJ: tl.constexpr,
+    G_CONJ: tl.constexpr,
+    BLOCK: tl.constexpr,
+):
+    pid = tl.program_id(0).to(tl.int64)
+    element = pid // PARTS
+    row, col = (element // DIM) % DIM, element % DIM
+    x_local, g_local = col * 0, row * 0
+    for i in tl.static_range(len(WIRE_BITS)):
+        x_local += ((col >> i) & 1) * WIRE_BITS[i]
+        g_local += ((row >> i) & 1) * WIRE_BITS[i]
+    out_batch = element // (DIM * DIM)
+    x_base, g_base = x_local * X_LAST, g_local * G_LAST
+    for i in tl.static_range(len(SHAPE)):
+        if not BROADCAST[i]:
+            x_base += (out_batch % SHAPE[i]) * XS[i]
+            g_base += (out_batch % SHAPE[i]) * GS[i]
+            out_batch = out_batch // SHAPE[i]
+    re = tl.full((BLOCK,), 0, state.dtype.element_ty)
+    im = tl.full((BLOCK,), 0, state.dtype.element_ty)
+    for tile in range(tl.cdiv(COUNT, PARTS * BLOCK)):
+        index = ((pid % PARTS) + tile * PARTS) * BLOCK + tl.arange(0, BLOCK)
+        group = index % GROUPS
+        for i in tl.static_range(len(MASKS)):
+            low = MASKS[i] - 1
+            group = ((group & ~low) << 1) | (group & low)
+        a, b = x_base + group * X_LAST, g_base + group * G_LAST
+        replica = index // GROUPS
+        for i in tl.static_range(len(SHAPE)):
+            if BROADCAST[i]:
+                a += (replica % SHAPE[i]) * XS[i]
+                b += (replica % SHAPE[i]) * GS[i]
+                replica = replica // SHAPE[i]
+        xr = tl.load(state + 2 * a, index < COUNT, 0.0)
+        xi = tl.load(state + 2 * a + 1, index < COUNT, 0.0)
+        gr = tl.load(grad + 2 * b, index < COUNT, 0.0)
+        gi = tl.load(grad + 2 * b + 1, index < COUNT, 0.0)
+        if X_CONJ:
+            xi = -xi
+        if G_CONJ:
+            gi = -gi
+        re += gr * xr + gi * xi
+        im += gi * xr - gr * xi
+    tl.store(partial + 2 * pid, tl.sum(re, axis=0))
+    tl.store(partial + 2 * pid + 1, tl.sum(im, axis=0))
+
+
+def launch_gate_cotangent(state, grad, wires, width, matrix_shape):
+    """Reduce spectator amplitudes and broadcast parameter batches directly into dU."""
+    from contextlib import nullcontext
+
+    dim = 1 << len(wires)
+    batch = tuple(state.shape[:-1])
+    target = (1,) * (len(batch) + 2 - len(matrix_shape)) + tuple(matrix_shape[:-2])
+    if state.numel() == 0:
+        return state.new_zeros(matrix_shape)
+    broadcast = tuple(m == 1 and n != 1 for m, n in zip(target, batch, strict=True))
+    groups = state.shape[-1] // dim
+    count = groups * prod(n for n, shared in zip(batch, broadcast, strict=True) if shared)
+    block = 128
+    parts = min(32, triton.cdiv(count, block))
+    from ..compute.kernel import get_compute_kernel
+
+    get_compute_kernel()._workspace((state, grad), tuple(matrix_shape) + (parts,), buffers=2)
+    partial = state.new_empty(tuple(matrix_shape) + (parts,))
+    bits = tuple(1 << (width - 1 - q) for q in reversed(wires))
+    state, grad = state.resolve_neg(), grad.resolve_neg()
+    with torch.cuda.device(state.device) if state.is_cuda else nullcontext():
+        _gate_cotangent[(partial.numel(),)](
+            torch.view_as_real(state.conj() if state.is_conj() else state),
+            torch.view_as_real(grad.conj() if grad.is_conj() else grad),
+            torch.view_as_real(partial),
+            groups,
+            count,
+            parts,
+            dim,
+            tuple(sorted(bits)),
+            bits,
+            batch[::-1],
+            broadcast[::-1],
+            state.stride()[:-1][::-1],
+            grad.stride()[:-1][::-1],
+            state.stride(-1),
+            grad.stride(-1),
+            state.is_conj(),
+            grad.is_conj(),
+            block,
+            num_warps=4,
+        )
+    return partial.squeeze(-1) if parts == 1 else partial.sum(dim=-1)
 
 
 @triton.jit

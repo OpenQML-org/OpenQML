@@ -79,6 +79,21 @@ columns. Remote gates route adjacent sites and carry the resulting permutation
 to subsequent operations and Pauli readouts. A circuit SWAP updates the
 logical wire map directly. Memory and work admission include routing.
 
+`MPSBackend(layout="auto")` compares source order with a chain assembled from
+frequent two-wire interactions. It prefers an admitted layout, then compares
+estimated SVD work, routed swaps and peak workspace. The low-level backend
+defaults to source order. The certified readout and gradient entry points
+use automatic placement when they create their own backend. Observables keep
+their original logical wire order under either layout.
+
+For multiple Pauli words, the simulator compares independent full sweeps with
+a forward sweep and reusable right identity environments. It stores only the
+boundaries needed by the words and contracts each interior exactly. The shared
+path requires fewer one-site transfers and must fit the workspace.
+`MPSReadout.readout_transfers` gives the number of one-site transfers actually
+executed during measurement. For all single-wire $Z$ readouts on an $n$-site
+chain ($n>2$), the shared path uses $3n-2$ transfers.
+
 Set `max_discarded_weight` to enable Schmidt truncation. A thin QR moves the
 orthogonality center to the active bond before splitting. Each split keeps
 enough leading values to meet the local relative discarded-weight target,
@@ -125,6 +140,22 @@ requested accuracy. The default raises `ResourceError` in that case.
 `strict=False` returns the achieved bounds. Tolerance zero requests zero
 discarded contribution to the declared outputs. These deterministic bounds
 cover Schmidt truncation in exact arithmetic. [Schollwöck, Reviews of Modern Physics](https://doi.org/10.1103/RevModPhys.77.259)
+
+## Tensor contraction planning
+
+In the `portfolio` planner, each fixed binary contraction tree has two
+possible child orders at every join. OpenQML tracks the peak live elements
+and net change in storage for each subtree. A bottom-up pass selects the
+minimum estimated peak over its depth-first child orders. This preserves
+that tree's arithmetic count. The search over different trees remains bounded
+by `search_trials` and `max_work`.
+
+Under memory pressure, the planner scores candidate binary slices against the
+whole live schedule. It accounts for both assignments and prefers the lowest
+arithmetic cost among candidates that meet the limit, or the lowest estimated
+peak while the limit is still exceeded. All assignments contribute to the
+result. These are structural memory and arithmetic estimates.
+[Pfeifer, Haegeman and Verstraete, Physical Review E](https://doi.org/10.1103/PhysRevE.90.033315)
 
 ## CPU statevector kernels
 

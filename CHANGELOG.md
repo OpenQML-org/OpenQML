@@ -1,5 +1,20 @@
 # Changes
 
+## 0.35.0
+
+- CUDA gate application reads strided state and matrix views directly. A fused
+  first-order gate-gradient kernel reduces spectator amplitudes and shared
+  parameter batches for ordinary and reversible PyTorch backward passes.
+- MPS simulation can choose a wire layout from the circuit interactions and
+  reuse exact left and right environments across local Pauli measurements.
+  Readout reports expose the number of site transfers.
+- The contraction portfolio minimizes modeled peak storage over depth-first
+  orders of each candidate tree and scores slicing decisions over the full path.
+  Cached, flat and distributed executors share the compiled slice selectors.
+- CPU and native natural gradients share one residual-checked solver. An
+  optional rank-bounded Nyström preconditioner also serves quantum Fisher
+  optimization. Its metric product count includes setup.
+
 ## 0.34.0
 
 - The MPS simulator propagates Pauli supports across routed bonds, allocates

@@ -8,15 +8,25 @@ backend="gpu")` returns a host result. For a device-resident state and
 gradients, use `statevector(circuit, bindings, backend="torch")` with CUDA
 binding tensors, or supply a CUDA `like` tensor for a fixed circuit.
 
-OpenQML implements two kernels in Triton 3.4 or later. The statevector kernel assigns a
+OpenQML implements gate application, gate-matrix gradients and short-bond
+contractions in Triton 3.4 or later. The statevector kernel assigns a
 lane to each group of amplitudes that agree outside the gate's support. It
 loads the group once, applies a one-, two- or three-wire complex matrix and
 writes each result once. Target order controls the local basis, including
-reversed controls and nonadjacent wires. A broadcast gate batch uses strides
-into the original gate storage. The tensor-network kernel contracts up to
+reversed controls and nonadjacent wires. State amplitudes, transposed gates and
+broadcast batches use their actual storage strides. A conjugate view supplies
+its sign directly to the kernel.
+
+The gate-matrix backward kernel sums the output cotangent times the conjugated
+input amplitude over both spectator configurations and any shared parameter
+batch axes. Each matrix entry owns at most 32 partial sums. A second device
+reduction combines those partials in a fixed order. The ordinary PyTorch
+backward path and the reversible state sweep share this kernel for eligible
+first derivatives. Higher-order derivatives use differentiable tensor operations.
+The tensor-network kernel contracts up to
 three shared binary indices directly from the operand strides and conjugation
 flags. It targets output blocks of 128 or more elements with at most 24 open
-binary indices. Both kernels support complex64 and complex128.
+binary indices. These kernels support complex64 and complex128.
 
 Larger gates, wider contractions, older devices and framework transforms use
 PyTorch tensor kernels. JAX uses XLA. `CUDABackend.execution_info()` describes

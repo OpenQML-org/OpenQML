@@ -60,8 +60,14 @@ def _inputs(plan, bindings, vector, backend, sample_weights=None, sample_chunk_s
     total = ops.check(mass.sum(), mass.sum() > 0, "Metric sample mass must be positive.")
     mass = mass / total
     vector = ops.check(vector, ops.xp.isfinite(vector), "Metric vectors must be finite.")
-    # Model the largest sequential factor's primal/JVP/VJP state workspace.
-    # Framework tapes, compiler workspaces and allocator pools remain separate.
+    if sample_chunk_size is not None:
+        sample_chunk_size = integer(sample_chunk_size, "sample_chunk_size", 1)
+    workspace = _working_bytes(plan, local, mass, sample_chunk_size)
+    get_compute_kernel().admit(workspace, plan.max_memory_mb, itemsize=1)
+    return ops, local, vector, mass
+
+
+def _working_bytes(plan, local, mass, sample_chunk_size):
     workspace = getattr(plan, "_native_workspace", None)
     if workspace is None:
         workspace = max(
@@ -71,15 +77,10 @@ def _inputs(plan, bindings, vector, backend, sample_weights=None, sample_chunk_s
             ),
             default=0,
         )
-    count = shape[0] if shape else 1
-    if sample_chunk_size is not None:
-        sample_chunk_size = integer(sample_chunk_size, "sample_chunk_size", 1)
+    count = mass.shape[0] if mass.ndim else 1
     active = count if sample_chunk_size is None else min(count, sample_chunk_size)
     coordinates = sum(value.shape[0] if value.ndim else 1 for value in local.values())
-    get_compute_kernel().admit(
-        (active * workspace + 64 * coordinates + 64 * count + 7) // 8, plan.max_memory_mb
-    )
-    return ops, local, vector, mass
+    return 2 * (active * workspace + 64 * coordinates + 64 * count)
 
 
 @compute_operation
@@ -272,6 +273,8 @@ def _natural_solve(
         product,
         {"coordinates": gradient},
         ops,
+        max_memory_mb=plan.max_memory_mb,
+        reserved_bytes=_working_bytes(plan, local, mass, sample_chunk_size),
         **options,
     )
     return NativeMetricResult(result.direction["coordinates"], *result[1:])

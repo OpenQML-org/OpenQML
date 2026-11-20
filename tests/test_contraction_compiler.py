@@ -192,3 +192,55 @@ def test_portfolio_and_reporting_controls_are_admitted():
     assert report["contractions_executed"] == 0
     with pytest.raises(q.ValidationError, match="return_report"):
         plan.evaluate(return_report=1)
+
+
+def test_depth_first_peak_matches_all_child_orders_and_slicing_uses_live_schedule():
+    from openqml.compute._contraction import _greedy, _profile, _step
+    from openqml.compute._contraction_path import _emit, _tree, depth_first, slice_index
+
+    labels = (
+        (0, 3, 5),
+        (1, 6, 9, 10, 11),
+        (6, 8),
+        (0, 3, 4, 5, 7, 8, 12),
+        (2, 4, 11),
+        (1, 2, 7, 10, 12),
+        (9,),
+    )
+    steps = _greedy(labels, lambda n: None)
+    children, root = _tree(labels, steps)
+    original = _emit(labels, children, root, _step)
+    best = depth_first(labels, steps, _step)
+
+    def peak(bits):
+        tree = {
+            key: ((b, a) if bits >> i & 1 else (a, b))
+            for i, (key, (a, b)) in enumerate(children.items())
+        }
+        return _profile(labels, _emit(labels, tree, root, _step))[0]
+
+    expected = min(peak(mask) for mask in range(1 << len(children)))
+    assert _profile(labels, best)[0] == expected < _profile(labels, original)[0]
+    assert _profile(labels, best)[1] == _profile(labels, original)[1]
+
+    labels = (
+        (1, 3, 4, 10),
+        (5,),
+        (3, 5, 8, 11, 12),
+        (0, 1, 6),
+        (2, 8, 9, 10),
+        (0, 2, 7, 9, 12),
+        (4, 6, 7, 11),
+    )
+    steps = _greedy(labels, lambda n: None)
+    rows = list(labels) + [s[-1] for s in steps]
+
+    def cost(digit):
+        def strip(row):
+            return tuple(x for x in row if x != digit)
+
+        projected = [(a, b, *(strip(row) for row in data)) for a, b, *data in steps]
+        return _profile([strip(row) for row in labels], projected)[:2]
+
+    chosen = slice_index(labels, steps, rows, 0, 16, lambda n: None)
+    assert cost(chosen) == min(cost(k) for row in labels for k in row)
