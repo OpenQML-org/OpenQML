@@ -82,3 +82,25 @@ class SparseHamiltonian:
 
 def z_observables(num_qubits: int) -> tuple[PauliString, ...]:
     return tuple(PauliString("I" * q + "Z" + "I" * (num_qubits - q - 1)) for q in range(num_qubits))
+
+
+def _linear_observable(observables, features, offset=0.0):
+    """Combine weighted output terms before allocating simulation or error to them."""
+    import math
+
+    first = observables[0]
+    width = len((first.terms[0] if isinstance(first, Hamiltonian) else first).paulis)
+    identity = "I" * width
+    summands = {identity: [offset]}
+    for index, coefficient in features:
+        if coefficient:
+            ob = observables[index]
+            for term in ob.terms if isinstance(ob, Hamiltonian) else (ob,):
+                summands.setdefault(term.paulis, []).append(coefficient * term.coefficient)
+    try:
+        terms = tuple(
+            PauliString(word, s) for word, values in summands.items() if (s := math.fsum(values))
+        )
+    except (OverflowError, ValueError) as exc:
+        raise ValidationError("Combined readout coefficients exceed finite precision.") from exc
+    return Hamiltonian(terms or (PauliString(identity, 0.0),))

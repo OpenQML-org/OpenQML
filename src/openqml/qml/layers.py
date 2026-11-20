@@ -12,12 +12,6 @@ from ..ir.observables import Hamiltonian, PauliString, z_observables
 from ..ir.parameters import parameter_name, real
 
 
-def _load_json(text, max_bytes):
-    from ..ir._serialization import load_json
-
-    return load_json(text, max_bytes, label="Layer")
-
-
 def _parameter_names(values):
     if isinstance(values, (str, bytes, Set, Mapping)):
         raise ValidationError("Parameter names require an ordered iterable.")
@@ -52,8 +46,34 @@ def validate_layer(circuit, inputs, weights, observables):
     return inputs, weights, obs
 
 
+class _LayerJSON:
+    def to_json(self, *, indent=2):
+        return json.dumps(self.to_dict(), indent=indent, allow_nan=False)
+
+    @classmethod
+    def from_json(
+        cls,
+        text,
+        *,
+        max_bytes=2_000_000,
+        max_operations=100_000,
+        max_depth=64,
+        max_matrix_qubits=10,
+        max_matrix_entries=1_048_576,
+    ):
+        from ..ir._serialization import load_json
+
+        return cls.from_dict(
+            load_json(text, max_bytes, label="Layer"),
+            max_operations=max_operations,
+            max_depth=max_depth,
+            max_matrix_qubits=max_matrix_qubits,
+            max_matrix_entries=max_matrix_entries,
+        )
+
+
 @dataclass(frozen=True)
-class LayerSpec:
+class LayerSpec(_LayerJSON):
     """Portable circuit, ordered symbol ownership and readouts; excludes model weights/backends."""
 
     circuit: Circuit
@@ -129,6 +149,20 @@ class LayerSpec:
         )
         return spec
 
+    def certified_vjp(self, bindings, cotangents, **options):
+        """Bound a training gradient in the layer's ordered weight coordinates."""
+        from ..sim.readout import plan_readout
+
+        plan = plan_readout(self.circuit, self.observables)
+        options.setdefault("parameters", self.weight_parameters)
+        return plan.certified_vjp(bindings, cotangents, **options)
+
+    def certify_class(self, bindings, **options):
+        """Certify a concrete affine classifier on this layer's quantum readouts."""
+        from ._decision import certify_class
+
+        return certify_class(self, bindings, **options)
+
     def metric_plan(self, *, max_qubits=None, max_memory_mb=256):
         """Prepare pure-state geometry in this layer's ordered weight coordinates."""
         from ..autodiff.geometry import QuantumMetricPlan
@@ -191,9 +225,6 @@ class LayerSpec:
                 for ob in self.observables
             ],
         }
-
-    def to_json(self, *, indent=2):
-        return json.dumps(self.to_dict(), indent=indent, allow_nan=False)
 
     @classmethod
     def from_dict(
@@ -275,28 +306,9 @@ class LayerSpec:
             tuple(observables),
         )
 
-    @classmethod
-    def from_json(
-        cls,
-        text,
-        *,
-        max_bytes=2_000_000,
-        max_operations=100_000,
-        max_depth=64,
-        max_matrix_qubits=10,
-        max_matrix_entries=1_048_576,
-    ):
-        return cls.from_dict(
-            _load_json(text, max_bytes),
-            max_operations=max_operations,
-            max_depth=max_depth,
-            max_matrix_qubits=max_matrix_qubits,
-            max_matrix_entries=max_matrix_entries,
-        )
-
 
 @dataclass(frozen=True)
-class LayerCheckpoint:
+class LayerCheckpoint(_LayerJSON):
     """Portable layer definition and named weights; excludes optimizer state and backends."""
 
     spec: LayerSpec
@@ -330,6 +342,22 @@ class LayerCheckpoint:
     @property
     def bindings(self):
         return dict(zip(self.spec.weight_parameters, self.weights, strict=True))
+
+    def _input_bindings(self, inputs):
+        from ._decision import _concrete
+
+        x = _concrete(inputs, "inputs")
+        if x.shape != (len(self.spec.input_parameters),):
+            raise ValidationError("Supply one feature vector in layer input order.")
+        return self.bindings | dict(zip(self.spec.input_parameters, map(real, x), strict=True))
+
+    def certify_class(self, inputs, **options):
+        """Evaluate a single feature vector with these saved weights."""
+        return self.spec.certify_class(self._input_bindings(inputs), **options)
+
+    def certified_vjp(self, inputs, cotangents, **options):
+        """Bound a weight gradient at these saved weights and one concrete input."""
+        return self.spec.certified_vjp(self._input_bindings(inputs), cotangents, **options)
 
     def weights_for(self, spec):
         """Reject topology, ownership or readout mismatches before loading any weights."""
@@ -406,9 +434,6 @@ class LayerCheckpoint:
             "dtype": self.dtype,
         }
 
-    def to_json(self, *, indent=2):
-        return json.dumps(self.to_dict(), indent=indent, allow_nan=False)
-
     @classmethod
     def from_dict(
         cls,
@@ -440,25 +465,6 @@ class LayerCheckpoint:
             ),
             payload["weights"],
             payload["dtype"],
-        )
-
-    @classmethod
-    def from_json(
-        cls,
-        text,
-        *,
-        max_bytes=2_000_000,
-        max_operations=100_000,
-        max_depth=64,
-        max_matrix_qubits=10,
-        max_matrix_entries=1_048_576,
-    ):
-        return cls.from_dict(
-            _load_json(text, max_bytes),
-            max_operations=max_operations,
-            max_depth=max_depth,
-            max_matrix_qubits=max_matrix_qubits,
-            max_matrix_entries=max_matrix_entries,
         )
 
 

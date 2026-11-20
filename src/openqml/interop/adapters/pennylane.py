@@ -41,6 +41,66 @@ _NAMES = {
 }
 
 
+def _wire_order(tape, requested):
+    labels = tuple(tape.wires)
+    if requested is None:
+        requested = sorted(labels) if all(isinstance(q, int) for q in labels) else labels
+    order = tuple(requested)
+    if not order or len(set(order)) != len(order) or not set(labels) <= set(order):
+        raise conversion_error("WIRE_ORDER", "wire_order must contain all used wires exactly once.")
+    return order
+
+
+def _expectation_readout(tape, *, description_limit, wire_limit, wire_order=None, **options):
+    """Import analytic Pauli expectations in return order, including readout-only wires."""
+    from numbers import Complex, Real
+
+    from ...errors import ResourceError
+    from ...ir.observables import Hamiltonian, PauliString
+
+    qml = dependency("pennylane", "pennylane")
+    if not isinstance(tape, qml.tape.QuantumScript):
+        raise conversion_error("SOURCE_TYPE", "Expected a PennyLane QuantumScript/QuantumTape.")
+    if tape.shots.total_shots is not None:
+        raise conversion_error(
+            "SHOTS_METADATA", "Certified tape expectations require analytic shots."
+        )
+    order = _wire_order(tape, wire_order)
+    if len(order) > wire_limit or len(order) * len(tape.measurements) > description_limit:
+        raise ResourceError("PennyLane readout descriptions exceed the configured budget.")
+    mapping = {wire: i for i, wire in enumerate(order)}
+    outputs, work = [], 0
+    for index, measurement in enumerate(tape.measurements):
+        location = f"measurements[{index}]"
+        if type(measurement) is not qml.measurements.ExpectationMP or measurement.obs is None:
+            raise conversion_error(
+                "READOUT_UNSUPPORTED", "Expected an analytic Pauli expectation.", location
+            )
+        sentence = measurement.obs.pauli_rep
+        if sentence is None:
+            raise conversion_error(
+                "READOUT_UNSUPPORTED", "The observable requires a Pauli expansion.", location
+            )
+        work += len(order) * max(1, len(sentence))
+        if work > description_limit:
+            raise ResourceError("PennyLane Pauli descriptions exceed the configured budget.")
+        terms = []
+        for word, coefficient in sentence.items():
+            if (
+                isinstance(coefficient, Complex)
+                and not isinstance(coefficient, Real)
+                and coefficient.imag == 0
+            ):
+                coefficient = coefficient.real
+            paulis = ["I"] * len(order)
+            for wire, pauli in word.items():
+                paulis[mapping[wire]] = pauli
+            terms.append(PauliString("".join(paulis), numeric(coefficient, location)))
+        outputs.append(Hamiltonian(tuple(terms) or (PauliString("I" * len(order), 0.0),)))
+    operations = qml.tape.QuantumScript(tape.operations)
+    return from_pennylane(operations, wire_order=order, **options), tuple(outputs)
+
+
 def from_pennylane(
     tape,
     *,
@@ -78,16 +138,7 @@ def from_pennylane(
                 "Pass shots as an execution option.",
             ).diagnostics
         )
-    labels = tuple(tape.wires)
-    if wire_order is None:
-        wire_order = tuple(sorted(labels)) if all(isinstance(q, int) for q in labels) else labels
-    wire_order = tuple(wire_order)
-    if (
-        not wire_order
-        or len(set(wire_order)) != len(wire_order)
-        or not set(labels) <= set(wire_order)
-    ):
-        raise conversion_error("WIRE_ORDER", "wire_order must contain all used wires exactly once.")
+    wire_order = _wire_order(tape, wire_order)
     mapping = {q: i for i, q in enumerate(wire_order)}
     reverse = {v: k for k, v in _NAMES.items()}
     phase = 0.0

@@ -1,5 +1,21 @@
 # Changes
 
+## 0.34.0
+
+- The MPS simulator propagates Pauli supports across routed bonds, allocates
+  Schmidt loss against each requested readout tolerance and reports the achieved
+  absolute errors. Prepared causal cones retain the mapping to source wires.
+- Hybrid layers and saved weights expose pairwise class margins and
+  occurrence-wise parameter-shift gradients with truncation bounds. Shared
+  Pauli terms cancel before simulation.
+- Marked-oracle pricing converts a discounted price tolerance into a local
+  readout tolerance. Walk-forward fitting admits output storage before
+  scanning the data and validates noncontiguous inputs in bounded chunks.
+- Certified program execution preserves final classical assignments, terminal
+  dephasing, Cirq measurement maps and analytic PennyLane Pauli returns.
+- Layer specifications and checkpoints share bounded JSON I/O. Portable dense
+  simulation and native device gradients share their local matrix layout.
+
 ## 0.33.0
 
 - `sim/_triton_kernels.py` implements CUDA statevector updates on one to

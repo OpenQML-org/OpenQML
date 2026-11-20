@@ -3,7 +3,33 @@
 OpenQML provides ordinary trainable Torch modules, functional JAX parameter
 trees and Flax Linen modules. Classical encoders, emitted quantum coordinates,
 measurement axes and residual projections remain in one native computation
-graph. No pretrained model, dataset or demonstration program is bundled.
+graph.
+
+## Truncation bounds on decisions and weight gradients
+
+For one concrete input, `layer.certify_class(inputs, head=W, bias=b)`
+checks the winner of an affine classifier on the layer's declared expectations.
+Rows of $W$ are classes and columns are readouts. Omitting the head uses the
+readouts directly as class scores. Common Pauli coefficients cancel before
+simulation. The return value exposes the candidate, a margin interval against
+each rival, and a `label` only when every rival's upper score is strictly below
+the candidate's. Ties and overlapping bounds return `label=None`.
+
+`layer.certified_vjp(inputs, cotangents, absolute_error=e)` contracts a fixed
+output cotangent with the Jacobian at the input and current weights. Functional
+JAX layers take an explicit `weights=` vector. Saved `LayerCheckpoint` objects
+expose both methods directly. A `LayerSpec` accepts named bindings. A prepared
+`ReadoutPlan` reuses its causal cone across repeated parameter points.
+
+The shift engine combines the weighted readouts, removes inactive gates and
+uses each gate occurrence's shift rule with its local angle derivative. For
+parameter $k$, shifted value coefficients $a_{ki}$ and certified readout errors
+$b_i$, the resulting gradient error is at most $\sum_i |a_{ki}| b_i$.
+The report contains the parameter order, values, absolute bounds and the
+number of shifted evaluations. The default raises if any coordinate exceeds
+the requested tolerance. These calls use concrete NumPy MPS execution outside
+framework transforms. Gradients describe the underlying unitary expectation
+at a single point with the supplied cotangent. [Wierichs et al., Quantum](https://doi.org/10.22331/q-2022-03-30-677)
 
 ## External data and bounded prediction
 

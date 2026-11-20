@@ -86,8 +86,8 @@ def _vectorized_states(circuits, options, *, backend="numpy", like=None):
     )
 
 
-def _observables(observables, circuits):
-    observables = _as_tuple(observables, "observables")
+def _observables(observables, circuits, *, max_items=None):
+    observables = _as_tuple(observables, "observables", max_items=max_items)
     if not observables:
         raise ValidationError("At least one observable is required.")
     for observable in observables:

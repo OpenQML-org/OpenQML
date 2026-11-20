@@ -52,7 +52,7 @@ def _layout(circuit, max_bond_dimension, max_work, *, truncate=False):
     if any(len(g.qubits) > 2 and g.name != "barrier" for g in circuit.operations):
         return None, "MPS requires one/two-wire gates."
     order = list(range(width))
-    work, swaps, center = len(circuit.operations), 0, 0
+    work, swaps, center, splits = len(circuit.operations), 0, 0, 0
     bonds = [1] * (width + 1)
     payload, peak, maximum = width * 288, width * 288 + 128, 1
     for op, wires in _routed(circuit, order):
@@ -69,6 +69,7 @@ def _layout(circuit, max_bond_dimension, max_work, *, truncate=False):
             q = wires[0]
             peak = max(peak, payload + 128 * bonds[q] * bonds[q + 1])
             continue
+        splits += 1
         cut = min(wires) + 1
         left, old, right = bonds[cut - 1], bonds[cut], bonds[cut + 1]
         # A full SVD of (2*left, 2*right) retains exactly this many columns.
@@ -97,6 +98,7 @@ def _layout(circuit, max_bond_dimension, max_work, *, truncate=False):
         "workspace_bytes": peak,
         "analysis_complete": True,
         "routing_swaps": swaps,
+        "splits": splits,
         "truncation": "canonical_Schmidt" if truncate else "none_full_SVD_columns_retained",
     }, "Routed MPS tensor shapes and workspace admitted."
 
@@ -112,7 +114,7 @@ def _two_site(sites, qubits, matrix, max_bond, tolerance):
     u, singular, vh = get_compute_kernel().svd(
         transformed.reshape(rows, columns), full_matrices=False
     )
-    size, angle = len(singular), 0.0
+    size, discarded = len(singular), 0.0
     if tolerance is not None:
         # Both environments are isometric here. Squared singular values are
         # physical Schmidt probabilities, including for the inserted SWAPs.
@@ -121,13 +123,12 @@ def _two_site(sites, qubits, matrix, max_bond, tolerance):
             max_bond, max(1, size - int(np.searchsorted(tail, tolerance * tail[-1], side="right")))
         )
         if size < len(singular):
-            discarded = tail[len(singular) - size - 1] / tail[-1]
-            angle = math.asin(math.sqrt(min(1.0, discarded)))
+            discarded = min(1.0, tail[len(singular) - size - 1] / tail[-1])
         singular = singular[:size] / np.linalg.norm(singular[:size])
         u, vh = u[:, :size], vh[:size]
     sites[a] = u.reshape(left.shape[0], 2, size)
     sites[b] = (singular[:, None] * vh).reshape(size, 2, right.shape[2])
-    return angle, size
+    return discarded, size
 
 
 def _move_center(sites, center, target):
@@ -174,6 +175,7 @@ class MPSReadout:
     trace_distance_bound: float
     max_bond_dimension: int
     routing_swaps: int
+    simulated_wires: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -201,7 +203,8 @@ class MPSBackend:
                 self, "capabilities", replace(self.capabilities, exact_expectations=False)
             )
 
-    def readout(self, circuit, observables, *, options=None):
+    def readout(self, circuit, observables, *, options=None, absolute_error=None, strict=True):
+        """Use per-observable Schmidt budgets when absolute_error is supplied."""
         from .batch import _observables
         from .dense import _FIXED, _gate_matrix, _TensorOps
 
@@ -214,15 +217,21 @@ class MPSBackend:
             raise ValidationError("Bind parameters before numeric MPS execution.")
         if options.max_qubits is not None and circuit.num_qubits > options.max_qubits:
             raise ResourceError("MPS source exceeds the explicit max_qubits limit.")
-        observables = _observables(observables, (circuit,))
+        budget = get_compute_kernel()._prepare_budget(options.max_memory_mb).max_bytes
+        observables = _observables(
+            observables, (circuit,), max_items=min(self.max_work, budget // 8) // circuit.num_qubits
+        )
         terms = sum(len(o.terms) if isinstance(o, Hamiltonian) else 1 for o in observables)
         if terms * circuit.num_qubits > self.max_work:
             raise ResourceError("MPS readout descriptions exceed max_work.")
         # Allow for order/inverse maps, bond counts and site references before planning.
-        budget = get_compute_kernel()._prepare_budget(options.max_memory_mb).max_bytes
         if 256 * circuit.num_qubits > budget:
             raise ResourceError("MPS site bookkeeping exceeds max_memory_mb.")
         tolerance = self.max_discarded_weight
+        if type(strict) is not bool:
+            raise ValidationError("strict must be boolean.")
+        if absolute_error is not None and tolerance is None:
+            tolerance = 1.0
         profile, reason = _layout(
             circuit, self.max_bond_dimension, self.max_work, truncate=tolerance is not None
         )
@@ -230,6 +239,18 @@ class MPSBackend:
             raise ResourceError("MPS admission rejected the circuit: " + reason)
         if profile["workspace_bytes"] > budget:
             raise ResourceError("Routed MPS working tensors exceed max_memory_mb.")
+        controller = None
+        if absolute_error is not None:
+            from ._readout_error import ReadoutErrorBudget
+
+            controller = ReadoutErrorBudget(
+                circuit,
+                observables,
+                absolute_error,
+                profile["splits"],
+                self.max_work,
+                budget - profile["workspace_bytes"],
+            )
         order = list(range(circuit.num_qubits))
         sites = [np.array([[[1], [0]]], dtype=complex) for _ in order]
         ops, center, angle, peak = _TensorOps(), 0, 0.0, 1
@@ -251,8 +272,13 @@ class MPSBackend:
                 if tolerance is not None:
                     _move_center(sites, center, min(wires))
                     center = min(wires) + 1
-                delta, size = _two_site(sites, wires, matrix, self.max_bond_dimension, tolerance)
-                angle += delta
+                cutoff = (
+                    min(tolerance, controller.cutoff()) if controller is not None else tolerance
+                )
+                weight, size = _two_site(sites, wires, matrix, self.max_bond_dimension, cutoff)
+                if controller is not None:
+                    controller.record(weight)
+                angle += math.asin(math.sqrt(weight))
                 peak = max(peak, size)
         distance = math.sin(min(angle, math.pi / 2))
         values, bounds, cache = [], [], {}
@@ -260,14 +286,26 @@ class MPSBackend:
             terms = observable.terms if isinstance(observable, Hamiltonian) else (observable,)
             value, norm = 0.0, 0.0
             for term in terms:
+                if not term.coefficient:
+                    continue
+                if term.paulis.count("I") == len(order):
+                    value += term.coefficient
+                    continue
                 if term.paulis not in cache:
                     word = "".join(term.paulis[q] for q in order)
                     cache[term.paulis] = _read_word(sites, word)
                 value += term.coefficient * cache[term.paulis]
-                if term.paulis.count("I") != len(order):
-                    norm += abs(term.coefficient)
+                norm += abs(term.coefficient)
+            if not math.isfinite(value) or not math.isfinite(norm):
+                raise ValidationError("MPS observable exceeds finite precision.")
             values.append(value)
             bounds.append(2 * distance * norm)
+        if controller is not None:
+            bounds = np.minimum(bounds, controller.used)
+            if strict and np.any(bounds > controller.targets):
+                raise ResourceError(
+                    "MPS bond or workspace did not meet the requested readout tolerance."
+                )
         return MPSReadout(tuple(values), tuple(bounds), distance, peak, profile["routing_swaps"])
 
     def expectations_batch(self, circuits, observables, *, options):

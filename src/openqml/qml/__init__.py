@@ -3,6 +3,7 @@
 from .._lazy import resolve as _resolve
 
 _EXPORTS = {
+    "ClassDecision": ("._decision", "ClassDecision"),
     "LindbladPlan": (".lindblad", "LindbladPlan"),
     "LindbladResult": (".lindblad", "LindbladResult"),
     "LindbladUncertainty": (".lindblad", "LindbladUncertainty"),

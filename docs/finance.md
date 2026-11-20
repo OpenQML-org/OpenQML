@@ -629,11 +629,15 @@ reduction or quasi-Monte-Carlo execution.
 With a direct marked-qubit oracle, `finance.price(..., backend="mps")`
 can compute the payoff through a single exact Pauli expectation. Supplying
 `openqml.sim.MPSBackend(max_discarded_weight=..., max_bond_dimension=...)` in automatic
-pricing mode returns an interval in discounted payoff units. If the marked
-probability estimate is $p$ and the trace-distance bound is $D$, the
-probability lies between $\max(0,p-D)$ and $\min(1,p+D)$. The pricing
-interval covers Schmidt truncation. Strict pricing enforces the requested
-absolute error against both interval endpoints.
+pricing mode returns an interval in discounted payoff units. For discount $d$,
+payoff range $s>0$ and price tolerance $e$, the simulator requests a marked
+Pauli-$Z$ readout with absolute error at most $\min(2,2e/(ds))$. It evaluates
+the causal ancestors of the marked wire and adapts the bond ranks to that readout.
+With computed Pauli bound $b$ and estimated probability $p=(1-\langle Z\rangle)/2$,
+the probability interval is $[\max(0,p-b/2),\min(1,p+b/2)]$. Applying the
+payoff offset, scale and discount gives the price interval. Strict pricing
+checks both endpoints. Its scope is the supplied oracle and Schmidt truncation.
+Market calibration and model error remain separate inputs to the valuation.
 
 ## Execution-cost-aware scenario decisions
 

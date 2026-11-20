@@ -160,7 +160,7 @@ def test_routed_payoff_pricing_propagates_truncation_to_discounted_units():
     engine = oq.sim.MPSBackend(max_bond_dimension=1, max_discarded_weight=0)
     result = oq.finance.price(backend=engine, strict=False, **kwargs)
     assert result.interval[0] <= actual <= result.interval[1]
-    assert result.interval[1] - result.value == pytest.approx(0.95 * 5 * np.sin(0.32))
+    assert result.interval[1] - result.value == pytest.approx(0.95 * 5 * np.sin(0.32) ** 2)
     assert result.oracle_queries == 0
     with pytest.raises(oq.ResourceError, match="tolerance"):
         oq.finance.price(backend=engine, error=0.1, **kwargs)

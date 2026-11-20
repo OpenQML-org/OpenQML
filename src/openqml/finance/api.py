@@ -168,7 +168,7 @@ def price(
     if method not in {"auto", "classical", "quantum"}:
         raise ValidationError("Pricing method must be auto, classical or quantum.")
     if probabilities is not None and method != "quantum":
-        if probabilities is None or payoffs is None:
+        if payoffs is None:
             raise ValidationError("Classical pricing needs payoffs and scenario probabilities.")
         ops = Ops(probabilities, payoffs)
         values = ops.real(payoffs)
@@ -222,16 +222,28 @@ def price(
         from ..sim._mps import MPSBackend
 
         if isinstance(backend, MPSBackend) and backend.max_discarded_weight is not None:
+            from ..compute.kernel import get_compute_kernel
             from ..ir.observables import PauliString
             from ..runtime.backends import ExecutionOptions
+            from ..sim.readout import certified_readout
 
             good, width = oracle.good_qubit, oracle.preparation.num_qubits
+            budget = get_compute_kernel()._prepare_budget(max_memory_mb).max_bytes
+            if width > min(backend.max_work, budget // 8):
+                raise ResourceError("Marked readout exceeds the configured work or memory budget.")
             word = PauliString("I" * good + "Z" + "I" * (width - good - 1))
-            result = backend.readout(
-                oracle.preparation, (word,), options=ExecutionOptions(max_memory_mb=max_memory_mb)
+
+            z_error = min(2.0, (error / scale) / discount * 2)
+            result = certified_readout(
+                oracle.preparation,
+                (word,),
+                absolute_error=z_error,
+                backend=backend,
+                options=ExecutionOptions(max_memory_mb=max_memory_mb),
+                strict=False,
             )
             p = min(1.0, max(0.0, (1 - result.values[0]) / 2))
-            distance = result.trace_distance_bound
+            distance = result.absolute_error_bounds[0] / 2
             lo, hi = max(0.0, p - distance), min(1.0, p + distance)
             if strict and discount * scale * max(p - lo, hi - p) > error:
                 raise ResourceError("MPS pricing error exceeds the requested tolerance.")

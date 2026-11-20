@@ -188,6 +188,14 @@ class LayerSpecMixin:
             getattr(self, "source_observables", self.observables),
         )
 
+    def certify_class(self, inputs, *, weights=None, **options):
+        """Evaluate a concrete inference certificate with the current or supplied weights."""
+        return self.checkpoint(weights).certify_class(inputs, **options)
+
+    def certified_vjp(self, inputs, cotangents, *, weights=None, **options):
+        """Evaluate a truncation-bounded weight gradient at a concrete parameter point."""
+        return self.checkpoint(weights).certified_vjp(inputs, cotangents, **options)
+
     def checkpoint(self, weights=None):
         """Capture concrete weights in source order; call outside JIT/autodiff transforms."""
         import numpy as np

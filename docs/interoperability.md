@@ -5,6 +5,25 @@ Use `convert` to import, check compatibility and export in one call.
 JSON and IR targets work with the core installation. Install the corresponding
 extra when importing or exporting a native SDK object.
 
+## Readouts in the source framework's measurement order
+
+`program.certified_readout(absolute_error=e)` returns a value and a Schmidt
+truncation bound for each terminal classical bit in ascending IR bit order.
+`classical_bits=[...]` selects and orders marginal probabilities of bit value
+one. Unwritten bits start at zero. The last measurement or unconditional
+constant assignment wins. An explicitly supplied quantum observable reads
+the postmeasurement state, including dephasing caused by measurements whose
+classical result was later overwritten.
+
+Qiskit and parsed OpenQASM use the imported classical register map. For Cirq,
+`source_options={"measurement_map": {"key": (2, 0)}}` maps a two-wire key's
+native measurement order to explicit bit indices. A PennyLane analytic tape
+can supply Pauli expectations and real linear combinations directly. Their
+return order and wires used only for measurement are preserved. The built-in
+importers accept their usual source options, including explicit wire order.
+Sampled tape returns, mid-circuit measurements followed by quantum operations,
+feedback and noise require other execution paths.
+
 ## Classical variables and assignments
 
 IR v5 adds `Circuit.classical_set(bit, 0|1)`, a classical write with no quantum

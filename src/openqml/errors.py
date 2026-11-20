@@ -38,7 +38,7 @@ def _require_choice(value, choices, name):
     return value
 
 
-def _as_tuple(value, name):
+def _as_tuple(value, name, *, max_items=None):
     if isinstance(value, (str, bytes, Mapping)):
         raise ValidationError(f"{name} must be an iterable of items; got {type(value).__name__}.")
     try:
@@ -47,7 +47,16 @@ def _as_tuple(value, name):
         raise ValidationError(
             f"{name} must be an iterable of items; got {type(value).__name__}."
         ) from exc
-    return tuple(iterator)
+    if max_items is None:
+        return tuple(iterator)
+    from itertools import islice
+
+    if hasattr(value, "__len__") and len(value) > max_items:
+        raise ResourceError(f"{name} exceeds the configured item budget.")
+    items = tuple(islice(iterator, max_items + 1))
+    if len(items) > max_items:
+        raise ResourceError(f"{name} exceeds the configured item budget.")
+    return items
 
 
 class ResourceError(OpenQMLError):

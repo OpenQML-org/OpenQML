@@ -3,6 +3,7 @@
 from .._lazy import resolve as _resolve
 
 _EXPORTS = {
+    "CertifiedGradient": ("._certified", "CertifiedGradient"),
     "QuantumFisherPlan": (".fisher", "QuantumFisherPlan"),
     "quantum_fisher": (".fisher", "quantum_fisher"),
     "compile_compute": (".compilation", "compile_compute"),

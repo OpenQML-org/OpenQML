@@ -27,18 +27,11 @@ def supports_device_kernel(state, matrix, torch):
     )
 
 
-def local_blocks(state, wires, width, ops):
-    batch = tuple(state.shape[:-1])
-    local = tuple(wires) + tuple(q for q in range(width) if q not in wires)
-    axes = tuple(range(len(batch))) + tuple(len(batch) + q for q in local)
-    return ops.transpose(state.reshape(batch + (2,) * width), axes).reshape(
-        batch + (1 << len(wires), 1 << (width - len(wires)))
-    )
-
-
 def matrix_cotangent(state, cotangent, wires, width, ops):
-    left = local_blocks(cotangent, wires, width, ops)
-    right = local_blocks(state, wires, width, ops)
+    from .dense import _local_blocks
+
+    left, _ = _local_blocks(cotangent, wires, width, ops)
+    right, _ = _local_blocks(state, wires, width, ops)
     return ops.matmul(left, ops.conj(right).swapaxes(-1, -2))
 
 

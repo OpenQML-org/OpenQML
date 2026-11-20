@@ -18,8 +18,8 @@ Install the integrations needed for the change; CI also exercises the complete
 with `python -m twine check dist/*` when packaging changes.
 
 Add a focused regression test for a corrected numerical, execution or API
-contract. Keep standalone demonstrations, datasets and performance harnesses
-out of the package. Performance statements must identify the workload,
+contract. The installed package contains runtime modules and typing metadata.
+Performance statements must identify the workload,
 precision, device and measured boundary. CPU checks do not establish GPU or
 QPU throughput.
 

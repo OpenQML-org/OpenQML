@@ -4,6 +4,11 @@
 
 [Contributing](CONTRIBUTING.md) · [Governance](GOVERNANCE.md) · [Security](SECURITY.md)
 
+OpenQML can choose tensor-network bond ranks from the accuracy a caller needs
+in a measured expectation, a class margin, a weight gradient or a discounted
+price. Each result carries the achieved truncation bound in the requested units.
+[Readout accuracy and execution](https://github.com/OpenQML-org/OpenQML/blob/main/docs/compute.md#choosing-bond-ranks-from-the-requested-output-accuracy)
+
 ## Quantum–classical hybrid AI
 
 Build and train hybrid neural networks with PyTorch, JAX or Flax. Use `Model.fit` and `predict` for supervised tasks, or compose convolution, attention, graph, recurrent and generative architectures with native layers. Validation loss, early stopping and portable checkpoints keep model selection and continued training in the same workflow. [Explore hybrid AI](https://github.com/OpenQML-org/OpenQML/blob/main/docs/models.md).

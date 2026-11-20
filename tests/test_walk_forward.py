@@ -115,3 +115,22 @@ def test_walk_forward_uses_native_hybrid_fit_validation_and_prediction(framework
         import jax
 
         jax.clear_caches()
+
+
+def test_walk_forward_admits_output_rows_before_scanning_large_strided_arrays(monkeypatch):
+    import openqml.finance.research as research
+
+    x = np.broadcast_to(np.array(1.0), (200_000, 3))
+    monkeypatch.setattr(
+        research, "_all_finite", lambda *args: pytest.fail("oversized input scanned")
+    )
+    with pytest.raises(oq.ResourceError):
+        research.walk_forward(
+            lambda: None,
+            x,
+            x[:, 0],
+            times=np.arange(len(x)),
+            label_end=np.arange(len(x)),
+            splitter=oq.finance.PurgedWalkForward(train_size=4, test_size=2),
+            max_memory_mb=0.001,
+        )

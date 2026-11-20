@@ -91,6 +91,41 @@ by twice $D$ times the sum of absolute coefficients of nonidentity terms.
 `openqml.sim.MPSReadout.absolute_error_bounds` reports these truncation-only bounds per
 observable. Floating-point roundoff is additional. [Zhou, Stoudenmire and Waintal, Physical Review X](https://doi.org/10.1103/PhysRevX.10.041038)
 
+### Choosing bond ranks from the requested output accuracy
+
+`openqml.sim.certified_readout(program, observables, absolute_error=...)`
+accepts an absolute tolerance per output, or one tolerance for all outputs.
+`plan_readout(circuit, observables).evaluate(bindings, absolute_error=...)`
+reuses the unitary causal cone across bindings. The returned `simulated_wires`
+maps the compact register back to the source. Its state-distance bound describes
+that compact circuit. Each observable bound applies to the corresponding full-circuit output.
+
+At a split with discarded squared Schmidt weight $w$, each reduced density
+matrix on one side is a mixture of the retained and discarded components on
+orthogonal subspaces. Its trace distance from the normalized retained component
+is $w$. The full pure states have trace distance $\sqrt w$. OpenQML traces each
+Pauli term backwards through later gates and routed swaps. Clifford gates map
+known Pauli factors exactly. Commuting rotations preserve them. Where a gate
+can mix components, the simulator keeps the affected support and tracks the
+remaining known factors independently. This uses the same Clifford tables as
+the Pauli compiler. [Rudolph et al., PRX Quantum](https://doi.org/10.1103/6vd7-l9bn)
+
+For one observable at split $j$, let $A_j$ and $B_j$ be the sums of absolute coefficients
+of nonidentity terms that respectively stay on one side or cross the cut.
+Telescoping across the actual truncated prefixes with exact suffixes gives
+
+$$
+|\Delta\langle O\rangle| \leq 2\sum_j (A_j w_j + B_j\sqrt{w_j}).
+$$
+
+The simulator divides the remaining allowance over the remaining splits and
+selects a rank from the measured singular spectrum. It reports the tighter of
+this bound and the state-distance bound. A hard bond cap can exhaust the
+requested accuracy. The default raises `ResourceError` in that case.
+`strict=False` returns the achieved bounds. Tolerance zero requests zero
+discarded contribution to the declared outputs. These deterministic bounds
+cover Schmidt truncation in exact arithmetic. [Schollwöck, Reviews of Modern Physics](https://doi.org/10.1103/RevModPhys.77.259)
+
 ## CPU statevector kernels
 
 One-wire and adjacent two-wire applications use tensor views and batched GEMM.

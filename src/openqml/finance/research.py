@@ -1,11 +1,12 @@
 """Purged rolling refits with aligned, out-of-sample hybrid model predictions."""
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
 
 from ..compute.kernel import memory_budget
-from ..errors import ValidationError
+from ..errors import ResourceError, ValidationError
 from ..ir.core import integer
 from ..qml.models import Model
 from ._array import admission
@@ -30,6 +31,20 @@ class WalkForwardResult:
     mask: np.ndarray
     fold_id: np.ndarray
     folds: tuple[WalkForwardMetrics, ...]
+
+
+def _all_finite(array, max_memory_mb):
+    # Check views and memory-mapped histories in bounded chunks, including strided inputs.
+    capacity = int(min(1.0, max_memory_mb) * 2**20) // (array.dtype.itemsize + 1)
+    if not capacity:
+        raise ResourceError("Walk-forward validation exceeds max_memory_mb.")
+    chunks = np.nditer(
+        array,
+        flags=["external_loop", "buffered", "zerosize_ok"],
+        buffersize=min(65_536, capacity),
+        order="K",
+    )
+    return all(np.isfinite(block).all() for block in chunks)
 
 
 def walk_forward(
@@ -77,22 +92,22 @@ def walk_forward(
         or len(x) != len(y)
         or x.dtype.kind not in "fiu"
         or y.dtype.kind not in "fiu"
-        or not np.isfinite(x).all()
-        or not np.isfinite(y).all()
         or np.shape(times) != (len(x),)
         or np.shape(label_end) != (len(x),)
     ):
         raise ValidationError("Use finite real inputs, targets and matching observation times.")
     if any(size == 0 for size in (*x.shape, *y.shape)):
         raise ValidationError("Input and target axes must be nonempty.")
+    count = len(x)
+    admission(2 * count, maximum)
+    if not _all_finite(x, maximum) or not _all_finite(y, maximum):
+        raise ValidationError("Use finite real inputs and targets.")
     # Validate timestamps and the first split before constructing a native model.
     iterator = splitter.split(times, label_end)
     ends, timestamps = np.asarray(label_end), np.asarray(times)
-    count = len(x)
-    admission(2 * count, maximum)
     mask, fold_id = np.zeros(count, dtype=bool), np.full(count, -1, dtype=np.int64)
     predictions, summaries = None, []
-    sample_elements = int(np.prod(x.shape[1:])) + int(np.prod(y.shape[1:]))
+    sample_elements = math.prod(x.shape[1:]) + math.prod(y.shape[1:])
     for number, fold in enumerate(iterator):
         train, validation = fold.train, np.empty(0, dtype=int)
         inner_purged = 0
@@ -120,11 +135,12 @@ def walk_forward(
             predicted.ndim < 1
             or predicted.shape[0] != len(fold.test)
             or predicted.dtype.kind not in "fiu"
-            or not np.isfinite(predicted).all()
         ):
             raise ValidationError("Model predictions must be finite with one row per test sample.")
         shape = (count,) + predicted.shape[1:]
-        admission(workspace + int(np.prod(shape)) + predicted.size + 2 * count, maximum)
+        admission(workspace + math.prod(shape) + predicted.size + 2 * count, maximum)
+        if not _all_finite(predicted, maximum):
+            raise ValidationError("Model predictions must be finite.")
         if predictions is None:
             predictions = np.full(shape, np.nan, dtype=np.float64)
         if predictions.shape != shape:

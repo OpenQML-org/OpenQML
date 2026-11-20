@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from ..errors import ConversionError, MissingDependencyError, conversion_error
+from ..errors import ConversionError, MissingDependencyError, ValidationError, conversion_error
 from ..ir.core import Circuit
 
 
@@ -192,6 +192,12 @@ class QuantumProgram:
             max_output_bytes=max_output_bytes,
         )
 
+    def certified_readout(self, observables=None, **options):
+        """Bound IR expectations or terminal classical-bit probabilities in circuit order."""
+        from ..sim.readout import certified_readout
+
+        return certified_readout(self, observables, **options)
+
     def run(self, *, shots=1024, seed=None, **options):
         """Retain native execution semantics/result objects, including non-IR features."""
         if self.framework == "qiskit":
@@ -200,7 +206,9 @@ class QuantumProgram:
             aer = dependency("qiskit_aer", "aer")
             from qiskit import transpile
 
-            backend = aer.AerSimulator(**options)
+            if options.pop("device", "CPU") != "CPU":
+                raise ValidationError("Native Qiskit execution accepts the CPU device.")
+            backend = aer.AerSimulator(device="CPU", **options)
             circuit = self.native
             if not circuit.num_clbits:
                 circuit = circuit.copy()

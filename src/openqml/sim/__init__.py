@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
 _EXPORTS = {
     "MPSBackend": ("._mps", "MPSBackend"),
+    "certified_readout": (".readout", "certified_readout"),
     "MPSReadout": ("._mps", "MPSReadout"),
     "statevector": (".dense", "statevector"),
     "expectation": (".dense", "expectation"),

@@ -309,6 +309,15 @@ def _apply_matrix(state, matrix, qubits, num_qubits, ops):
     return _apply_matrix_portable(state, matrix, qubits, num_qubits, ops)
 
 
+def _local_blocks(state, qubits, num_qubits, ops):
+    batch = tuple(state.shape[:-1])
+    local = tuple(qubits) + tuple(q for q in range(num_qubits) if q not in qubits)
+    rank = len(batch)
+    axes = tuple(range(rank)) + tuple(rank + q for q in local)
+    block = ops.transpose(state.reshape(batch + (2,) * num_qubits), axes)
+    return block.reshape(batch + (1 << len(qubits), 1 << (num_qubits - len(qubits)))), local
+
+
 def _apply_matrix_portable(state, matrix, qubits, num_qubits, ops):
     if ops.backend == "numpy" and (
         len(qubits) <= 2 or (state.size >= 65_536 and tuple(qubits) != tuple(range(len(qubits))))
@@ -316,13 +325,9 @@ def _apply_matrix_portable(state, matrix, qubits, num_qubits, ops):
         return _apply_numpy(state, matrix, qubits, num_qubits)
     batch_shape = tuple(state.shape[:-1])
     rank = len(batch_shape)
-    local = tuple(qubits) + tuple(q for q in range(num_qubits) if q not in qubits)
-    axes = tuple(range(rank)) + tuple(rank + q for q in local)
+    block, local = _local_blocks(state, qubits, num_qubits, ops)
     positions = {wire: index for index, wire in enumerate(local)}
     inverse = tuple(range(rank)) + tuple(rank + positions[q] for q in range(num_qubits))
-    block = ops.transpose(state.reshape(batch_shape + (2,) * num_qubits), axes).reshape(
-        batch_shape + (2 ** len(qubits), 2 ** (num_qubits - len(qubits)))
-    )
     evolved = ops.matmul(matrix, block).reshape(batch_shape + (2,) * num_qubits)
     return ops.transpose(evolved, inverse).reshape(batch_shape + (2**num_qubits,))
 
@@ -577,10 +582,6 @@ def statevector(
                     else native_execute()
                 )
                 return result if target == "numpy" else result.detach().cpu().numpy()
-        if like is not None:
-            raise ValidationError(
-                "External backends do not support a native autodiff tensor context."
-            )
         result = execute(
             circuit, bindings, backend=backend, max_qubits=max_qubits, max_memory_mb=max_memory_mb
         ).statevector
