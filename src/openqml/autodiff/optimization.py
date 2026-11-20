@@ -7,7 +7,7 @@ state, binding, tensor or approximate threshold is consulted.
 
 from dataclasses import dataclass, replace
 
-from ..errors import Diagnostic, ValidationError, conversion_error
+from ..errors import Diagnostic, ResourceError, ValidationError, conversion_error
 from ..ir.compiler import CircuitStats, _sum_angles, circuit_stats, simplify
 from ..ir.core import Circuit, ClassicalCondition, Operation, _require_circuit, integer
 
@@ -96,6 +96,7 @@ class OptimizationResult:
     removed_parameters: tuple[str, ...]
     passes: int
     converged: bool
+    folded_phases: int = 0
 
     @property
     def diagnostics(self):
@@ -107,6 +108,14 @@ class OptimizationResult:
                 severity="info",
             )
         ]
+        if self.folded_phases:
+            notes.append(
+                Diagnostic(
+                    "AFFINE_PHASE_FOLDING",
+                    f"Fused {self.folded_phases} phase gates on equal parities.",
+                    severity="info",
+                )
+            )
         notes.extend(
             Diagnostic(
                 "PARAMETER_ELIMINATED",
@@ -160,6 +169,8 @@ def optimize(
     max_passes=4,
     pauli_fusion=False,
     max_pauli_work=1_000_000,
+    phase_folding=False,
+    max_phase_work=1_000_000,
 ):
     """Fold known guards, merge stable adjacent decisions, then simplify gates.
 
@@ -178,6 +189,9 @@ def optimize(
     if type(pauli_fusion) is not bool:
         raise ValidationError("pauli_fusion must be a boolean.")
     integer(max_pauli_work, "max_pauli_work", 1)
+    if type(phase_folding) is not bool:
+        raise ValidationError("phase_folding must be a boolean.")
+    integer(max_phase_work, "max_phase_work", 1)
     pending, count = [(circuit, 0)], 0
     while pending:
         block, depth = pending.pop()
@@ -191,10 +205,16 @@ def optimize(
                 raise conversion_error("OPTIMIZATION_LIMIT", "Circuit exceeds max_operations.")
             pending.extend((b, depth + 1) for b in op.blocks)
     before = circuit_stats(circuit)
-    folded = merged = 0
+    folded = merged = folded_phases = phase_work = 0
+
+    def charge(amount):
+        nonlocal phase_work
+        phase_work += amount
+        if phase_work > max_phase_work:
+            raise ResourceError("Affine phase folding exceeds max_phase_work.")
 
     def walk(body, facts):
-        nonlocal folded, merged
+        nonlocal folded, merged, folded_phases
         output, phases = [], [body.global_phase]
 
         def append(op):
@@ -215,8 +235,10 @@ def optimize(
                 output.append(op)
 
         for op in body.operations:
-            if op.name == "measure":
-                facts.values[op.clbits[0]] = None
+            if op.name in {"measure", "classical_set"}:
+                facts.values[op.clbits[0]] = (
+                    None if op.name == "measure" else int(op.params[0].constant)
+                )
                 append(op)
                 continue
             if op.name != "if_else":
@@ -241,16 +263,19 @@ def optimize(
             blocks = (walk(op.blocks[0], left), walk(op.blocks[1], right))
             facts.merge(left, right)
             append(replace(op, condition=condition, blocks=blocks))
-        return simplify(
-            replace(
-                body,
-                operations=tuple(
-                    item.materialize() if isinstance(item, _DecisionRun) else item
-                    for item in output
-                ),
-                global_phase=_sum_angles(phases),
-            )
+        result = replace(
+            body,
+            operations=tuple(
+                item.materialize() if isinstance(item, _DecisionRun) else item for item in output
+            ),
+            global_phase=_sum_angles(phases),
         )
+        if phase_folding:
+            from ..ir.phase_folding import fold_block
+
+            result, changed = fold_block(result, charge)
+            folded_phases += changed
+        return simplify(result)
 
     current, converged, passes = circuit, False, 0
     for _ in range(max_passes):
@@ -275,4 +300,5 @@ def optimize(
         tuple(sorted(set(circuit.parameters) - set(current.parameters))),
         passes,
         converged,
+        folded_phases,
     )

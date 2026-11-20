@@ -380,3 +380,91 @@ def test_numeric_forward_reuses_only_deterministic_rows_with_distinct_input_cota
     with torch.no_grad():
         layer.weights.fill_(0.61)
     np.testing.assert_allclose(layer(x).detach(), np.cos(0.4) * np.cos(0.61), atol=1e-14)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "bit_flip",
+        "phase_flip",
+        "depolarizing",
+        "amplitude_damping",
+        "phase_damping",
+        "reset",
+        "measure",
+    ],
+)
+def test_unconditional_transfer_matches_density_for_all_two_wire_readouts(name):
+    c = q.Circuit(2).ry(0.71, 0).rx(-0.27, 1).cx(0, 1)
+    noise = name not in {"reset", "measure"}
+    if noise:
+        c = c.gate(name, 1, params=(q.Parameter("p"),))
+    else:
+        c = c.measure(1, 0) if name == "measure" else c.reset(1)
+    c = c.ry(0.32, 1).cx(1, 0)
+    obs = tuple(q.PauliString("".join(word)) for word in product("IXYZ", repeat=2))
+    values = {"p": np.array([0.0, 0.3, 1.0])} if noise else {}
+    np.testing.assert_allclose(
+        q.PauliTransferPlan(c, obs).evaluate(values), q.expectations(c, obs, values), atol=2e-13
+    )
+
+
+def test_transfer_checks_idle_channel_domains_and_keeps_feedback_explicit():
+    wide = (
+        q.Circuit(1024)
+        .x(1023)
+        .amplitude_damping(q.Parameter("p"), 1023)
+        .bit_flip(q.Parameter("u"), 0)
+    )
+    plan = q.PauliTransferPlan(wide, (q.PauliString("I" * 1023 + "Z"),))
+    np.testing.assert_allclose(
+        plan.evaluate({"p": np.array([0.1, 0.9]), "u": 0.2}), [[-0.8], [0.8]]
+    )
+    assert plan.peak_terms == 2
+    with pytest.raises(q.ValidationError, match="probabilities"):
+        plan.evaluate({"p": 0.3, "u": 1.01})
+    dynamic = q.Circuit(1).measure(0, 0).if_else(q.ClassicalCondition((0,), 1), q.Circuit(1).x(0))
+    with pytest.raises(q.ValidationError, match="classical"):
+        q.PauliTransferPlan(dynamic, (q.PauliString("Z"),))
+
+
+def test_trainable_noisy_transfer_layer_and_native_hessians():
+    torch = pytest.importorskip("torch")
+    jax = pytest.importorskip("jax")
+    jnp = pytest.importorskip("jax.numpy")
+    a, p = q.Parameter("a"), q.Parameter("p")
+    circuit = q.Circuit(1).ry(a, 0).amplitude_damping(p, 0)
+    obs = (q.PauliString("X"), q.PauliString("Z"))
+    spec = q.LayerSpec(circuit, ("a",), ("p",), obs)
+    layer = q.torch.QuantumLayer.from_spec(
+        spec, backend="torch", execution_method="pauli-transfer", dtype=torch.float64, device="cpu"
+    )
+    x = torch.tensor([[0.4], [-0.6]], dtype=torch.float64, requires_grad=True)
+    with torch.no_grad():
+        layer.weights.fill_(0.25)
+    output = layer(x)
+    expected = torch.stack(
+        (
+            torch.sin(x[:, 0]) * (1 - layer.weights[0]).sqrt(),
+            (1 - layer.weights[0]) * torch.cos(x[:, 0]) + layer.weights[0],
+        ),
+        dim=-1,
+    )
+    torch.testing.assert_close(output, expected)
+    for v, w in zip(
+        torch.autograd.grad(output.sum(), (x, layer.weights)),
+        torch.autograd.grad(expected.sum(), (x, layer.weights)),
+        strict=True,
+    ):
+        torch.testing.assert_close(v, w)
+    plan = layer.execution_plan
+
+    def f(v):
+        return plan.evaluate({"a": v[0], "p": v[1]}, backend="jax").sum()
+
+    def exact(v):
+        return jnp.sin(v[0]) * jnp.sqrt(1 - v[1]) + (1 - v[1]) * jnp.cos(v[0]) + v[1]
+
+    v = jnp.array([0.45, 0.33])
+    np.testing.assert_allclose(jax.jit(jax.hessian(f))(v), jax.hessian(exact)(v), atol=2e-6)
+    jax.clear_caches()

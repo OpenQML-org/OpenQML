@@ -10,6 +10,7 @@ from ..errors import ResourceError, ValidationError
 from ..ir.core import integer
 from ..ir.parameters import real
 from ._array import Ops, admission, rows
+from .entropic import entropic_value_at_risk
 from .execution_risk import execution_risk_projection
 from .expectiles import expectile
 from .risk import expected_shortfall
@@ -146,14 +147,16 @@ class ScenarioTreePlan:
 
     @compute_operation
     def nested_risk(self, losses, probabilities=None, *, risk_measure="cvar", confidence=0.95):
-        """Backward composition of conditional CVaR or coherent expectiles."""
+        """Backward composition of conditional CVaR, EVaR or coherent expectiles."""
         confidence = real(confidence)
         if (
             not isinstance(risk_measure, str)
-            or risk_measure not in {"cvar", "expectile"}
+            or risk_measure not in {"cvar", "expectile", "evar"}
             or not ((0.5 if risk_measure == "expectile" else 0) <= confidence < 1)
         ):
-            raise ValidationError("Use cvar confidence in [0,1) or expectile level in [0.5,1).")
+            raise ValidationError(
+                "Use cvar/evar confidence in [0,1) or expectile level in [0.5,1)."
+            )
         ops = Ops(losses, probabilities)
         values = ops.real(losses)
         s = self.scenarios.shape[0]
@@ -170,16 +173,24 @@ class ScenarioTreePlan:
         for node in reversed(self._decisions):
             children = ops.stack(tuple(result[c] for c in self._children[node]))
             conditional = self._conditional(node, mass, ops)
-            result[node] = (
-                expected_shortfall(children, confidence=confidence, probabilities=conditional)
-                if risk_measure == "cvar"
-                else expectile(
+            if risk_measure == "cvar":
+                result[node] = expected_shortfall(
+                    children, confidence=confidence, probabilities=conditional
+                )
+            elif risk_measure == "evar":
+                result[node] = entropic_value_at_risk(
+                    children,
+                    confidence=confidence,
+                    probabilities=conditional,
+                    max_memory_mb=self.max_memory_mb,
+                ).value
+            else:
+                result[node] = expectile(
                     children,
                     level=confidence,
                     probabilities=conditional,
                     max_memory_mb=self.max_memory_mb,
                 )
-            )
         return TreeRiskResult(result[0], ops.stack(result), ops.stack(mass))
 
     @compute_operation

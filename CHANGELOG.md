@@ -1,5 +1,21 @@
 # Changes
 
+## 0.32.0
+
+- `sim/pauli_transfer.py` compiles five local noise channels, reset and
+  discarded measurements into trainable sparse Pauli transfers. Batched
+  NumPy, PyTorch and JAX evaluations share the same prepared frontiers.
+- `finance/entropic.py` adds finite-support EVaR, least-favourable scenario
+  probabilities and implicit sensitivities. Scenario models report asset-level
+  risk and deviation contributions. Execution budgets and conditional trees
+  accept `risk_measure="evar"`, including fees and quadratic impact in funded trades.
+- `ir/phase_folding.py` merges symbolic diagonal phases on affine parities,
+  preserving complemented-wire and branch-local phases. Enable it through
+  conversion, circuit optimization or native layer optimization.
+- `autodiff/optimization.py` tracks classical stores when folding later guards.
+  The conversion interface also accepts the existing Pauli-fusion options.
+
+
 ## 0.31.0
 
 - `qml/lindblad.py`: add controlled open-system dynamics with exact local

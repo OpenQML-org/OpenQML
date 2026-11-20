@@ -268,6 +268,31 @@ class ScenarioPlan:
             max_memory_mb=self.max_memory_mb,
         )
 
+    def entropic_attribution(self, probabilities, weights, *, step=None, confidence=0.95):
+        """Euler EVaR contributions and excess over nominal expected-loss contributions."""
+        from .entropic import EntropicAttribution, entropic_value_at_risk
+
+        ops = Ops(weights, probabilities)
+        returns, w = ops.real(self.returns(step=step)), ops.real(weights)
+        if w.shape[-1:] != returns.shape[-1:]:
+            raise ValidationError("Portfolio weights must match the scenario asset axis.")
+        p = ops.probabilities(probabilities, self.num_scenarios)
+        prefix = ops.broadcast_shape(w.shape[:-1], p.shape[:-1])
+        s, n = returns.shape
+        admission(
+            s * n + rows(prefix) * (8 * s + 8 * n),
+            self.max_memory_mb,
+            work=rows(prefix) * s * (64 + 3 * n),
+            max_work=self.max_work,
+        )
+        losses = -ops.einsum("sn,...n->...s", returns, w)
+        risk = entropic_value_at_risk(
+            losses, probabilities=p, confidence=confidence, max_memory_mb=self.max_memory_mb
+        )
+        marginal = -ops.matmul(risk.worst_probabilities, returns)
+        nominal = -ops.matmul(p, returns)
+        return EntropicAttribution(risk, marginal, w * marginal, w * (marginal - nominal))
+
     def tree(self, node_ids, **options):
         """Build a causal tree over this plan's multi-period return atoms."""
         from .scenario_tree import ScenarioTreePlan

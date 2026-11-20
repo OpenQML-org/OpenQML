@@ -2,7 +2,8 @@
 
 Inspired by the structure/parameter separation in PADO-Pauli (2610.17755).
 This implementation compiles shrinking per-step gather maps, not a dense
-2**n state or a fixed 4**n Pauli basis. No term truncation is performed.
+2**n state or a fixed 4**n Pauli basis. Local channels use exact Heisenberg adjoints
+(Angrisani et al., PRX Quantum 7, 020313). No term truncation is performed.
 """
 
 import math
@@ -14,7 +15,7 @@ import numpy as np
 from ..compute.kernel import memory_budget
 from ..errors import ResourceError, ValidationError
 from ..ir.compiler import _check_circuit_limits, decompose
-from ..ir.core import integer
+from ..ir.core import CHANNEL_GATES, integer
 from ..ir.observables import Hamiltonian, PauliString
 from ..ir.parameters import expression
 from .pauli import (
@@ -27,6 +28,54 @@ from .pauli import (
     _prepare_bindings,
     _rotation_sign,
 )
+
+_CHANNELS = CHANNEL_GATES - {"kraus"}
+
+
+def _transfer_rule(op):
+    """Return the two predecessor words, their relative sign and mixing mode."""
+    name = op.name
+    if name in _CLIFFORD:
+        table = _clifford_table(name)
+
+        def clifford(x, z):
+            word, sign = _clifford(x, z, op.qubits, table)
+            return word, None, sign, 0
+
+        return clifford
+    if name in _ROTATIONS:
+        mask = sum(1 << q for q in op.qubits)
+        axis = _ROTATIONS[name]
+        gx, gz = (mask if axis != "Z" else 0), (mask if axis != "X" else 0)
+
+        def rotation(x, z):
+            if ((gx & z).bit_count() + (gz & x).bit_count()) % 2:
+                return (x, z), (x ^ gx, z ^ gz), _rotation_sign(gx, gz, x, z), 1
+            return (x, z), None, 1, 0
+
+        return rotation
+    bit = 1 << op.qubits[0]
+
+    def channel(x, z):
+        word = (x, z)
+        if not ((x | z) & bit):
+            return word, None, 1, 0
+        if name in {"reset", "measure"}:
+            if x & bit:
+                return None, None, 1, 0
+            return ((x, z ^ bit) if name == "reset" else word), None, 1, 0
+        if name == "amplitude_damping" and not x & bit:
+            # E*(Z) = (1-p) Z + p I, also when Z belongs to a larger word.
+            return word, (x, z ^ bit), 1, 2
+        if name in {"amplitude_damping", "phase_damping", "phase_flip"}:
+            affected = bool(x & bit)
+        elif name == "bit_flip":
+            affected = bool(z & bit)
+        else:  # depolarizing
+            affected = True
+        return word, None, 1, int(affected)
+
+    return channel
 
 
 @dataclass(frozen=True, eq=False)
@@ -62,8 +111,11 @@ class PauliTransferPlan:
             raise ValidationError("max_memory_mb must be positive.")
         object.__setattr__(self, "max_memory_mb", budget)
         _check_circuit_limits(self.circuit, max_operations=self.max_operations)
-        if self.circuit.has_effects:
-            raise ValidationError("Pauli transfers require a unitary circuit without effects.")
+        if any(op.name in {"if_else", "classical_set", "kraus"} for op in self.circuit.operations):
+            raise ValidationError(
+                "Pauli transfers support unconditional standard channels and discarded "
+                "measurement outcomes. Use density execution for classical programs or Kraus data."
+            )
         if isinstance(self.observables, (str, bytes, Mapping, Set)):
             raise ValidationError("Pauli observables require an ordered iterable.")
         try:
@@ -104,38 +156,28 @@ class PauliTransferPlan:
             work += len(words)
             if work > self.max_work:
                 raise ResourceError("Pauli transfer propagation exceeds max_work.")
-            following, a, b, signs, rotating = {}, [], [], [], []
+            following, a, b, signs, modes = {}, [], [], [], []
 
             def index(word, following=following):
+                if word is None:
+                    return -1
                 if word not in following:
                     if len(following) >= self.max_terms:
                         raise ResourceError("Pauli transfer frontier exceeds max_terms.")
                     following[word] = len(following)
                 return following[word]
 
-            clifford = op.name in _CLIFFORD
-            angle = None if clifford else op.params[0]
-            if not clifford:
-                mask = sum(1 << q for q in op.qubits)
-                axis = _ROTATIONS[op.name]
-                gx, gz = (mask if axis != "Z" else 0), (mask if axis != "X" else 0)
+            rule = _transfer_rule(op)
             for x, z in words:
-                if clifford:
-                    mapped, sign = _clifford(x, z, op.qubits, _clifford_table(op.name))
-                    a.append(index(mapped))
-                    b.append(a[-1])
-                    signs.append(sign)
-                    rotating.append(False)
-                else:
-                    anti = bool(((gx & z).bit_count() + (gz & x).bit_count()) % 2)
-                    a.append(index((x, z)))
-                    b.append(index((x ^ gx, z ^ gz)) if anti else a[-1])
-                    signs.append(_rotation_sign(gx, gz, x, z) if anti else 1)
-                    rotating.append(anti)
+                first, second, sign, mode = rule(x, z)
+                a.append(index(first))
+                b.append(index(second))
+                signs.append(sign)
+                modes.append(mode)
             metadata += 512 * len(words) + 256
             if work > self.max_nodes or metadata > budget * 2**20:
                 raise ResourceError("Pauli transfer descriptors exceed max_nodes/max_memory_mb.")
-            raw.append((tuple(a), tuple(b), tuple(signs), tuple(rotating), angle))
+            raw.append((a, b, signs, modes, op))
             frontier_bytes = sum(
                 256 + (x.bit_length() + z.bit_length() + 7) // 8 for x, z in following
             )
@@ -147,18 +189,18 @@ class PauliTransferPlan:
         # Sentinel slot 0 represents a structurally vanishing coefficient.
         live = {i: j + 1 for j, i in enumerate(i for i, (x, _) in enumerate(words) if x == 0)}
         leaves, steps, active = len(live), [], set()
-        for a, b, signs, rotating, angle in reversed(raw):
-            selected = [i for i in range(len(a)) if a[i] in live or (rotating[i] and b[i] in live)]
+        for a, b, signs, modes, op in reversed(raw):
+            selected = [i for i in range(len(a)) if a[i] in live or b[i] in live]
             aa, bb = (
                 tuple(live.get(a[i], 0) for i in selected),
                 tuple(live.get(b[i], 0) for i in selected),
             )
-            rr, ss = tuple(rotating[i] for i in selected), tuple(signs[i] for i in selected)
-            if angle is not None and any(rr):
-                active.update(angle.parameters)
-            else:
-                angle = None
-            steps.append((aa, bb, ss, rr, angle))
+            ss, mm = tuple(signs[i] for i in selected), tuple(modes[i] for i in selected)
+            # Keep the domain of every modeled channel, including on idle wires.
+            parameter = op.params[0] if op.params and (op.name in _CHANNELS or any(mm)) else None
+            if parameter is not None:
+                active.update(parameter.parameters)
+            steps.append((aa, bb, ss, mm, op.name, parameter, 1 in mm))
             live = {old: new + 1 for new, old in enumerate(selected)}
         routes = tuple(
             tuple((coefficient, live.get(index, 0)) for coefficient, index in row) for row in roots
@@ -210,9 +252,9 @@ class PauliTransferPlan:
                 xp.as_tensor(a, device=like.device, dtype=xp.int64),
                 xp.as_tensor(b, device=like.device, dtype=xp.int64),
                 xp.as_tensor(signs, device=like.device, dtype=ops.real_dtype),
-                xp.as_tensor(rotating, device=like.device, dtype=xp.bool),
+                xp.as_tensor(modes, device=like.device, dtype=xp.int8),
             )
-            for a, b, signs, rotating, _ in self._steps
+            for a, b, signs, modes, *_ in self._steps
         )
         object.__setattr__(self, "_torch_prepared", (str(like.device), ops.real_dtype, constants))
         return self
@@ -256,7 +298,7 @@ class PauliTransferPlan:
         for value in local.values():
             zero = zero + (xp.broadcast_to(value, shape)[..., None] * 0) ** 2
         values = cat(zero, xp.broadcast_to(ops.array(1, real_value=True), shape + (self._leaves,)))
-        for index, (a, b, signs, rotating, angle) in enumerate(self._steps):
+        for index, (a, b, signs, modes, name, parameter, transverse) in enumerate(self._steps):
             aa, bb, ss, flags = (
                 constants[index]
                 if constants is not None
@@ -264,19 +306,38 @@ class PauliTransferPlan:
                     array(a, indices=True),
                     array(b, indices=True),
                     array(signs),
-                    xp.as_tensor(rotating, device=ops.device, dtype=xp.bool)
+                    xp.as_tensor(modes, device=ops.device, dtype=xp.int8)
                     if backend == "torch"
-                    else xp.asarray(rotating, dtype=bool),
+                    else xp.asarray(modes, dtype="int8"),
                 )
             )
             base = values[..., aa]
-            if angle is None:
+            if parameter is None:
                 result = base * ss
             else:
-                theta = angle.evaluate(local)
-                theta = xp.broadcast_to(ops.array(theta, real_value=True), shape)[..., None]
-                mixed = xp.cos(theta) * base + xp.sin(theta) * ss * values[..., bb]
-                result = xp.where(flags, mixed, base)
+                value = ops.array(parameter.evaluate(local), real_value=True)
+                value = xp.broadcast_to(value, shape)[..., None]
+                if name in _CHANNELS:
+                    value = ops.check(
+                        value,
+                        (value >= 0) & (value <= 1),
+                        "Channel probabilities must be in [0,1].",
+                    )
+                    zero = zero + 0 * value
+                    if name in {"amplitude_damping", "phase_damping"}:
+                        result = base
+                        if transverse:
+                            result = xp.where(flags == 1, xp.sqrt(1 - value) * base, base)
+                        if name == "amplitude_damping":
+                            result = xp.where(
+                                flags == 2, (1 - value) * base + value * values[..., bb], result
+                            )
+                    else:
+                        slope = 4 / 3 if name == "depolarizing" else 2
+                        result = xp.where(flags == 1, (1 - slope * value) * base, base)
+                else:
+                    mixed = xp.cos(value) * base + xp.sin(value) * ss * values[..., bb]
+                    result = xp.where(flags == 1, mixed, base)
             values = cat(zero, result)
         outputs = [
             sum((coefficient * values[..., i] for coefficient, i in row), zero[..., 0])

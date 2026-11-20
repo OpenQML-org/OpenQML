@@ -61,6 +61,23 @@ semantics raise `ConversionError` with structured diagnostics.
 `plan_conversion` is the advanced entry point for reusing one imported source
 across parameter sweeps, partial binding and verification.
 
+## Affine phase folding
+
+Pass `optimize=True, optimization_options={"phase_folding": True}` to
+`convert` or `plan_conversion`. The pass follows XOR parities and bit
+complements through X, CX and SWAP, combining P, RZ, RZZ and fixed Z-axis
+phases when they act on the same parity. CZ, CP and CRZ preserve these
+parities. Complemented parities can leave a global phase, which stays in
+its original control-flow block. Each measurement, barrier or unsupported
+gate ends the region. The compiler tracks wires touched in each region.
+`max_phase_work` bounds parity analysis across blocks and passes.
+`result.optimization.folded_phases` counts merged phase gates. Logical guard
+folding tracks explicit assignments and invalidates known values on measurement.
+
+The affine analysis follows phase folding in
+[Amy and Lunderville, POPL (2025)](https://doi.org/10.1145/3704873).
+OpenQML applies it within straight-line regions of each lowered block.
+
 ## Dynamic control and compilation reuse
 
 | Source feature | Lowering and semantic contract |

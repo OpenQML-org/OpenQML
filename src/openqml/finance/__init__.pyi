@@ -1,4 +1,5 @@
 from . import barrier as barrier
+from . import entropic as entropic
 from . import tail as tail
 from .allocation import AllocationPlan as AllocationPlan
 from .allocation import AllocationResult as AllocationResult
@@ -7,6 +8,9 @@ from .api import price as price
 from .barrier import BarrierOption as BarrierOption
 from .budget import ExpectileBudgetResult as ExpectileBudgetResult
 from .budget import expectile_budget_projection as expectile_budget_projection
+from .entropic import EntropicAttribution as EntropicAttribution
+from .entropic import EntropicRiskResult as EntropicRiskResult
+from .entropic import entropic_value_at_risk as entropic_value_at_risk
 from .execution_risk import ExecutionRiskResult as ExecutionRiskResult
 from .execution_risk import execution_risk_projection as execution_risk_projection
 from .expectiles import expectile as expectile

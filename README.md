@@ -20,7 +20,8 @@ provider submission and reuse their linearization during backward.
 `LindbladPlan` and native PyTorch/Flax `LindbladLayer` learn continuous-time
 coherent and dissipative dynamics. Exact local CPTP maps preserve density
 constraints, while explicit discretization and generator-uncertainty bounds
-quantify the modeled readout error.
+quantify the modeled readout error. Sparse Pauli transfer layers also train
+standard local noise probabilities directly from batched readouts.
 
 ## Quantum–classical hybrid quantitative research
 
@@ -36,7 +37,8 @@ market impact while enforcing CVaR or expectile budgets.
 path probabilities without constructing a dense horizon KKT matrix.
 `TailAllocationPlan` jointly optimizes path CVaR, Wasserstein robustness and
 multi-period rebalancing with implicit first and higher derivatives.
-`ScenarioPlan.tail_decision` connects this optimizer to learned Born probabilities.
+`ScenarioPlan.tail_decision` connects this optimizer to learned Born probabilities. EVaR execution budgets
+and asset-level tail-risk contributions use the same scenario distributions.
 
 ## Cross-framework quantum programming
 
@@ -54,7 +56,8 @@ Finite loops with `break` and `continue` preserve measurement feedback, nested
 exit targets and entry-time branch selection under explicit expansion budgets.
 Bool/Uint variables and runtime assignments lower to explicit classical storage
 in IR v5. Shared snapshots preserve overlapping assignments; liveness analysis
-merges overwritten records without allocating additional qubits.
+merges overwritten records without allocating additional qubits. Optional
+affine phase folding combines diagonal rotations while preserving branch-local phase.
 
 Simulate physical noise with amplitude/phase damping, depolarization and custom Kraus channels. Correct independent readout errors or extrapolate measured noise scales with explicit conditioning and sampling-overhead limits. Caller-initialized Qiskit V2 primitives connect real hardware; see [execution limits and mitigation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md#physical-noise-and-error-mitigation).
 

@@ -5,6 +5,7 @@ from typing import NamedTuple
 from ..errors import ConvergenceError, ValidationError
 from ..ir.parameters import real
 from ._array import Ops, admission, rows
+from .entropic import entropic_value_at_risk
 from .expectiles import _expectile_root
 from .risk import expected_shortfall
 from .transport import _metric_values, transport_dual_norm
@@ -56,7 +57,7 @@ def execution_risk_projection(
     metric_iterations=128,
     metric_tolerance=1e-6,
 ):
-    """Maximal cost-funded cash-ray scale meeting a CVaR or expectile budget.
+    """Maximal cost-funded cash-ray scale meeting a CVaR, EVaR or expectile budget.
 
     Proposal/previous positions are fractions of pre-trade NAV. Costs use
     sum(fees*abs(trades)+impact*trades**2) in the same units. Returned positions,
@@ -64,11 +65,11 @@ def execution_risk_projection(
     by SelfFinancingPlan; they differ from pre-trade positions when costs>0.
     Liquidation to cash must itself be feasible. No market order is submitted.
     """
-    if not isinstance(risk_measure, str) or risk_measure not in {"cvar", "expectile"}:
-        raise ValidationError("risk_measure must be cvar or expectile.")
+    if not isinstance(risk_measure, str) or risk_measure not in {"cvar", "expectile", "evar"}:
+        raise ValidationError("risk_measure must be cvar, evar or expectile.")
     confidence = real(confidence)
     if not (0.5 if risk_measure == "expectile" else 0) <= confidence < 1:
-        raise ValidationError("Use a valid CVaR confidence or coherent expectile level.")
+        raise ValidationError("Use a valid tail confidence or coherent expectile level.")
     ops = Ops(
         weights,
         scenarios,
@@ -119,13 +120,19 @@ def execution_risk_projection(
         cash_rate, cash_rate >= -1, "Arithmetic cash returns must be at least -1."
     )
     p = ops.probabilities(probabilities, r.shape[-2])
-    dual = transport_dual_norm(
-        w,
-        transport_metric,
-        max_memory_mb=max_memory_mb,
-        cg_iterations=metric_iterations,
-        tolerance=metric_tolerance,
-    )
+    if risk_measure == "evar":
+        if transport_metric is not None:
+            raise ValidationError("Finite-support EVaR requires transport_metric=None.")
+        rad = ops.check(rad, rad == 0, "Finite-support EVaR requires Wasserstein radius zero.")
+        dual = ops.array(0)
+    else:
+        dual = transport_dual_norm(
+            w,
+            transport_metric,
+            max_memory_mb=max_memory_mb,
+            cg_iterations=metric_iterations,
+            tolerance=metric_tolerance,
+        )
     prefix = ops.broadcast_shape(
         shape[:-1], r.shape[:-2], p.shape[:-1], bound.shape, rad.shape, cash_rate.shape, dual.shape
     )
@@ -139,6 +146,11 @@ def execution_risk_projection(
     if risk_measure == "expectile":
         nominal = _expectile_root(losses, confidence, p, 0, max_memory_mb)
         robust = _expectile_root(losses, confidence, p, rad * dual, max_memory_mb)
+    elif risk_measure == "evar":
+        nominal = entropic_value_at_risk(
+            losses, confidence=confidence, probabilities=p, max_memory_mb=max_memory_mb
+        ).value
+        robust = nominal + rad
     else:
         nominal = expected_shortfall(losses, confidence=confidence, probabilities=p)
         robust = nominal + rad * dual / (1 - confidence)

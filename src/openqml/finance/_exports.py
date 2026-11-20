@@ -1,6 +1,9 @@
 """Lazy financial API locations."""
 
 EXPORTS = {
+    "EntropicAttribution": (".entropic", "EntropicAttribution"),
+    "EntropicRiskResult": (".entropic", "EntropicRiskResult"),
+    "entropic_value_at_risk": (".entropic", "entropic_value_at_risk"),
     "TailAllocationPlan": (".tail", "TailAllocationPlan"),
     "TailAllocationResult": (".tail", "TailAllocationResult"),
     "MultiPeriodPlan": (".multiperiod", "MultiPeriodPlan"),
@@ -54,6 +57,9 @@ EXPORTS = {
 }
 
 PUBLIC = [
+    "EntropicAttribution",
+    "EntropicRiskResult",
+    "entropic_value_at_risk",
     "TailAllocationPlan",
     "TailAllocationResult",
     "MultiPeriodPlan",
@@ -107,6 +113,7 @@ PUBLIC = [
 ]
 
 MODULES = {
+    "entropic": ".entropic",
     "tail": ".tail",
     "multiperiod": ".multiperiod",
     "scenario_tree": ".scenario_tree",

@@ -248,6 +248,8 @@ def prepare_layer(circuit, inputs, weights, observables, *, optimize, optimizati
             "max_passes",
             "pauli_fusion",
             "max_pauli_work",
+            "phase_folding",
+            "max_phase_work",
         }:
             raise ValidationError("Unknown layer optimization option.")
         report = optimize_circuit(circuit, **options)

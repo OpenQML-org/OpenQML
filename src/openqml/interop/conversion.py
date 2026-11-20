@@ -542,7 +542,15 @@ def plan_conversion(
         raise ValidationError("optimization_options must be a mapping of pass settings.") from exc
     if optimization_options and not optimize:
         raise ValidationError("optimization_options requires optimize=True.")
-    if set(optimization_options) - {"max_operations", "max_depth", "max_passes"}:
+    if set(optimization_options) - {
+        "max_operations",
+        "max_depth",
+        "max_passes",
+        "pauli_fusion",
+        "max_pauli_work",
+        "phase_folding",
+        "max_phase_work",
+    }:
         raise ValidationError("Unknown optimization option.")
 
     if isinstance(value, QuantumProgram):

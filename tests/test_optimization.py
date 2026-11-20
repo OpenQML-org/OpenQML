@@ -402,3 +402,90 @@ def test_angle_budgets_do_not_fall_back_to_sdk(limit, monkeypatch):
     source = "OPENQASM 3; input float " + symbol + "; qubit q; ry(" + angle + ") q;"
     with pytest.raises(ConversionError, match="EXPRESSION_LIMIT"):
         convert(source, source="openqasm3", target="ir")
+
+
+def test_affine_phase_folding_on_complemented_parities_preserves_full_matrix():
+    from openqml import ResourceError
+    from openqml.simulator import _evolve_unitary, _TensorOps
+
+    a, b = Parameter("a"), Parameter("b")
+    circuit = (
+        Circuit(3)
+        .rzz(a, 0, 1)
+        .cx(0, 1)
+        .x(1)
+        .p(b, 1)
+        .swap(1, 2)
+        .rz(a * b, 2)
+        .cp(0.72, 0, 2)
+        .t(2)
+        .swap(1, 2)
+        .x(1)
+        .cx(0, 1)
+        .with_global_phase(a / 7)
+    )
+    report = optimize(circuit, phase_folding=True)
+    assert report.folded_phases == 3
+    assert report.after.gates < report.before.gates
+    for a_value, b_value in ((0.31, -0.55), (2 * np.pi, 1.1)):
+        bound = {"a": a_value, "b": b_value}
+        matrices = []
+        for body in (circuit, report.circuit):
+            program = body.bind(bound)
+            matrices.append(
+                _evolve_unitary(
+                    np.eye(8, dtype=complex), program.operations, {}, 3, _TensorOps(), None
+                )
+                * np.exp(1j * program.global_phase.constant)
+            )
+        np.testing.assert_allclose(*matrices, atol=2e-14)
+    protected = Circuit(1).p(a, 0).barrier().p(-a, 0).h(0).rz(b, 0)
+    assert optimize(protected, phase_folding=True).folded_phases == 0
+    with pytest.raises(ResourceError, match="max_phase_work"):
+        optimize(circuit, phase_folding=True, max_phase_work=2)
+
+
+def test_phase_folding_and_store_facts_follow_each_atomic_branch():
+    cond = ClassicalCondition((0,), 1)
+    known = Circuit(1).classical_set(0, 1).if_else(cond, Circuit(1).x(0))
+    result = convert(known, target="ir", optimize=True)
+    assert_equivalent(known, result.value)
+    assert result.optimization.folded_conditionals == 1
+    a = Parameter("a")
+    dynamic = (
+        Circuit(2)
+        .h(0)
+        .measure(0, 0)
+        .if_else(
+            cond,
+            Circuit(2).classical_set(0, 0).p(a, 1).x(1).p(a, 1),
+            Circuit(2).classical_set(0, 1).x(0),
+        )
+        .if_else(cond, Circuit(2).x(1), Circuit(2).h(0))
+    )
+    result = convert(
+        dynamic, target="openqasm3", optimize=True, optimization_options={"phase_folding": True}
+    )
+    imported = convert(result.value, source="openqasm3", target="ir").value
+    assert result.optimization.folded_phases == 1
+    assert_equivalent(dynamic, imported, {"a": 0.4})
+
+
+@pytest.mark.parametrize("native", ["qiskit", "cirq"])
+def test_native_phase_folding_conversion_with_scoped_phase(native):
+    pytest.importorskip(native)
+    a = Parameter("a")
+    c = Circuit(2).h(0).rzz(a, 0, 1).cx(0, 1).rz(a, 1).cx(0, 1)
+    source = convert(c, target=native).value
+    result = convert(
+        source,
+        source=native,
+        target="openqasm3",
+        optimize=True,
+        optimization_options={"phase_folding": True},
+    )
+    assert result.optimization.folded_phases == 1
+    restored = convert(result.value, source="openqasm3", target="ir").value
+    np.testing.assert_allclose(
+        statevector(restored, {"a": 0.28}), statevector(c, {"a": 0.28}), atol=2e-13
+    )

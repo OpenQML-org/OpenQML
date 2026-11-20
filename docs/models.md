@@ -185,6 +185,18 @@ Compilation and batch memory have explicit limits. Exponentially growing
 frontiers are rejected, never silently truncated. QPU routes retain source
 circuits and their numerical gradient contract.
 
+The same engine accepts bit flip, phase flip, depolarization, phase damping
+and amplitude damping with differentiable probabilities. Use
+`QuantumLayer.from_spec(spec, execution_method="pauli-transfer", backend="torch")`
+or the native JAX layer. Reset and measurement with discarded outcomes use
+exact local adjoints. For amplitude damping, a Z term becomes
+`(1-p) Z + p I` on that wire. All declared channel probabilities must evaluate
+in [0, 1], including on wires outside the readout. Transverse damping
+derivatives can be singular at complete damping. Classical feedback and custom
+Kraus data use the density engine. The method follows local-noise Pauli
+propagation and shares sparse transfers across readouts.
+[Angrisani et al., PRX Quantum (2026)](https://doi.org/10.1103/fb28-wlv2).
+
 Numeric bridge forwards and shifted pullbacks merge identical rows only when the
 backend declares `deterministic_expectations=True`. Gradients preserve distinct
 input cotangents and accumulate shared weights. Reuse is bounded to each call;

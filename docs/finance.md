@@ -22,6 +22,35 @@ data, broker connection or extra core dependency is installed.
 | Discrete asset selection | `PortfolioSelection(...).problem` | Equal-weight fixed-cardinality financial QUBO |
 | Coherent financial expectations | `PayoffOraclePlan` and `AmplitudeEstimationPlan` | Signed bounded payoffs, control variates and finite-shot intervals |
 
+## Entropic tail risk and asset contributions
+
+`finance.entropic_value_at_risk(losses, probabilities=p, confidence=c)` returns
+the worst expected loss over scenario distributions with
+`KL(q || p) <= -log(1-c)`, the maximizing probabilities in input order, and
+their relative entropy in nats. Losses and masses broadcast on leading axes.
+A zero-mass atom stays outside the support. At confidence zero the value is
+the nominal mean. If the KL budget allows concentration on the largest loss,
+tied maxima share probability in proportion to their nominal masses.
+
+`ScenarioPlan.entropic_attribution(p, weights, step=None, confidence=c)`
+reports each asset's marginal loss and Euler contribution under the stressed
+distribution. Contributions sum to portfolio EVaR. Deviation contributions
+sum to EVaR minus nominal expected loss. Multi-period paths use cumulative
+buy-and-hold returns, or a single period when `step` is supplied. This is the
+finite-scenario attribution for supplied assets and Born weights. The EVaR
+portfolio formulation and recent work on EVaR-deviation contributions are
+described by [Ahmadi-Javid and Fallah-Tafti, EJOR (2019)](https://doi.org/10.1016/j.ejor.2019.02.007)
+and [Choi, preprint (2026)](https://arxiv.org/abs/2609.11905).
+
+Use `risk_measure="evar"` in `ScenarioPlan.execution_decision`,
+`execution_loss`, or a scenario tree's `rollout` and `nested_risk`.
+Execution budgets include cash return, fees and quadratic impact. Set the
+Wasserstein radius to zero and leave the transport metric unset for this
+finite-support measure. A tree uses the KL budget at each conditional node.
+The scalar solve checks its entropy residual. Torch and JAX differentiate its
+interior optimality equation, with working storage linear in scenario count.
+
+
 ## Joint path-tail allocation
 
 `TailAllocationPlan.solve(scenarios, probabilities=..., caps=..., budget=...,
