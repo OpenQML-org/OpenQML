@@ -10,7 +10,8 @@
   fusion. `sim/_reversible.py` adds on-device inverse-state reverse products
   for batched PyTorch and JAX circuits, nonlinear angles and global phase.
 - `sim/_mps.py` routes nonadjacent gates, tracks logical SWAPs and supports
-  canonical Schmidt truncation with reported per-observable bounds. Exact
+  canonical Schmidt truncation through `openqml.sim.MPSBackend`, with
+  per-observable truncation bounds. Exact
   readouts retain full singular columns. `finance.price` propagates the
   truncation bound to discounted direct-oracle payoff intervals.
 - `runtime/environment.py` reports the optional kernel compiler and preserves

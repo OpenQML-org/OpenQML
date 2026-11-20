@@ -204,8 +204,6 @@ from .sim import resources as resources
 from .sim import shadows as shadows
 from .sim import sparse_pauli as sparse_pauli
 from .sim._cuda import CUDABackend as CUDABackend
-from .sim._mps import MPSBackend as MPSBackend
-from .sim._mps import MPSReadout as MPSReadout
 from .sim.adaptive import AdaptivePlan as AdaptivePlan
 from .sim.adaptive import ExecutionCandidate as ExecutionCandidate
 from .sim.adaptive import plan_execution as plan_execution

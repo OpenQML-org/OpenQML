@@ -107,7 +107,7 @@ def test_routed_mps_preserves_asymmetric_readouts_and_both_operand_orders():
     c = oq.Circuit(6).h(4).ry(0.4, 0).cx(4, 0).swap(0, 3).unitary(matrix, 5, 1).cy(1, 5).swap(5, 2)
     words = [oq.PauliString(s) for s in ("XIZIYI", "IIIIZI", "IZIIII", "IIZIII", "ZZZZZZ")]
     exact = oq.expectations(c, words, backend="numpy")
-    report = oq.MPSBackend().readout(c, words)
+    report = oq.sim.MPSBackend().readout(c, words)
     assert report.routing_swaps > 0 and report.trace_distance_bound == 0
     np.testing.assert_allclose(report.values, exact, atol=1e-13)
     np.testing.assert_allclose(oq.expectations(c, words, backend="mps"), exact, atol=1e-13)
@@ -123,7 +123,7 @@ def test_schmidt_certificate_for_known_truncation_and_readout_norm():
             (oq.PauliString("XIX", coefficient=0.75), oq.PauliString("III", coefficient=4))
         ),
     )
-    engine = oq.MPSBackend(max_bond_dimension=1, max_discarded_weight=0.0)
+    engine = oq.sim.MPSBackend(max_bond_dimension=1, max_discarded_weight=0.0)
     assert not engine.capabilities.exact_expectations
     report = engine.readout(circuit, obs)
     assert report.trace_distance_bound == pytest.approx(math.sin(angle))
@@ -131,7 +131,7 @@ def test_schmidt_certificate_for_known_truncation_and_readout_norm():
     exact = oq.expectations(circuit, obs, backend="numpy")
     assert np.all(np.abs(report.values - exact) <= np.asarray(report.absolute_error_bounds) + 1e-13)
     with pytest.raises(oq.ResourceError):
-        oq.MPSBackend(max_bond_dimension=1).readout(circuit, obs)
+        oq.sim.MPSBackend(max_bond_dimension=1).readout(circuit, obs)
 
 
 def test_routed_mps_handles_wide_register_under_budget_and_admits_before_svd(monkeypatch):
@@ -140,14 +140,14 @@ def test_routed_mps_handles_wide_register_under_budget_and_admits_before_svd(mon
     width = 96
     c = oq.Circuit(width).ry(0.73, 0).cx(0, width - 1).swap(1, width - 1)
     obs = [oq.PauliString("I" + "Z" + "I" * (width - 2))]
-    report = oq.MPSBackend().readout(c, obs, options=oq.ExecutionOptions(max_memory_mb=1))
+    report = oq.sim.MPSBackend().readout(c, obs, options=oq.ExecutionOptions(max_memory_mb=1))
     assert report.values[0] == pytest.approx(np.cos(0.73))
     assert report.routing_swaps == width - 2
     monkeypatch.setattr(_mps, "_two_site", lambda *args: pytest.fail("unadmitted SVD"))
     with pytest.raises(oq.ResourceError):
-        oq.MPSBackend(max_work=96).readout(c, obs)
+        oq.sim.MPSBackend(max_work=96).readout(c, obs)
     with pytest.raises(oq.ResourceError):
-        oq.MPSBackend().readout(c, obs, options=oq.ExecutionOptions(max_memory_mb=0.001))
+        oq.sim.MPSBackend().readout(c, obs, options=oq.ExecutionOptions(max_memory_mb=0.001))
 
 
 def test_routed_payoff_pricing_propagates_truncation_to_discounted_units():
@@ -157,7 +157,7 @@ def test_routed_payoff_pricing_propagates_truncation_to_discounted_units():
     actual = 0.95 * (-2 + 5 * np.sin(0.32) ** 2)
     exact = oq.finance.price(backend="mps", **kwargs)
     assert exact.value == pytest.approx(actual)
-    engine = oq.MPSBackend(max_bond_dimension=1, max_discarded_weight=0)
+    engine = oq.sim.MPSBackend(max_bond_dimension=1, max_discarded_weight=0)
     result = oq.finance.price(backend=engine, strict=False, **kwargs)
     assert result.interval[0] <= actual <= result.interval[1]
     assert result.interval[1] - result.value == pytest.approx(0.95 * 5 * np.sin(0.32))
@@ -187,7 +187,7 @@ def test_imported_circuit_runs_through_dense_and_routed_readouts(framework):
     ir = oq.as_circuit(circuit, framework=framework)
     obs = tuple(oq.PauliString("I" * i + "Z" + "I" * (3 - i)) for i in range(4))
     reference = oq.expectations(ir, obs, backend="numpy", fusion=False)
-    np.testing.assert_allclose(oq.MPSBackend().readout(ir, obs).values, reference, atol=1e-13)
+    np.testing.assert_allclose(oq.sim.MPSBackend().readout(ir, obs).values, reference, atol=1e-13)
     np.testing.assert_allclose(
         sorted(reference), sorted([1, 1, np.cos(0.41), np.cos(0.41)]), atol=1e-13
     )

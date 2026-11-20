@@ -1,8 +1,16 @@
 """Sim operations over the shared OpenQML representation and compute service."""
 
+from typing import TYPE_CHECKING
+
 from .._lazy import resolve as _resolve
 
+if TYPE_CHECKING:
+    from ._mps import MPSBackend as MPSBackend
+    from ._mps import MPSReadout as MPSReadout
+
 _EXPORTS = {
+    "MPSBackend": ("._mps", "MPSBackend"),
+    "MPSReadout": ("._mps", "MPSReadout"),
     "statevector": (".dense", "statevector"),
     "expectation": (".dense", "expectation"),
     "expectations": (".dense", "expectations"),

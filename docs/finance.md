@@ -628,7 +628,7 @@ reduction or quasi-Monte-Carlo execution.
 
 With a direct marked-qubit oracle, `finance.price(..., backend="mps")`
 can compute the payoff through a single exact Pauli expectation. Supplying
-`MPSBackend(max_discarded_weight=..., max_bond_dimension=...)` in automatic
+`openqml.sim.MPSBackend(max_discarded_weight=..., max_bond_dimension=...)` in automatic
 pricing mode returns an interval in discounted payoff units. If the marked
 probability estimate is $p$ and the trace-distance bound is $D$, the
 probability lies between $\max(0,p-D)$ and $\min(1,p+D)$. The pricing

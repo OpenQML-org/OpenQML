@@ -127,8 +127,9 @@ module. Compatibility does not create a second set of registries or classes.
 
 The public package covers hybrid AI, quantitative research and circuit
 interoperability. RL/PPO and standalone tensor-network layers, compression and
-plan APIs have been removed. Tensor contraction, compressed projections and MPS
-execution remain private implementations of the shared compute service.
+plan APIs have been removed. Tensor contraction and compressed projections use
+the shared compute service. `openqml.sim.MPSBackend` configures numeric
+simulator readouts and exposes their Schmidt truncation bounds.
 Imports and checkpoints belonging to the removed standalone models are no
 longer supported. The optional contraction-search extra is `openqml[compute]`.
 

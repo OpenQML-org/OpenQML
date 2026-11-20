@@ -73,7 +73,7 @@ floating-point roundoff with depth.
 
 ## Matrix-product readouts
 
-`MPSBackend().readout(circuit, observables)` evaluates bound one- and two-wire
+`openqml.sim.MPSBackend().readout(circuit, observables)` evaluates bound one- and two-wire
 unitaries from the zero product state. The default retains all singular
 columns. Remote gates route adjacent sites and carry the resulting permutation
 to subsequent operations and Pauli readouts. A circuit SWAP updates the
@@ -88,7 +88,7 @@ split, including routing operations. If those weights are $w_j$, the
 trace-distance bound is $D=\sin(\min(\pi/2,\sum_j\arcsin\sqrt{w_j}))$.
 For a Pauli expansion of a Hermitian observable the absolute error is bounded
 by twice $D$ times the sum of absolute coefficients of nonidentity terms.
-`MPSReadout.absolute_error_bounds` reports these truncation-only bounds per
+`openqml.sim.MPSReadout.absolute_error_bounds` reports these truncation-only bounds per
 observable. Floating-point roundoff is additional. [Zhou, Stoudenmire and Waintal, Physical Review X](https://doi.org/10.1103/PhysRevX.10.041038)
 
 ## CPU statevector kernels
