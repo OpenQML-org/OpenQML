@@ -306,24 +306,52 @@ def test_physical_cuda_factor_allocation_and_implicit_gradient():
     _report(torch, "cuda-allocation", factor_allocation=True, implicit_gradient=True)
 
 
-def test_physical_cuda_native_aer_engine():
-    if os.environ.get("OPENQML_REQUIRE_AER_GPU") != "1":
-        pytest.skip("Native Aer GPU validation is explicitly enabled on the hardware runner")
+def test_physical_cuda_openqml_kernels_and_reversible_training(monkeypatch):
     torch = _physical_cuda()
-    engine = oq.AerBackend(device="GPU", runtime_parameter_binding=True)
-    assert engine.is_available(), "The hardware runner must install qiskit-aer-gpu."
-    x = oq.Parameter("x")
-    circuit = oq.Circuit(5).h(0).ry(x, 4).cx(4, 2).rz(x / 3, 2)
-    obs, rows = (oq.PauliString("IIIIZ"),), [{"x": 0.2}, {"x": -0.7}]
-    np.testing.assert_allclose(
-        oq.expectations_batch(circuit, obs, rows, backend=engine),
-        oq.expectations_batch(circuit, obs, rows, backend="numpy"),
-        atol=2e-12,
-    )
-    from openqml.interop.adapters.qiskit import to_qiskit
+    from openqml.compute._contraction_program import ContractionKernel
+    from openqml.sim import _triton_kernels
+    from openqml.sim.dense import _TensorOps
 
-    native = to_qiskit(circuit.bind(rows[0]))
-    engine._add_readouts(native, obs)
-    result = engine._run([native], oq.ExecutionOptions())
-    assert result.results[0].metadata["device"] == "GPU"
-    _report(torch, "aer-native-gpu", native_metadata=result.results[0].metadata)
+    launches = {"gate": 0, "contraction": 0}
+
+    def observe(function, name):
+        def run(*args, **kwargs):
+            launches[name] += 1
+            return function(*args, **kwargs)
+
+        return run
+
+    for name in launches:
+        key = "launch_" + name
+        monkeypatch.setattr(_triton_kernels, key, observe(getattr(_triton_kernels, key), name))
+    x = oq.Parameter("x")
+    circuit = oq.Circuit(7).h(0).rx(x, 6).cx(6, 1).ccx(1, 0, 3).ry(x / 2, 3)
+    expected = oq.statevector(circuit, {"x": 0.741}, backend="numpy")
+    result = oq.execute(circuit, {"x": 0.741}, backend="gpu")
+    np.testing.assert_allclose(result.statevector, expected, atol=1e-12)
+    obs = oq.PauliString("IIIZIII")
+    for dtype in (torch.float32, torch.float64):
+
+        def training(device, dtype=dtype):
+            value = torch.tensor([0.32, -0.48], dtype=dtype, device=device, requires_grad=True)
+            out = oq.expectation(
+                circuit, obs, {"x": value}, backend="torch", checkpoint_interval="adjoint"
+            )
+            return out.detach(), torch.autograd.grad(out.sum(), value)[0]
+
+        gpu, cpu = training("cuda"), training("cpu")
+        for a, b in zip(gpu, cpu, strict=True):
+            torch.testing.assert_close(a.cpu(), b)
+        complex_dtype = torch.complex64 if dtype == torch.float32 else torch.complex128
+        a = torch.randn((2,) * 5, dtype=complex_dtype, device="cuda", requires_grad=True).conj()
+        b = torch.randn((2,) * 5, dtype=complex_dtype, device="cuda", requires_grad=True)
+        plan = ContractionKernel.compile("akbcd", "efgkh", "k")
+        fused = plan.apply(a, b, _TensorOps("torch", a.real))
+        ref = torch.einsum("akbcd,efgkh->abcdefgh", a, b)
+        torch.testing.assert_close(fused, ref)
+        torch.testing.assert_close(
+            torch.autograd.grad(fused.real.sum(), (a, b)),
+            torch.autograd.grad(ref.real.sum(), (a, b)),
+        )
+    assert all(launches.values())
+    _report(torch, "openqml-native-kernels", launches=launches, reversible_gradient=True)

@@ -626,6 +626,15 @@ over known probabilities is O(S). Compare complete workloads including table
 loading, transpilation, error correction, queue time and classical variance
 reduction or quasi-Monte-Carlo execution.
 
+With a direct marked-qubit oracle, `finance.price(..., backend="mps")`
+can compute the payoff through a single exact Pauli expectation. Supplying
+`MPSBackend(max_discarded_weight=..., max_bond_dimension=...)` in automatic
+pricing mode returns an interval in discounted payoff units. If the marked
+probability estimate is $p$ and the trace-distance bound is $D$, the
+probability lies between $\max(0,p-D)$ and $\min(1,p+D)$. The pricing
+interval covers Schmidt truncation. Strict pricing enforces the requested
+absolute error against both interval endpoints.
+
 ## Execution-cost-aware scenario decisions
 
 `execution_risk_projection` finds the largest feasible scale `s` of a funded,

@@ -106,6 +106,52 @@ def _group(operations, qubits, *, fold_constants=True):
     return GateGroup(qubits, operations, tuple(pieces), parameters)
 
 
+def _order_window(gates):
+    """Choose ready gates sharing the current local operator, preserving wire order."""
+    if len(gates) < 3 or len({q for op in gates for q in op.qubits}) <= 2:
+        return gates
+    previous, successors, indegree, ready = {}, [[] for _ in gates], [], set()
+    supports = [frozenset(op.qubits) for op in gates]
+    for i, support in enumerate(supports):
+        parents = {previous[q] for q in support if q in previous}
+        indegree.append(len(parents))
+        if not parents:
+            ready.add(i)
+        for parent in parents:
+            successors[parent].append(i)
+        for q in support:
+            previous[q] = i
+    ordered, active = [], frozenset()
+    while ready:
+        # Prefer no expansion, then one additional wire. Source order resolves ties.
+        index = min(ready, key=lambda i: (len(active | supports[i]), i)) if active else min(ready)
+        if len(active | supports[index]) > 2:
+            index, active = min(ready), frozenset()
+        active = active | supports[index]
+        ordered.append(gates[index])
+        ready.remove(index)
+        for child in successors[index]:
+            indegree[child] -= 1
+            if not indegree[child]:
+                ready.add(child)
+    return ordered
+
+
+def _dependency_order(operations):
+    window = []
+    for operation in operations:
+        if operation.name == "barrier" or len(operation.qubits) > 2:
+            yield from _order_window(window)
+            window.clear()
+            yield operation
+        else:
+            window.append(operation)
+            if len(window) == 64:
+                yield from _order_window(window)
+                window.clear()
+    yield from _order_window(window)
+
+
 def _program(operations, *, fold_constants=True):
     groups, pending, wires = [], [], []
 
@@ -115,7 +161,7 @@ def _program(operations, *, fold_constants=True):
             groups.append(_group(pending, sorted(wires), fold_constants=fold_constants))
             pending, wires = [], []
 
-    for operation in operations:
+    for operation in _dependency_order(operations) if fold_constants else operations:
         if operation.name == "barrier":
             flush()
             continue

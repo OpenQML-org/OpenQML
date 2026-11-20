@@ -300,6 +300,16 @@ def _apply_numpy(state, matrix, qubits, num_qubits):
 
 def _apply_matrix(state, matrix, qubits, num_qubits, ops):
     """Apply only a local 2**k matrix, without constructing a 2**n square unitary."""
+    if ops.backend == "torch" and state.is_cuda and len(qubits) <= 3 and not _torch_compiling():
+        from ._device_ops import apply_device_gate, supports_device_kernel
+
+        if supports_device_kernel(state, matrix, ops.xp):
+            ops.kernel._workspace((state, matrix), state.shape)
+            return apply_device_gate(state, matrix, qubits, num_qubits, ops.xp)
+    return _apply_matrix_portable(state, matrix, qubits, num_qubits, ops)
+
+
+def _apply_matrix_portable(state, matrix, qubits, num_qubits, ops):
     if ops.backend == "numpy" and (
         len(qubits) <= 2 or (state.size >= 65_536 and tuple(qubits) != tuple(range(len(qubits))))
     ):
@@ -337,7 +347,8 @@ def _resource_check(circuit, max_qubits, max_memory_mb, batch_size=1):
 def _checkpoint_interval(circuit, backend, value):
     if value is None:
         return None
-    value = integer(value, "checkpoint_interval", 1)
+    if not (isinstance(value, str) and value == "adjoint"):
+        value = integer(value, "checkpoint_interval", 1)
     if not (isinstance(backend, str) and backend in {"torch", "jax"}):
         raise ValidationError("checkpoint_interval requires a native torch or jax backend.")
     if circuit.has_effects:
@@ -408,6 +419,12 @@ def _evolve_unitary(
     fusion=True,
     max_memory_mb=256,
 ):
+    if checkpoint_interval == "adjoint":
+        from ._reversible import evolve_reversible
+
+        return evolve_reversible(
+            state, operations, bindings, num_qubits, ops, fusion, max_memory_mb
+        )
     if checkpoint_interval is None:
         if fusion and (ops.backend == "numpy" or num_qubits >= 3):
             return _evolve_fused(state, operations, bindings, num_qubits, ops, max_memory_mb)
@@ -502,7 +519,7 @@ def statevector(
     The torch and jax paths use native tensor operations throughout, allowing
     differentiation with respect to every bound rotation and the global phase.
     checkpoint_interval recomputes native unitary gate segments during backward
-    to retain fewer activations; it does not change the circuit or state.
+    to retain fewer activations. Set it to "adjoint" to reconstruct states by inverse gates.
     """
     _require_circuit(circuit)
     if bindings is not None:
@@ -592,6 +609,12 @@ def statevector(
     except ValueError as exc:
         raise ValidationError("Parameter batch shapes cannot be broadcast together.") from exc
     _resource_check(circuit, max_qubits, max_memory_mb, math.prod(shape))
+    if checkpoint_interval == "adjoint":
+        from ..autodiff.adjoint import _check_adjoint
+
+        required = _check_adjoint(circuit, max_qubits, max_memory_mb)
+        if required * max(1, math.prod(shape)) > memory_budget(max_memory_mb):
+            raise ResourceError("Batched reversible adjoint exceeds max_memory_mb.")
     state = _initial_state(circuit.num_qubits, shape, ops)
     state = _evolve_unitary(
         state,

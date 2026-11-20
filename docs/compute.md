@@ -27,8 +27,11 @@ Forks, dataclass replacement, JSON and pickle retain their value semantics.
 Cache accounting visits shared expression nodes once, rather than expanding
 their logical trees. Deep parameter graphs do not trigger recursive counting.
 
-Local NumPy, Torch and JAX state evolution groups consecutive gates whose
-combined support fits one or two wires, up to 64 gates per group. Fixed matrix
+The eager fusion planner builds wire dependencies within windows of 64 gates.
+It selects ready gates that fit the current one- or two-wire operator and
+preserves the order of gates sharing a wire. Barriers and wider gates end a
+window. This lets interleaved, independent gate sequences share statevector
+traversals. Torch graph capture uses source-order grouping. Fixed matrix
 products are prepared once in the bounded metadata cache. Parameter-dependent
 products use native differentiable matrix operations on the selected device;
 cached plans contain no tensors or parameter values. This reduces full-state
@@ -45,9 +48,50 @@ back to original gates if its temporary matrices exceed the selected workspace.
 Checkpointed backward recomputes the same native fused segments; JVP, VJP,
 second derivatives and vectorization retain their framework semantics.
 `statevector(...,fusion=False)` selects unfused execution for every local
-backend. External providers keep their own optimization policies. See also
-NVIDIA's [gate-fusion execution model](https://docs.nvidia.com/cuda/cuquantum/latest/custatevec/overview/ex-svupdater.html);
-OpenQML's native fusion does not require cuQuantum.
+backend. External providers keep their own optimization policies.
+
+The gate dependency schedule draws on [Li, Wang and Fan, IEEE Transactions on Quantum Engineering (2026)](https://doi.org/10.1109/TQE.2026.3705783).
+
+## Reversible automatic differentiation
+
+`checkpoint_interval="adjoint"` selects inverse-gate reconstruction for pure
+statevectors, expectations and dense quantum layers. The first reverse pass
+reconstructs each input state with the conjugate-transposed gate. Contracting
+the incoming cotangent with that input gives the local matrix derivative.
+The framework differentiates the gate's parameter expression and accumulates
+reused symbols and broadcast axes. The global phase participates in complex
+state derivatives. Full-register activation storage is independent of circuit
+depth. Gate metadata, bindings, result tensors and framework workspaces also
+occupy memory. [Jones and Gacon](https://arxiv.org/abs/2009.02823)
+
+PyTorch eager backward runs the inverse sweep. Higher derivatives replay the
+framework graph, and forward AD, function transforms and Torch graph capture
+use ordinary native evolution. JAX supports the inverse sweep under `jit`,
+`vjp` and reverse-mode `grad`. Use the default mode or integer checkpoint
+intervals for JAX forward-mode products. Inverse reconstruction accumulates
+floating-point roundoff with depth.
+
+## Matrix-product readouts
+
+`MPSBackend().readout(circuit, observables)` evaluates bound one- and two-wire
+unitaries from the zero product state. The default retains all singular
+columns. Remote gates route adjacent sites and carry the resulting permutation
+to subsequent operations and Pauli readouts. A circuit SWAP updates the
+logical wire map directly. Memory and work admission include routing.
+
+Set `max_discarded_weight` to enable Schmidt truncation. A thin QR moves the
+orthogonality center to the active bond before splitting. Each split keeps
+enough leading values to meet the local relative discarded-weight target,
+subject to `max_bond_dimension`. A tighter bond cap can discard more than
+the target. The reported bound uses the actual discarded weight at every
+split, including routing operations. If those weights are $w_j$, the
+trace-distance bound is $D=\sin(\min(\pi/2,\sum_j\arcsin\sqrt{w_j}))$.
+For a Pauli expansion of a Hermitian observable the absolute error is bounded
+by twice $D$ times the sum of absolute coefficients of nonidentity terms.
+`MPSReadout.absolute_error_bounds` reports these truncation-only bounds per
+observable. Floating-point roundoff is additional. [Zhou, Stoudenmire and Waintal, Physical Review X](https://doi.org/10.1103/PhysRevX.10.041038)
+
+## CPU statevector kernels
 
 One-wire and adjacent two-wire applications use tensor views and batched GEMM.
 Separated pairs use four basic input views and one reusable quarter-state

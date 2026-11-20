@@ -1,5 +1,21 @@
 # Changes
 
+## 0.33.0
+
+- `sim/_triton_kernels.py` implements CUDA statevector updates on one to
+  three ordered wires and direct complex contractions over short binary bonds.
+  The optional `gpu` extra installs the compiler. The Qiskit simulator
+  adapter retains its CPU methods.
+- `sim/_fusion.py` schedules ready gates by wire dependencies before local
+  fusion. `sim/_reversible.py` adds on-device inverse-state reverse products
+  for batched PyTorch and JAX circuits, nonlinear angles and global phase.
+- `sim/_mps.py` routes nonadjacent gates, tracks logical SWAPs and supports
+  canonical Schmidt truncation with reported per-observable bounds. Exact
+  readouts retain full singular columns. `finance.price` propagates the
+  truncation bound to discounted direct-oracle payoff intervals.
+- `runtime/environment.py` reports the optional kernel compiler and preserves
+  detection of the CPU simulator. GPU selection uses `backend="gpu"`.
+
 ## 0.32.0
 
 - `sim/pauli_transfer.py` compiles five local noise channels, reset and

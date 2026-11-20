@@ -23,7 +23,7 @@ _INTEGRATIONS = {
     "optax": "optax",
     "qiskit": "qiskit",
     "qiskit-aer": "qiskit_aer",
-    "qiskit-aer-gpu": "qiskit_aer",
+    "triton": "triton",
     "pennylane": "pennylane",
     "cirq-core": "cirq",
     "openqasm3": "openqasm3",
@@ -99,6 +99,7 @@ def environment_report(*, check_imports=False, include_sizes=False, import_timeo
     allowed = {
         "all",
         "torch",
+        "gpu",
         "jax",
         "flax",
         "qiskit",

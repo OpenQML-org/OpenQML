@@ -6,6 +6,7 @@ from ..errors import MissingDependencyError
 
 INTEGRATION_EXTRAS = {
     "torch": "torch",
+    "triton": "gpu",
     "jax": "jax",
     "flax": "flax",
     "optax": "jax",

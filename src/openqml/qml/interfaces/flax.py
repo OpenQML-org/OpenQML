@@ -56,7 +56,7 @@ class QuantumLayer(LayerSpecMixin, nn.Module):
     max_memory_mb: float = 256
     backend: object = None
     batch_chunk_size: int | None = None
-    checkpoint_interval: int | None = None
+    checkpoint_interval: int | str | None = None
     gradient_chunk_size: int = 64
     max_branches: int = 256
     optimize: bool = False

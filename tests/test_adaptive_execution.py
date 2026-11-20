@@ -99,12 +99,12 @@ def test_adaptive_backend_routes_existing_numeric_and_gradient_apis():
     assert oq.get_backend("cpu").capabilities.deterministic_expectations
 
 
-def test_mps_admission_rejects_deep_and_nonlocal_inputs_without_execution(monkeypatch):
+def test_mps_admission_rejects_excessive_bonds_and_wide_gates_without_execution(monkeypatch):
     def fail(*a, **k):
         pytest.fail("An inadmissible circuit reached a simulator")
 
     monkeypatch.setattr(MPSBackend, "expectations_batch", fail)
-    for circuit in (nonclifford_chain(80, 50), oq.Circuit(80).ry(0.3, 0).cx(0, 79)):
+    for circuit in (nonclifford_chain(80, 50), oq.Circuit(80).ry(0.3, 0).ccx(0, 2, 79)):
         plan = oq.plan_execution(
             circuit, (oq.PauliString("Z" * 80),), method="mps", max_memory_mb=16
         )

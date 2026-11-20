@@ -1,0 +1,195 @@
+"""OpenQML CUDA statevector kernels. Import only after selecting a supported device."""
+
+import torch
+import triton
+import triton.language as tl
+
+
+@triton.jit
+def _apply_gate(
+    state,
+    gate,
+    output,
+    GROUPS: tl.constexpr,
+    GATE_STRIDE: tl.constexpr,
+    MASKS: tl.constexpr,
+    OFFSETS: tl.constexpr,
+    BLOCK: tl.constexpr,
+    BATCH_SHAPE: tl.constexpr = (),
+    MATRIX_STRIDES: tl.constexpr = (),
+):
+    # A lane owns every amplitude of one local subspace. Insert zero bits at
+    # target positions, then OR in the local basis bits in circuit wire order.
+    tile = tl.program_id(0).to(tl.int64)
+    tiles = tl.cdiv(GROUPS, BLOCK)
+    batch = tile // tiles
+    group = (tile % tiles) * BLOCK + tl.arange(0, BLOCK)
+    active = group < GROUPS
+    base = group
+    for bit in tl.static_range(len(MASKS)):
+        low = MASKS[bit] - 1
+        base = ((base & ~low) << 1) | (base & low)
+    dimension: tl.constexpr = len(OFFSETS)
+    start = batch * (GROUPS * dimension)
+    gate_start = batch * GATE_STRIDE
+    remainder = batch
+    for axis in tl.static_range(len(BATCH_SHAPE)):
+        gate_start += (remainder % BATCH_SHAPE[axis]) * MATRIX_STRIDES[axis]
+        remainder = remainder // BATCH_SHAPE[axis]
+    matrix = gate + 2 * gate_start
+    # Read each input amplitude once and reuse it across local output rows.
+    re = ()
+    im = ()
+    for col in tl.static_range(dimension):
+        index = 2 * (start + (base | OFFSETS[col]))
+        re += (tl.load(state + index, active, 0.0),)
+        im += (tl.load(state + index + 1, active, 0.0),)
+    for row in tl.static_range(dimension):
+        yr = tl.full((BLOCK,), 0, state.dtype.element_ty)
+        yi = tl.full((BLOCK,), 0, state.dtype.element_ty)
+        for col in tl.static_range(dimension):
+            element = matrix + 2 * (row * dimension + col)
+            mr, mi = tl.load(element), tl.load(element + 1)
+            yr += mr * re[col] - mi * im[col]
+            yi += mr * im[col] + mi * re[col]
+        index = 2 * (start + (base | OFFSETS[row]))
+        tl.store(output + index, yr, active)
+        tl.store(output + index + 1, yi, active)
+
+
+def launch_gate(state, matrix, qubits, width):
+    from contextlib import nullcontext
+
+    dimension = 1 << len(qubits)
+    groups = state.shape[-1] // dimension
+    masks = tuple(1 << (width - 1 - q) for q in qubits)
+    offsets = tuple(
+        sum(mask for j, mask in enumerate(reversed(masks)) if (local >> j) & 1)
+        for local in range(dimension)
+    )
+    output = torch.empty_like(state, memory_format=torch.contiguous_format)
+    if state.numel() == 0:
+        return output
+    matrix = matrix.resolve_conj().resolve_neg().contiguous()
+    batch_shape, matrix_strides = (), ()
+    stride = 0 if matrix.numel() == dimension**2 else dimension**2
+    if stride and matrix.numel() // stride != state.numel() // state.shape[-1]:
+        view = matrix.expand(state.shape[:-1] + (dimension, dimension))
+        batch_shape = tuple(reversed(view.shape[:-2]))
+        matrix_strides = tuple(reversed(view.stride()[:-2]))
+        stride = 0
+    block = 64
+    grid = (state.numel() // state.shape[-1] * triton.cdiv(groups, block),)
+    # The interpreter accepts host tensors. Production dispatch supplies CUDA tensors.
+    with torch.cuda.device(state.device) if state.is_cuda else nullcontext():
+        _apply_gate[grid](
+            torch.view_as_real(state.resolve_conj().resolve_neg().contiguous()),
+            torch.view_as_real(matrix),
+            torch.view_as_real(output),
+            groups,
+            stride,
+            tuple(sorted(masks)),
+            offsets,
+            block,
+            batch_shape,
+            matrix_strides,
+            num_warps=2,
+        )
+    return output
+
+
+@triton.jit
+def _contract(
+    left,
+    right,
+    output,
+    count,
+    BATCH: tl.constexpr,
+    LS: tl.constexpr,
+    RS: tl.constexpr,
+    FREE_L: tl.constexpr,
+    FREE_R: tl.constexpr,
+    SUM_L: tl.constexpr,
+    SUM_R: tl.constexpr,
+    CONJ_L: tl.constexpr,
+    CONJ_R: tl.constexpr,
+    BLOCK: tl.constexpr,
+):
+    index = tl.program_id(0).to(tl.int64) * BLOCK + tl.arange(0, BLOCK)
+    bits = index
+    a = tl.full((BLOCK,), 0, tl.int64)
+    b = tl.full((BLOCK,), 0, tl.int64)
+    for axis in tl.static_range(len(FREE_R)):
+        b += (bits & 1) * FREE_R[axis]
+        bits = bits >> 1
+    for axis in tl.static_range(len(FREE_L)):
+        a += (bits & 1) * FREE_L[axis]
+        bits = bits >> 1
+    for axis in tl.static_range(len(BATCH)):
+        digit = bits % BATCH[axis]
+        a += digit * LS[axis]
+        b += digit * RS[axis]
+        bits = bits // BATCH[axis]
+    yr = tl.full((BLOCK,), 0, left.dtype.element_ty)
+    yi = tl.full((BLOCK,), 0, left.dtype.element_ty)
+    for k in tl.static_range(len(SUM_L)):
+        lhs = left + 2 * (a + SUM_L[k])
+        rhs = right + 2 * (b + SUM_R[k])
+        ar, ai = tl.load(lhs, index < count, 0.0), tl.load(lhs + 1, index < count, 0.0)
+        br, bi = tl.load(rhs, index < count, 0.0), tl.load(rhs + 1, index < count, 0.0)
+        if CONJ_L:
+            ai = -ai
+        if CONJ_R:
+            bi = -bi
+        yr += ar * br - ai * bi
+        yi += ar * bi + ai * br
+    tl.store(output + 2 * index, yr, index < count)
+    tl.store(output + 2 * index + 1, yi, index < count)
+
+
+def launch_contraction(plan, left, right):
+    from contextlib import nullcontext
+
+    def strides(value, rank, axes):
+        n = value.ndim - rank
+        expanded = value.expand(batch + value.shape[n:])
+        return tuple(reversed(expanded.stride()[: len(batch)])), tuple(
+            value.stride(n + axis) for axis in axes
+        )
+
+    def offsets(stride):
+        return tuple(
+            sum(s for bit, s in enumerate(reversed(stride)) if (i >> bit) & 1)
+            for i in range(plan.k)
+        )
+
+    batch = torch.broadcast_shapes(
+        left.shape[: left.ndim - plan.left_rank], right.shape[: right.ndim - plan.right_rank]
+    )
+    left = left.resolve_neg()
+    right = right.resolve_neg()
+    ls, la = strides(left, plan.left_rank, plan.left_axes)
+    rs, ra = strides(right, plan.right_rank, plan.right_axes)
+    contracted = plan.k.bit_length() - 1
+    free_l = plan.left_rank - contracted
+    result = left.new_empty(batch + (2,) * plan.output_rank)
+    count, block = result.numel(), 128
+    if count:
+        with torch.cuda.device(left.device) if left.is_cuda else nullcontext():
+            _contract[(triton.cdiv(count, block),)](
+                torch.view_as_real(left.conj() if left.is_conj() else left),
+                torch.view_as_real(right.conj() if right.is_conj() else right),
+                torch.view_as_real(result),
+                count,
+                tuple(reversed(batch)),
+                ls,
+                rs,
+                tuple(reversed(la[:free_l])),
+                tuple(reversed(ra[contracted:])),
+                offsets(la[free_l:]),
+                offsets(ra[:contracted]),
+                left.is_conj(),
+                right.is_conj(),
+                block,
+            )
+    return result

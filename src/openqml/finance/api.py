@@ -218,6 +218,29 @@ def price(
     if scale == 0:
         value = discount * offset
         return PayoffEstimate(value, ((value, value),), 1.0, None)
+    if method == "auto" and payoff is None:
+        from ..sim._mps import MPSBackend
+
+        if isinstance(backend, MPSBackend) and backend.max_discarded_weight is not None:
+            from ..ir.observables import PauliString
+            from ..runtime.backends import ExecutionOptions
+
+            good, width = oracle.good_qubit, oracle.preparation.num_qubits
+            word = PauliString("I" * good + "Z" + "I" * (width - good - 1))
+            result = backend.readout(
+                oracle.preparation, (word,), options=ExecutionOptions(max_memory_mb=max_memory_mb)
+            )
+            p = min(1.0, max(0.0, (1 - result.values[0]) / 2))
+            distance = result.trace_distance_bound
+            lo, hi = max(0.0, p - distance), min(1.0, p + distance)
+            if strict and discount * scale * max(p - lo, hi - p) > error:
+                raise ResourceError("MPS pricing error exceeds the requested tolerance.")
+            return PayoffEstimate(
+                discount * (offset + scale * p),
+                ((discount * (offset + scale * lo), discount * (offset + scale * hi)),),
+                1.0,
+                None,
+            )
     if method != "quantum":
         exact = _exact_coherent(payoff, oracle, offset, scale, discount, backend, max_memory_mb)
         if exact is not None:

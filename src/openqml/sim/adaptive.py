@@ -369,8 +369,8 @@ def plan_execution(
 
             mps_profile, reason = (
                 _layout(circuit, max_bond_dimension, max_work)
-                if unitary
-                else (None, "MPS admission currently requires a unitary circuit.")
+                if unitary and 256 * circuit.num_qubits <= budget * 2**20
+                else (None, "MPS requires a unitary circuit and sufficient site workspace.")
             )
             eligible = bool(
                 mps_profile

@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from .kernel import get_compute_kernel
+from .kernel import _torch_compiling, get_compute_kernel
 
 
 @dataclass(frozen=True)
@@ -39,12 +39,35 @@ class ContractionKernel:
             len(a) + len(b),
         )
 
-    def apply(self, left, right, ops):
+    def matrix_views(self, left, right, ops):
         na, nb = left.ndim - self.left_rank, right.ndim - self.right_rank
         pa = tuple(range(na)) + tuple(na + i for i in self.left_axes)
         pb = tuple(range(nb)) + tuple(nb + i for i in self.right_axes)
         left = ops.transpose(left, pa).reshape(left.shape[:na] + (self.m, self.k))
         right = ops.transpose(right, pb).reshape(right.shape[:nb] + (self.k, self.n))
+        return left, right
+
+    def apply(self, left, right, ops):
+        if (
+            ops.backend == "torch"
+            and left.is_cuda
+            and not _torch_compiling()
+            and self.k <= 8
+            and self.output_rank <= 24
+            and self.m * self.n >= 128
+            and left.dtype == right.dtype
+            and left.is_complex()
+        ):
+            from ..sim._device_ops import apply_device_contraction, supports_device_kernel
+
+            if supports_device_kernel(left, right, ops.xp):
+                batch = ops.broadcast_shape(
+                    tuple(left.shape[: left.ndim - self.left_rank]),
+                    tuple(right.shape[: right.ndim - self.right_rank]),
+                )
+                ops.kernel._workspace((left, right), batch + (self.m, self.n))
+                return apply_device_contraction(self, left, right, ops)
+        left, right = self.matrix_views(left, right, ops)
         value = ops.matmul(left, right)
         return value.reshape(value.shape[:-2] + (2,) * self.output_rank)
 

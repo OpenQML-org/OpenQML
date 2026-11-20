@@ -1,61 +1,27 @@
 # Runtime dispatch
 
-## Native C++/CUDA simulation
+## OpenQML CUDA simulator
 
-`get_backend("aer-gpu")` selects Qiskit Aer's native GPU statevector engine.
-The simulator's C++/CUDA implementation performs gate fusion, state evolution
-and readout reductions; OpenQML supplies IR compilation, budgets and dispatch.
-Readout execution returns observables without exporting the complete state.
-This is an integration with Aer/cuQuantum, not a separately implemented
-OpenQML C++ statevector simulator.
+Install `openqml[gpu]` on Linux x86-64 with a CUDA-enabled PyTorch build and
+an NVIDIA device of compute capability 8.0 or newer. `execute(circuit,
+backend="gpu")` returns a host result. For a device-resident state and
+gradients, use `statevector(circuit, bindings, backend="torch")` with CUDA
+binding tensors, or supply a CUDA `like` tensor for a fixed circuit.
 
-| Execution path | OpenQML's implementation | External kernel/runtime provider |
-| --- | --- | --- |
-| `AerBackend(device="GPU")` | IR export, parameter batching, memory admission, dispatch | Qiskit Aer C++/CUDA; requested cuStateVec/cuTensorNet support depends on its build |
-| `CUDABackend()` | Circuit/readout planning, register schedules, tensor evolution | PyTorch CUDA tensor kernels |
-| `CUDABackend(compile_mode="default")` | Shared readout program, packed parameters, bounded graph cache | PyTorch TorchInductor code generation |
+OpenQML implements two kernels in Triton 3.4 or later. The statevector kernel assigns a
+lane to each group of amplitudes that agree outside the gate's support. It
+loads the group once, applies a one-, two- or three-wire complex matrix and
+writes each result once. Target order controls the local basis, including
+reversed controls and nonadjacent wires. A broadcast gate batch uses strides
+into the original gate storage. The tensor-network kernel contracts up to
+three shared binary indices directly from the operand strides and conjugation
+flags. It targets output blocks of 128 or more elements with at most 24 open
+binary indices. Both kernels support complex64 and complex128.
 
-Both adapters expose `execution_info()` without loading an SDK or accessing a
-device. This describes configuration and provenance. `requested_accelerator`
-on Aer records a request, and `execution_verified=False` explicitly prevents
-treating that configuration as evidence that a vendor accelerator ran.
-OpenQML currently has no independently implemented C++/CUDA kernel engine.
-
-On supported Linux x86-64 systems, install `openqml[aer-gpu]` with a compatible
-NVIDIA driver/runtime. Use an environment containing the GPU Aer distribution;
-do not install both `qiskit-aer` and `qiskit-aer-gpu`, which share a Python
-namespace. The portable `all` extra retains the CPU Aer distribution.
-
-```python
-import openqml as oq
-
-engine = oq.AerBackend(
-    name="native-gpu",
-    device="GPU",
-    precision="double",
-    cu_statevec=True,
-    target_gpus=(0,),
-)
-```
-
-`cu_statevec=True` requests NVIDIA cuStateVec from an Aer build containing that
-support. `method="tensor_network", device="GPU"` selects Aer's cuTensorNet
-implementation. `target_gpus` chooses devices; `blocking_qubits` enables native
-statevector/density cache blocking across GPUs or an MPI-enabled Aer build.
-The caller provides the native runtime, MPI build and launch configuration.
-For GPU shot/parameter batches, `batched_shots_gpu=True` and
-`runtime_parameter_binding=True` select Aer's native batching path; cuStateVec
-and batched shots are mutually exclusive. GPU-unavailable requests raise an
-error. They do not silently execute on a CPU. Initialized GPU backends registered
-with OpenQML participate in automatic scheduling; native training candidates
-retain their framework/autodiff contract.
-
-There is no fixed 24-qubit ceiling. Dense state memory still grows exponentially,
-and tensor-network cost depends on circuit structure. Resource admission and
-the vendor's actual memory limits apply. These configuration paths do not
-establish a measured large-scale speedup or multi-GPU/MPI execution result.
-See [Aer GPU options](https://qiskit.github.io/qiskit-aer/stubs/qiskit_aer.AerSimulator.html)
-and [NVIDIA cuQuantum integrations](https://docs.nvidia.com/cuda/cuquantum/latest/getting-started/index.html).
+Larger gates, wider contractions, older devices and framework transforms use
+PyTorch tensor kernels. JAX uses XLA. `CUDABackend.execution_info()` describes
+the configured kernel candidates. The physical-device workflow also records
+observed kernel dispatches. [Triton supported devices](https://github.com/triton-lang/triton#compatibility)
 
 ## Native tensor GPU execution
 
@@ -77,9 +43,8 @@ For training, use native `backend="torch"` tensors on CUDA or JAX's configured
 GPU placement. These paths retain device arrays and autodiff. The numeric
 `CUDABackend` adapter returns host readouts and is intended for numeric dispatch.
 The manual GPU workflow requires real devices, checks float32/float64 readouts,
-sampling, resident gradients and financial factor solves, and optionally checks
-native Aer GPU execution and two-GPU NCCL execution. It fails when required
-hardware is absent; CPU checks do not establish accelerator performance.
+sampling, resident gradients and financial factor solves, and optionally exercises
+two-GPU NCCL execution. The hardware run requires real devices.
 
 ## Compiled CUDA readouts
 

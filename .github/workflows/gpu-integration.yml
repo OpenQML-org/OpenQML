@@ -6,10 +6,6 @@ on:
         description: Also require two physical GPUs and NCCL
         type: boolean
         default: false
-      aer_gpu:
-        description: Also install and verify the native Aer GPU engine
-        type: boolean
-        default: false
 permissions:
   contents: read
 jobs:
@@ -18,21 +14,18 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Install core and functional test runner
-        run: python -m pip install . pytest
-      - name: Install the requested native GPU integration
-        if: inputs.aer_gpu
-        run: python -m pip install ".[aer-gpu]"
+      - name: Install native simulation kernels and test runner
+        run: python -m pip install ".[gpu]" pytest
       - name: Require real CUDA devices
         run: |
           python - <<'PY'
           import torch
           assert torch.cuda.is_available(), 'A physical CUDA GPU is required'
+          assert torch.cuda.get_device_capability()[0] >= 8, 'The native kernels require SM80 or newer'
           PY
       - name: Verify CUDA execution and resident financial gradients
         env:
           OPENQML_REQUIRE_CUDA: '1'
-          OPENQML_REQUIRE_AER_GPU: ${{ inputs.aer_gpu && '1' || '0' }}
           OPENQML_HARDWARE_REPORT_DIR: ${{ runner.temp }}/openqml-hardware
         run: python -m pytest -q tests/test_accelerators.py -k physical_cuda
       - name: Verify distributed values and gradients on CUDA
