@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 import numpy as np
 
 from ..compute.kernel import get_compute_kernel
-from ..errors import ResourceError, ValidationError
+from ..errors import NumericalError, ResourceError, ValidationError
 from ..ir.compiler import _check_circuit_limits
 from ..ir.core import _require_circuit, integer
 from ..ir.observables import Hamiltonian
@@ -95,7 +95,8 @@ def _layout(circuit, max_bond_dimension, max_work, *, truncate=False, initial_or
     order = list(range(width) if initial_order is None else initial_order)
     work, swaps, center, splits = len(circuit.operations), 0, 0, 0
     bonds = [1] * (width + 1)
-    payload, peak, maximum, svd_work = width * 288, width * 288 + 128, 1, 0
+    payload, peak, maximum = width * 288, width * 288 + 128, 1
+    split_work, svd_work = 0, 0
     for op, wires in _routed(circuit, order):
         if op is None:
             swaps += 1
@@ -113,10 +114,14 @@ def _layout(circuit, max_bond_dimension, max_work, *, truncate=False, initial_or
         splits += 1
         cut = min(wires) + 1
         left, old, right = bonds[cut - 1], bonds[cut], bonds[cut + 1]
-        # A full SVD of (2*left, 2*right) retains exactly this many columns.
+        # Exact splitting retains the full smaller dimension in either gauge.
         size = 2 * min(left, right)
-        svd_work += 4 * left * right * size
+        factor_work = 4 * left * right * size
+        split_work += 4 * left * right * (old + 4)
+        if truncate or left > right:
+            split_work += factor_work
         if truncate:
+            svd_work += factor_work
             size = min(size, max_bond_dimension)
         maximum = max(maximum, size)
         if size > max_bond_dimension:
@@ -125,7 +130,7 @@ def _layout(circuit, max_bond_dimension, max_work, *, truncate=False, initial_or
                 "max_log2_bond": size.bit_length() - 1,
                 "workspace_bytes": None,
                 "analysis_complete": False,
-            }, "Full-SVD bond dimension exceeds max_bond_dimension."
+            }, "Exact bond dimension exceeds max_bond_dimension."
         # Includes both two-site contractions, SVD copies/output and a large
         # reserve for vendor LAPACK workspace. Small fixed matrices are extra.
         peak = max(peak, payload + 2048 * left * right + 1024)
@@ -141,8 +146,9 @@ def _layout(circuit, max_bond_dimension, max_work, *, truncate=False, initial_or
         "analysis_complete": True,
         "routing_swaps": swaps,
         "svd_work": svd_work,
+        "split_work": split_work,
         "splits": splits,
-        "truncation": "canonical_Schmidt" if truncate else "none_full_SVD_columns_retained",
+        "truncation": "canonical_Schmidt" if truncate else "none_full_bond_retained",
     }, "Routed MPS tensor shapes and workspace admitted."
 
 
@@ -154,23 +160,34 @@ def _two_site(sites, qubits, matrix, max_bond, tolerance):
     block = get_compute_kernel().einsum("asb,btc->astc", left, right)
     transformed = get_compute_kernel().einsum("uvst,astc->auvc", matrix.reshape(2, 2, 2, 2), block)
     rows, columns = 2 * left.shape[0], 2 * right.shape[2]
-    u, singular, vh = get_compute_kernel().svd(
-        transformed.reshape(rows, columns), full_matrices=False
-    )
-    size, discarded = len(singular), 0.0
-    if tolerance is not None:
-        # Both environments are isometric here. Squared singular values are
-        # physical Schmidt probabilities, including for the inserted SWAPs.
+    block = transformed.reshape(rows, columns)
+    kernel = get_compute_kernel()
+    if tolerance is None:
+        size = min(rows, columns)
+        kernel._workspace((block,), ((rows + columns) * size,))
+        block = kernel.finite(block)
+        if rows <= columns:
+            # The left space fits on the bond: I @ block is already left-isometric.
+            u, remainder = np.eye(rows, dtype=block.dtype), block
+        else:
+            try:
+                u, remainder = np.linalg.qr(block, mode="reduced")
+            except np.linalg.LinAlgError as exc:
+                raise NumericalError("MPS QR decomposition did not converge.") from exc
+        discarded = 0.0
+    else:
+        u, singular, vh = kernel.svd(block, full_matrices=False)
         tail = np.cumsum(np.square(singular[::-1]))
-        size = min(
-            max_bond, max(1, size - int(np.searchsorted(tail, tolerance * tail[-1], side="right")))
+        drop = int(np.searchsorted(tail, tolerance * tail[-1], side="right"))
+        size = min(max_bond, max(1, len(singular) - drop))
+        discarded = (
+            min(1.0, tail[len(singular) - size - 1] / tail[-1]) if size < len(singular) else 0.0
         )
-        if size < len(singular):
-            discarded = min(1.0, tail[len(singular) - size - 1] / tail[-1])
-        singular = singular[:size] / np.linalg.norm(singular[:size])
-        u, vh = u[:, :size], vh[:size]
+        u = u[:, :size]
+        kept = singular[:size]
+        remainder = (kept / np.linalg.norm(kept))[:, None] * vh[:size]
     sites[a] = u.reshape(left.shape[0], 2, size)
-    sites[b] = (singular[:, None] * vh).reshape(size, 2, right.shape[2])
+    sites[b] = remainder.reshape(size, 2, right.shape[2])
     return discarded, size
 
 
@@ -286,7 +303,7 @@ class MPSBackend:
                     return (
                         False,
                         p["workspace_bytes"] > budget,
-                        p["svd_work"],
+                        p["split_work"],
                         p["routing_swaps"],
                         p["workspace_bytes"],
                     )

@@ -27,6 +27,7 @@ from ..errors import (
     _require_mapping,
 )
 from ..ir.core import UNITARY_GATES, Circuit, _require_circuit, integer
+from ..ir.observables import _masks
 
 _I = np.eye(2, dtype=complex)
 _X = np.array([[0, 1], [1, 0]], dtype=complex)
@@ -632,16 +633,21 @@ def statevector(
     return state * ops.xp.exp(unit * phase)[..., None]
 
 
+def _numpy_parity(index, mask):
+    bits = index & mask
+    if hasattr(np, "bitwise_count"):
+        return np.bitwise_count(bits) & 1
+    for shift in (32, 16, 8, 4):
+        if mask >> shift:
+            bits ^= bits >> shift
+    return (0x6996 >> (bits & 15)) & 1
+
+
 @lru_cache(maxsize=32)
 def _cached_pauli_plan(paulis):
-    size = 2 ** len(paulis)
-    indices = np.arange(size, dtype=np.int64)
-    flip = sum(1 << (len(paulis) - q - 1) for q, p in enumerate(paulis) if p in "XY")
-    source = indices ^ flip
-    phase = np.ones(size, dtype=np.complex128) * (1j ** paulis.count("Y"))
-    for q, p in enumerate(paulis):
-        if p in "YZ":
-            phase *= 1 - 2 * ((source >> (len(paulis) - q - 1)) & 1)
+    flip, sign = _masks(paulis[::-1])
+    source = np.arange(1 << len(paulis), dtype=np.int64) ^ flip
+    phase = np.where(_numpy_parity(source, sign), -1, 1) * (1j ** paulis.count("Y"))
     return source, phase
 
 
@@ -672,23 +678,23 @@ def _torch_pauli_plan(paulis, device, dtype):
 
 
 def _numpy_pauli_expectation(state, paulis):
-    """Contract a wide word through approximately one MiB of transient tiles."""
-    width, size = len(paulis), state.shape[-1]
+    """Visit each Hermitian amplitude pair once, in bounded tiles."""
+    flip, sign = _masks(paulis[::-1])
+    pivot = 1 << (flip.bit_length() - 1) if flip else 0
+    count = state.shape[-1] // (2 if flip else 1)
     rows = max(1, math.prod(state.shape[:-1]))
-    tile = max(1, min(size, (1 << 20) // (64 * rows + 48)))
-    flip = sum(1 << (width - q - 1) for q, p in enumerate(paulis) if p in "XY")
-    sign = sum(1 << (width - q - 1) for q, p in enumerate(paulis) if p in "YZ")
+    tile = max(1, min(count, (1 << 20) // (64 * rows + 48)))
+    y = paulis.count("Y")
+    scale = (2 if flip else 1) * (-1 if y & 2 else 1)
     result = np.zeros(state.shape[:-1], dtype=state.real.dtype)
-    for start in range(0, size, tile):
-        end = min(size, start + tile)
-        source = np.arange(start, end, dtype=np.int64) ^ flip
-        parity = source & sign
-        for shift in (32, 16, 8, 4, 2, 1):
-            parity ^= parity >> shift
-        phase = (1 - 2 * (parity & 1)) * (1j ** paulis.count("Y"))
-        product = np.conj(state[..., start:end]) * state[..., source]
-        product *= phase
-        result += np.real(product.sum(axis=-1))
+    for start in range(0, count, tile):
+        index = np.arange(start, min(count, start + tile), dtype=np.int64)
+        if pivot:
+            index = ((index & -pivot) << 1) | (index & (pivot - 1))
+        product = np.conj(state[..., index ^ flip]) * state[..., index]
+        component = -product.imag if y & 1 else product.real
+        weights = np.where(_numpy_parity(index, sign), -scale, scale)
+        result += np.einsum("...i,i->...", component, weights)
     return result
 
 
@@ -709,9 +715,12 @@ def _pauli_expectation(state, paulis, num_qubits, ops):
         return _numpy_pauli_expectation(state, paulis)
     capture = False
     if ops.backend == "torch":
-        from torch._dynamo import is_compiling
+        capture = _torch_compiling()
+        if state.is_cuda and num_qubits > 12 and not capture:
+            from ._device_ops import device_pauli_expectation, supports_device_kernel
 
-        capture = is_compiling()
+            if supports_device_kernel(state, None, ops.xp):
+                return device_pauli_expectation(state, paulis)
     if ops.backend != "numpy" and (capture or num_qubits > 12):
         index, phase = _native_pauli_plan(paulis, ops)
     elif ops.backend == "torch":

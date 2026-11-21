@@ -74,14 +74,17 @@ floating-point roundoff with depth.
 ## Matrix-product readouts
 
 `openqml.sim.MPSBackend().readout(circuit, observables)` evaluates bound one- and two-wire
-unitaries from the zero product state. The default retains all singular
-columns. Remote gates route adjacent sites and carry the resulting permutation
-to subsequent operations and Pauli readouts. A circuit SWAP updates the
-logical wire map directly. Memory and work admission include routing.
+unitaries from the zero product state. The default keeps the full bond at each
+split. When the left side fits on the bond, an identity factor and a reshape
+suffice. A taller left side uses a
+reduced QR factorization. The readout therefore needs no singular values in
+exact mode. Routing brings nonadjacent gates together with nearest-neighbor
+SWAPs and tracks the logical order through measurement. A logical SWAP only
+updates the wire map. Admission includes the cost of routing.
 
 `MPSBackend(layout="auto")` compares source order with a chain assembled from
 frequent two-wire interactions. It prefers an admitted layout, then compares
-estimated SVD work, routed swaps and peak workspace. The low-level backend
+estimated contraction and factorization work, routed swaps and peak workspace. The low-level backend
 defaults to source order. The certified readout and gradient entry points
 use automatic placement when they create their own backend. Observables keep
 their original logical wire order under either layout.
@@ -215,6 +218,18 @@ Fusion benefit depends on locality, gate mix and reuse. These mechanisms do not
 establish a universal acceleration factor or measured multi-GPU/QPU throughput.
 
 ## Readout working storage
+
+In dense NumPy statevectors, a non-diagonal Pauli word pairs basis indices
+that differ by its X mask. Above twelve qubits, the readout takes one member
+of each pair and accumulates its real contribution in tiles. The NumPy
+adjoint also groups Hamiltonian terms with the same X mask. Each group
+reads the source amplitudes once per tile and combines the Z-dependent signs
+before multiplying by the amplitudes. [Grouped bit-flip representations in BinSim](https://arxiv.org/abs/2606.28952)
+
+For a gate with several active angles, the adjoint contracts the state and
+costate over the spectator wires once. It pairs the resulting small matrix
+with each angle derivative. A forward directional product combines the local
+derivative matrices before applying them to the state.
 
 Real-arithmetic readout graphs use immutable last-use schedules and reuse
 register slots after their final consumer. A slot assignment replaces a Python

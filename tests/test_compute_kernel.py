@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 import openqml as oq
-from openqml import compute
 from openqml._contraction_program import ContractionKernel
 from openqml._tensor_contraction import TensorNetworkPlan
 from openqml._tensor_train import TensorTrainPlan
@@ -15,10 +14,7 @@ from openqml.compute import RealOps as _Ops
 from openqml.finance._array import Ops, admission
 from openqml.simulator import _TensorOps
 
-
-@pytest.fixture(autouse=True)
-def restore_kernel(monkeypatch):
-    monkeypatch.setattr(compute, "_KERNEL", oq.ComputeKernel())
+pytestmark = pytest.mark.usefixtures("fresh_kernel")
 
 
 @pytest.mark.parametrize(

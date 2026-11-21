@@ -195,23 +195,3 @@ def test_wide_entangled_circuit_contracts_and_differentiates_without_a_full_stat
     grads = torch.autograd.grad(result, (a, b))
     assert float(result.detach()) == pytest.approx(expected, abs=1e-13)
     np.testing.assert_allclose([float(g) for g in grads], derivatives, atol=2e-7, rtol=2e-5)
-
-
-def test_readme_quickstart_is_executable_and_completes_an_optimizer_step():
-    pytest.importorskip("torch")
-    import re
-    from pathlib import Path
-
-    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
-    blocks = re.findall(r"```python\n(.*?)```", readme, re.S)
-    assert blocks
-    namespace = {}
-    for block in blocks:
-        exec(compile(block, "README.md", "exec"), namespace)
-    model = namespace["model"]
-    assert tuple(model.predict_proba(namespace["x"]).shape) == (32, 2)
-    assert model.trainer.updates == sum(row["updates"] for row in model.history)
-    assert model.trainer.updates >= 1
-    assert np.isfinite(model.history[-1]["loss"])
-    assert model.trainer.optimizer.state
-    assert any(state["exp_avg"].count_nonzero() for state in model.trainer.optimizer.state.values())

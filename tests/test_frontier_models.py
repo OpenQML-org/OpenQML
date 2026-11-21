@@ -1,27 +1,11 @@
 """Physical, differentiation, streaming and integrated training contracts."""
 
-import gc
 from dataclasses import replace
 
 import numpy as np
 import pytest
 
 import openqml as q
-
-
-@pytest.fixture
-def native():
-    torch = pytest.importorskip("torch")
-    jax = pytest.importorskip("jax")
-    jnp = pytest.importorskip("jax.numpy")
-    previous = jax.config.jax_enable_x64
-    jax.config.update("jax_enable_x64", True)
-    try:
-        yield torch, jax, jnp
-    finally:
-        jax.config.update("jax_enable_x64", previous)
-    jax.clear_caches()
-    gc.collect()
 
 
 def architecture(kind, **options):
@@ -116,8 +100,8 @@ def test_long_float32_memory_retains_valid_carry(method):
 
 
 @pytest.mark.parametrize("kind", ["kan", "memory", "born", "language"])
-def test_all_framework_outputs_carries_and_every_parameter_gradient(kind, native):
-    torch, jax, jnp = native
+def test_all_framework_outputs_carries_and_every_parameter_gradient(kind, native_x64):
+    torch, jax, jnp = native_x64
     pytest.importorskip("flax")
     a = architecture(kind)
     p = opened_parameters(a)
@@ -200,8 +184,8 @@ def test_povm_completeness_positive_effects_and_born_reference(memory, outcomes)
     np.testing.assert_allclose(actual.sum(), 1, atol=2e-14)
 
 
-def test_povm_second_derivatives_at_degenerate_frame(native):
-    torch, jax, jnp = native
+def test_povm_second_derivatives_at_degenerate_frame(native_x64):
+    torch, jax, jnp = native_x64
     plan = q.QuantumPOVMPlan(outcomes=3)
     frame = np.zeros(plan.parameter_shape)
     rho = np.diag([0.8, 0.2])
@@ -220,8 +204,8 @@ def test_povm_second_derivatives_at_degenerate_frame(native):
 
 
 @pytest.mark.parametrize("readout", ["pauli", "basis", "povm"])
-def test_associative_scan_values_gradients_and_hessians(readout, native):
-    torch, jax, jnp = native
+def test_associative_scan_values_gradients_and_hessians(readout, native_x64):
+    torch, jax, jnp = native_x64
     plan = q.QuantumChannelPlan(memory_qubits=2, num_outputs=3)
     rng = np.random.default_rng(12)
     data = rng.normal(size=len(plan.spec.weight_parameters))
@@ -330,8 +314,8 @@ def test_real_training_depth_growth_and_exact_checkpoint_resume(kind, tmp_path):
         assert torch.equal(model.values[name], restored.values[name]), name
 
 
-def test_channel_layers_and_quantum_diffusion_training(native):
-    torch, jax, jnp = native
+def test_channel_layers_and_quantum_diffusion_training(native_x64):
+    torch, jax, jnp = native_x64
     from openqml.interfaces.flax import ChannelLayer as FlaxChannel
     from openqml.interfaces.jax import ChannelLayer as JAXChannel
     from openqml.interfaces.torch import ChannelLayer
@@ -378,8 +362,8 @@ def test_channel_layers_and_quantum_diffusion_training(native):
     assert np.linalg.eigvalsh(sampled).min() > -1e-13
 
 
-def test_streaming_generation_has_no_prefix_replay_and_uses_local_rng(monkeypatch, native):
-    torch, jax, jnp = native
+def test_streaming_generation_has_no_prefix_replay_and_uses_local_rng(monkeypatch, native_x64):
+    torch, jax, jnp = native_x64
     a = architecture("language")
     p = opened_parameters(a)
     model = loaded_torch(a, p, torch)
@@ -437,8 +421,8 @@ def test_native_carry_admission_precedes_qpu_probe_and_pareto_pruning(monkeypatc
     )
 
 
-def test_masks_teacher_forcing_domains_and_budget_guards(native):
-    torch, jax, jnp = native
+def test_masks_teacher_forcing_domains_and_budget_guards(native_x64):
+    torch, jax, jnp = native_x64
     ids = np.array([[2, 1, -1, 3]])
     mask = np.array([[True, True, False, True]])
     reset = np.array([[False, False, False, True]])
@@ -469,8 +453,8 @@ def test_masks_teacher_forcing_domains_and_budget_guards(native):
     assert np.isnan(invalid).all()
 
 
-def test_flax_mixed_program_training_growth_and_checkpoint(native, tmp_path):
-    _, jax, jnp = native
+def test_flax_mixed_program_training_growth_and_checkpoint(native_x64, tmp_path):
+    _, jax, jnp = native_x64
     pytest.importorskip("flax")
     optax = pytest.importorskip("optax")
     a = q.HybridArchitecture(

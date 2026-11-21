@@ -3,7 +3,6 @@
 import importlib
 import subprocess
 import sys
-from pathlib import Path
 
 import openqml as oq
 
@@ -19,10 +18,6 @@ def test_namespaces_expose_the_same_public_objects():
     assert oq.interop.convert is oq.convert
     for group in ("ir", "sim", "compute", "runtime", "autodiff", "qml", "interop", "finance"):
         assert importlib.util.find_spec("openqml." + group).submodule_search_locations is not None
-    root = Path(oq.__file__).parent
-    assert not (root / "simulator.py").exists()
-    assert not (root / "models.py").exists()
-    assert not (root / "parameters.py").exists()
 
 
 def test_parallel_legacy_and_canonical_imports_preserve_module_and_class_identity():

@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 
 import openqml as oq
-from openqml import compute
 from openqml._native_training import solve_metric
 from openqml._tensor_contraction import TensorNetworkPlan
 from openqml.finance._array import Ops
@@ -17,10 +16,7 @@ from openqml.finance._linear import linear_solve
 from openqml.recovery import CircuitBreaker, PendingBatch, PendingJob
 from openqml.simulator import _TensorOps
 
-
-@pytest.fixture(autouse=True)
-def kernel_scope(monkeypatch):
-    monkeypatch.setattr(compute, "_KERNEL", oq.ComputeKernel())
+pytestmark = pytest.mark.usefixtures("fresh_kernel")
 
 
 def test_independent_keys_compile_concurrently_and_same_keys_share_failures():

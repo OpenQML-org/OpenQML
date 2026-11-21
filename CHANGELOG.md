@@ -1,5 +1,19 @@
 # Changes
 
+## 0.36.0
+
+- Dense statevector readouts visit each Hermitian amplitude pair once for wide
+  off-diagonal Pauli words. Eligible CUDA tensors use a strided Triton reduction
+  and a direct PyTorch pullback in complex64 or complex128.
+- Exact MPS updates use an identity left factor or a reduced QR. The planner
+  reports `none_full_bond_retained`, estimates split work and reserves the
+  Schmidt SVD for truncation and its existing error certificates.
+- NumPy adjoints group Hamiltonian terms by their bit-flip masks. Each gate
+  shares one local cotangent across active angles in reverse mode and applies
+  one combined directional derivative in forward mode.
+- Consolidate optimizer quickstart, namespace and framework setup checks.
+  Rewrite the README around installation, simulation, training and allocation.
+
 ## 0.35.1
 
 - Hardware-efficient and data-reuploading layers accept a logical wire

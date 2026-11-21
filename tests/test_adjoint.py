@@ -27,7 +27,7 @@ from openqml import (
 PARAMETRIC = ("rx", "ry", "rz", "p", "crx", "cry", "crz", "cp", "rxx", "ryy", "rzz", "u")
 OBSERVABLES = (
     PauliString("XYZ", 0.7),
-    Hamiltonian((PauliString("YXX", -0.3), PauliString("IIY", 0.2))),
+    Hamiltonian((PauliString("YXX", -0.3), PauliString("XYY", 0.12), PauliString("IIY", 0.2))),
     PauliString("III", -0.4),
 )
 
@@ -155,7 +155,7 @@ def test_state_work_is_linear_and_live_vectors_do_not_grow_with_depth(monkeypatc
             circuit = circuit.ry(Parameter("weight") / depth, i % 2)
         result = adjoint_vjp(circuit, [PauliString("ZZ")], [{"weight": 0.4}], [[1]])
         np.testing.assert_allclose(result, [[-np.cos(0.2) * np.sin(0.2)]], atol=2e-12)
-        assert calls == 4 * depth
+        assert calls <= 3 * depth
         peaks.append(live)
     assert max(peaks) <= 7 and peaks[1] <= peaks[0] + 1
 

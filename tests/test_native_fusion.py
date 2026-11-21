@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import openqml as oq
+from tests import as_numpy
 
 
 def _circuit(repeats=3):
@@ -12,10 +13,6 @@ def _circuit(repeats=3):
     for _ in range(repeats):
         circuit = circuit.h(5).ry(x * y, 0).cx(5, 0).rz(x.sin(), 5).crx(y, 5, 0)
     return circuit.with_global_phase(x / 3)
-
-
-def _numpy(value, backend):
-    return value.detach().numpy() if backend == "torch" else np.asarray(value)
 
 
 @pytest.mark.parametrize("backend", ["torch", "jax"])
@@ -39,8 +36,8 @@ def test_native_fusion_batches_reversed_wires_and_reduces_full_state_updates(bac
     monkeypatch.setattr(dense, "_apply_matrix", observe)
     result = oq.statevector(circuit, bindings, backend=backend)
     assert len(calls) == 4  # Two bounded groups, the three-wire gate and final fixed group.
-    np.testing.assert_allclose(_numpy(result, backend), _numpy(expected, backend), atol=3e-6)
-    np.testing.assert_allclose(np.sum(abs(_numpy(result, backend)) ** 2, axis=-1), 1, atol=6e-6)
+    np.testing.assert_allclose(as_numpy(result), as_numpy(expected), atol=3e-6)
+    np.testing.assert_allclose(np.sum(abs(as_numpy(result)) ** 2, axis=-1), 1, atol=6e-6)
 
 
 @pytest.mark.parametrize("backend", ["torch", "jax"])
@@ -71,8 +68,8 @@ def test_native_fusion_keeps_first_second_and_directional_derivatives(backend):
 
     for transform in (grad, hessian):
         np.testing.assert_allclose(
-            _numpy(transform(objective)(value), backend),
-            _numpy(transform(reference)(value), backend),
+            as_numpy(transform(objective)(value)),
+            as_numpy(transform(reference)(value)),
             atol=3e-6,
         )
     for checkpoint in (None, 7):
@@ -83,13 +80,13 @@ def test_native_fusion_keeps_first_second_and_directional_derivatives(backend):
         actual = jvp(candidate, (value,), (value * 0 + 1,))
         expected = jvp(reference, (value,), (value * 0 + 1,))
         np.testing.assert_allclose(
-            [_numpy(v, backend) for v in actual],
-            [_numpy(v, backend) for v in expected],
+            [as_numpy(v) for v in actual],
+            [as_numpy(v) for v in expected],
             atol=3e-6,
         )
     np.testing.assert_allclose(
-        _numpy(vectorize(grad(objective))(value[None] * value[:, None]), backend),
-        _numpy(vectorize(grad(reference))(value[None] * value[:, None]), backend),
+        as_numpy(vectorize(grad(objective))(value[None] * value[:, None])),
+        as_numpy(vectorize(grad(reference))(value[None] * value[:, None])),
         atol=3e-6,
     )
     options = {"compiler": "eager"} if backend == "torch" else {}
@@ -111,7 +108,7 @@ def test_native_fusion_keeps_first_second_and_directional_derivatives(backend):
         expected.values() if isinstance(expected, dict) else (expected,),
         strict=True,
     ):
-        np.testing.assert_allclose(_numpy(a, backend), _numpy(b, backend), atol=3e-6)
+        np.testing.assert_allclose(as_numpy(a), as_numpy(b), atol=3e-6)
 
 
 @pytest.mark.parametrize("backend", ["torch", "jax"])
@@ -135,7 +132,5 @@ def test_native_fusion_respects_small_workspace_and_repeated_cold_caches(backend
     for _ in range(2):
         with oq.compute_context(policy=oq.ComputePolicy(max_memory_mb=budget)):
             result = oq.statevector(circuit, bindings, backend=backend, max_memory_mb=budget)
-            np.testing.assert_allclose(
-                _numpy(result, backend), _numpy(expected, backend), atol=2e-7
-            )
+            np.testing.assert_allclose(as_numpy(result), as_numpy(expected), atol=2e-7)
     assert len(calls) == 6

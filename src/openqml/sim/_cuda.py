@@ -91,6 +91,7 @@ class CUDABackend:
             "local_gate_codegen": "triton",
             "local_gate_max_wires": 3,
             "local_gate_matrix_vjp": "strided_spectator_and_broadcast_reduction",
+            "statevector_pauli_readout": "hermitian_pair_reduction_and_vjp",
             "tensor_runtime": "pytorch",
             "tensor_contraction_kernel": "openqml",
             "native_kernel_requirements": "NVIDIA SM80+, Triton 3.4+, eligible eager tensors",

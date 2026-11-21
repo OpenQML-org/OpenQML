@@ -1,9 +1,7 @@
 """Semantic, numerical and memory regressions found during the package audit."""
 
-import gc
 import io
 import json
-import sys
 import zipfile
 from fractions import Fraction
 
@@ -13,13 +11,7 @@ import pytest
 import openqml as oq
 from openqml._tensor_contraction import TensorNetworkPlan
 
-
-@pytest.fixture(autouse=True)
-def release_compilations():
-    yield
-    if "jax" in sys.modules:
-        sys.modules["jax"].clear_caches()
-    gc.collect()
+pytestmark = pytest.mark.usefixtures("release_compilations")
 
 
 @pytest.mark.parametrize("operation", ["mul", "div", "pow"])

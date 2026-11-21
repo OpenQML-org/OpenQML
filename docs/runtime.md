@@ -28,6 +28,13 @@ three shared binary indices directly from the operand strides and conjugation
 flags. It targets output blocks of 128 or more elements with at most 24 open
 binary indices. These kernels support complex64 and complex128.
 
+For off-diagonal Pauli words on more than twelve wires, the eager CUDA
+statevector readout pairs each basis index with its bit-flipped partner.
+Each pair contributes once to a real block sum. Its backward kernel writes
+both entries of the state cotangent, including the phase of each Y factor.
+The reduction uses one real scalar per tile of 256 pairs. Higher derivatives
+and framework transforms use differentiable PyTorch operations.
+
 Larger gates, wider contractions, older devices and framework transforms use
 PyTorch tensor kernels. JAX uses XLA. `CUDABackend.execution_info()` describes
 the configured kernel candidates. The physical-device workflow also records

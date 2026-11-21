@@ -6,6 +6,14 @@ from ..errors import ValidationError
 from .parameters import real
 
 
+def _masks(paulis):
+    """Encode X and Z supports with the first character at bit zero."""
+    return (
+        sum(1 << q for q, p in enumerate(paulis) if p in "XY"),
+        sum(1 << q for q, p in enumerate(paulis) if p in "YZ"),
+    )
+
+
 @dataclass(frozen=True)
 class PauliString:
     paulis: str

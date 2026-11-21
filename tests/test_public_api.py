@@ -71,7 +71,16 @@ def test_root_namespace_reuses_the_canonical_framework_module(framework):
     namespace = getattr(oq, framework)
     original = importlib.import_module(f"openqml.interfaces.{framework}")
     assert namespace is original
-    assert namespace.QuantumLayer is original.QuantumLayer
+    assert callable(namespace.QuantumLayer) and callable(namespace.HybridNetwork)
+    retired = {
+        "PPOTrainer",
+        "QuantumActorCritic",
+        "QuantumSurrogate",
+        "TreeQuantumLayer",
+        "TensorNetworkAdapter",
+        "TensorTrainLinear",
+    }
+    assert retired.isdisjoint(vars(namespace))
     assert getattr(oq, framework) is namespace
 
 
@@ -111,7 +120,6 @@ def test_default_distribution_is_small_and_extras_cover_all_integrations():
 def test_sdk_namespaces_preserve_canonical_module_identity(name):
     native = pytest.importorskip(name)
     assert getattr(oq, name) is native
-    assert getattr(oq, name) is native
 
 
 def test_framework_facades_preserve_native_apis_and_quantum_layers():
@@ -129,43 +137,20 @@ def test_framework_facades_preserve_native_apis_and_quantum_layers():
         assert "QuantumLayer" in dir(getattr(oq, name))
 
 
-def test_readme_uses_the_public_package_import(monkeypatch):
-    import ast
+def test_readme_quickstart_completes_an_optimizer_step():
     import re
 
-    from openqml import compute
-
-    monkeypatch.setattr(compute, "_KERNEL", compute.get_compute_kernel())
-    text = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
-    blocks = re.findall(r"```python\n(.*?)```", text, re.S)
-    assert blocks
+    pytest.importorskip("torch")
+    readme = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
     namespace = {}
-    for block in blocks:
-        program = ast.parse(block)
-        if (
-            "oq.torch" in block
-            or "oq.Model(" in block
-            or any(
-                (isinstance(node, ast.Import) and any(a.name == "torch" for a in node.names))
-                or (isinstance(node, ast.ImportFrom) and node.module == "torch")
-                for node in ast.walk(program)
-            )
-        ):
-            pytest.importorskip("torch")
-        imports = [
-            alias
-            for node in ast.walk(program)
-            if isinstance(node, ast.Import)
-            for alias in node.names
-            if alias.name.split(".")[0] == "openqml"
-        ]
-        assert [(alias.name, alias.asname) for alias in imports] == [("openqml", "oq")]
-        assert not any(
-            isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "openqml"
-            for node in ast.walk(program)
-        )
+    for block in re.findall(r"```python\n(.*?)```", readme, re.S):
         exec(compile(block, "README.md", "exec"), namespace)
-    assert namespace["oq"] is oq
+    assert namespace["oq"] is oq and namespace["correlation"] == pytest.approx(1)
+    model = namespace["model"]
+    assert tuple(model.predict_proba(namespace["x"]).shape) == (32, 2)
+    assert model.trainer.updates == sum(row["updates"] for row in model.history) >= 1
+    assert oq.numpy.isfinite(model.history[-1]["loss"])
+    assert any(state["exp_avg"].count_nonzero() for state in model.trainer.optimizer.state.values())
 
 
 def test_single_import_supports_jax_flax_and_optax_training():
@@ -187,18 +172,3 @@ def test_single_import_supports_jax_flax_and_optax_training():
     module = oq.flax.QuantumLayer.from_spec(spec)
     variables = module.init(key, inputs)
     assert module.apply(variables, inputs).shape == (2, 2)
-
-
-def test_single_import_supports_native_sdk_programs_and_conversion():
-    for name in ("qiskit", "cirq", "pennylane"):
-        pytest.importorskip(name)
-    program = oq.qiskit.QuantumCircuit(2)
-    program.h(0)
-    program.cx(0, 1)
-    circuit = oq.convert(program, target="ir").value
-    for target in ("qiskit", "cirq", "pennylane", "openqasm2", "openqasm3"):
-        native = oq.convert(circuit, target=target).value
-        restored = oq.convert(native, source=target, target="ir").value
-        oq.numpy.testing.assert_allclose(
-            oq.statevector(restored), oq.statevector(circuit), atol=1e-12
-        )

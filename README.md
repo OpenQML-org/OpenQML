@@ -1,86 +1,71 @@
 # OpenQML
 
-[PyPI](https://pypi.org/project/openqml/) · [Documentation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/api.md) · [Changes](https://github.com/OpenQML-org/OpenQML/blob/main/CHANGELOG.md) · [CI](https://github.com/OpenQML-org/OpenQML/actions/workflows/ci.yml)
+OpenQML is a Python library for training quantum–classical models, working with
+portfolio scenarios and moving quantum circuits between frameworks. You can
+build and simulate a circuit with NumPy, then use the same circuit in a PyTorch
+or JAX model.
 
-[Contributing](CONTRIBUTING.md) · [Governance](GOVERNANCE.md) · [Security](SECURITY.md)
+[PyPI](https://pypi.org/project/openqml/) · [API reference](https://github.com/OpenQML-org/OpenQML/blob/main/docs/api.md) · [Changelog](https://github.com/OpenQML-org/OpenQML/blob/main/CHANGELOG.md)
 
-OpenQML can choose tensor-network bond ranks from the accuracy a caller needs
-in a measured expectation, a class margin, a weight gradient or a discounted
-price. Each result carries the achieved truncation bound in the requested units.
-[Readout accuracy and execution](https://github.com/OpenQML-org/OpenQML/blob/main/docs/compute.md#choosing-bond-ranks-from-the-requested-output-accuracy)
+## Installation
 
-## Quantum–classical hybrid AI
-
-Build and train hybrid neural networks with PyTorch, JAX or Flax. Use `Model.fit` and `predict` for supervised tasks, or compose convolution, attention, graph, recurrent and generative architectures with native layers. Validation loss, early stopping and portable checkpoints keep model selection and continued training in the same workflow. [Explore hybrid AI](https://github.com/OpenQML-org/OpenQML/blob/main/docs/models.md).
-
-Train native quantum blocks with resumable, distance-aware Quantum Natural Muon
-and classical blocks with AdamW through one `hybrid_qnm` optimizer. Microbatch
-accumulation and DDP share an empirical, matrix-free quantum Fisher metric.
-Sample chunking bounds the active state workspace during geometry products.
-Noisy and dynamic circuits use regularized density-state Fisher geometry with
-implicit Sylvester derivatives, including repeated density eigenvalues.
-External Torch/JAX layers can pack forward and parameter-shift rows into one
-provider submission and reuse their linearization during backward.
-
-`LindbladPlan` and native PyTorch/Flax `LindbladLayer` learn continuous-time
-coherent and dissipative dynamics. Exact local CPTP maps preserve density
-constraints, while explicit discretization and generator-uncertainty bounds
-quantify the modeled readout error. Sparse Pauli transfer layers also train
-standard local noise probabilities directly from batched readouts.
-
-## Quantum–classical hybrid quantitative research
-
-Train scenario distributions, allocate constrained portfolios and project decisions onto explicit CVaR budgets with a funded cash position. Low-rank factor solves and native PyTorch/JAX derivatives connect financial objectives to hybrid models. Purged walk-forward refits and self-financing accounting preserve chronological evaluation, execution delays, fees and market impact. [Explore quantitative research](https://github.com/OpenQML-org/OpenQML/blob/main/docs/finance.md).
-
-Learn scenario probabilities, Wasserstein radii and anisotropic transport metrics.
-`ScenarioPlan.execution_loss` connects proper-score calibration to after-cost
-decisions. Exact piecewise quadratic projections fund proportional fees and
-market impact while enforcing CVaR or expectile budgets.
-`ScenarioPlan.tree` adds funded multi-stage policies and nested conditional risk.
-`MultiPeriodPlan` couples forecast-horizon decisions through turnover costs.
-`ScenarioPlan.horizon_decision` differentiates those decisions through predicted
-path probabilities without constructing a dense horizon KKT matrix.
-`TailAllocationPlan` jointly optimizes path CVaR, Wasserstein robustness and
-multi-period rebalancing with implicit first and higher derivatives.
-`ScenarioPlan.tail_decision` connects this optimizer to learned Born probabilities. EVaR execution budgets
-and asset-level tail-risk contributions use the same scenario distributions.
-
-## Cross-framework quantum programming
-
-Connect Qiskit, Cirq, PennyLane and OpenQASM through a shared circuit representation. Compile grouped switch cases, finite loops and atomic classical guards; reuse shared definitions and symbolic expressions. Prepare conversions once, stream parameter sweeps and verify their semantics against round-trip or native execution. [Explore interoperability](https://github.com/OpenQML-org/OpenQML/blob/main/docs/interoperability.md).
-
-Typed Qiskit logical, bitwise and unsigned comparison predicates lower to bounded
-shared decision graphs. Their branch selection completes before either payload
-executes, including payloads that overwrite a measured predicate input.
-Fixed-width unsigned arithmetic includes division with symbolically proved
-nonzero divisors. Correlated selector proofs admit bounded dynamic shifts and
-bit indexing while preserving atomic branch selection.
-Deferred Qiskit inverses, controls and numeric powers expand through the same
-checked conversion routes.
-Finite loops with `break` and `continue` preserve measurement feedback, nested
-exit targets and entry-time branch selection under explicit expansion budgets.
-Bool/Uint variables and runtime assignments lower to explicit classical storage
-in IR v5. Shared snapshots preserve overlapping assignments; liveness analysis
-merges overwritten records without allocating additional qubits. Optional
-affine phase folding combines diagonal rotations while preserving branch-local phase.
-
-Simulate physical noise with amplitude/phase damping, depolarization and custom Kraus channels. Correct independent readout errors or extrapolate measured noise scales with explicit conditioning and sampling-overhead limits. Caller-initialized Qiskit V2 primitives connect real hardware; see [execution limits and mitigation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md#physical-noise-and-error-mitigation).
-
-## Install
-
-Python 3.10 or later:
+OpenQML requires Python 3.10 or later.
 
 ```bash
-python -m pip install -U openqml
+python -m pip install openqml
 ```
 
-The core depends on NumPy, packaging and psutil. Training frameworks, quantum SDKs and execution engines load on demand. Install the integrations you use, such as `openqml[torch]`, `openqml[jax]`, `openqml[flax]` or `openqml[qiskit,cirq]`.
+The core includes NumPy simulation, portfolio allocation and OpenQASM export.
+Install an extra when you need a training framework or a quantum SDK. For
+example, `python -m pip install "openqml[torch]"` adds PyTorch.
+Other choices include `openqml[jax]`, `openqml[flax]` and `openqml[qiskit,cirq]`.
 
-Install `openqml[gpu]` on Linux x86-64 for the OpenQML statevector kernels on NVIDIA CUDA. The same circuit IR drives GPU simulation, differentiable PyTorch and JAX training, tensor-network readouts and asynchronous Qiskit V2 QPU jobs. See [GPU and QPU execution](docs/runtime.md).
+## Simulate and export a circuit
 
-## Quick start
+This six-qubit circuit entangles the first and last wires. Measuring either
+wire alone gives a random bit, but the two results always agree. Their
+`ZIIIIZ` correlation is therefore 1, up to floating-point rounding.
 
-Allocate from observed returns:
+```python
+import openqml as oq
+
+circuit = oq.Circuit(6).h(0)
+for control, target in zip(range(5), range(1, 6)):
+    circuit = circuit.cx(control, target)
+
+correlation = oq.expectation(circuit, oq.PauliString("ZIIIIZ"), backend="numpy")
+print(correlation)
+print(oq.convert(circuit, target="openqasm3").value)
+```
+
+`convert` also works with supported Qiskit circuits, Cirq circuits and
+PennyLane tapes. For a parameter sweep, `plan_conversion` lets you prepare the
+conversion once and reuse it across bindings. [Circuit formats and supported operations](https://github.com/OpenQML-org/OpenQML/blob/main/docs/interoperability.md)
+
+## Train a hybrid model
+
+With `openqml[torch]` installed, you can fit a small classifier directly from
+Python lists. The two inputs below are the bits of an XOR problem.
+
+```python
+import openqml as oq
+
+x = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]] * 8
+y = [0, 1, 1, 0] * 8
+model = oq.Model(task="classification", hidden_features=8, depth=2)
+model.fit(x, y, epochs=10)
+print(model.predict_proba(x[:2]))
+```
+
+Use `Model` for fitting, validation and checkpoints. If you already have a
+training loop, add a quantum layer to your existing PyTorch, JAX or Flax model.
+The layer exposes its parameters to the framework optimizer.
+[Models](https://github.com/OpenQML-org/OpenQML/blob/main/docs/models.md) · [Training and gradients](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md)
+
+## Allocate a portfolio
+
+Each row of `returns` is one observation and each column is one asset.
+Here the allocator caps either asset at 70% of the portfolio.
 
 ```python
 import openqml as oq
@@ -90,61 +75,21 @@ portfolio = oq.finance.allocate(returns, caps=0.7, fees=0.001)
 print(portfolio.weights)
 ```
 
-Train a hybrid model after installing `openqml[torch]`:
+For multi-period research, scenario plans model how allocations, cash and fees
+change along each path. Walk-forward evaluation fits on past observations and
+scores the next period. [Portfolio construction, risk and pricing](https://github.com/OpenQML-org/OpenQML/blob/main/docs/finance.md)
 
-```python
-import openqml as oq
+## Execution options
 
-x = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]] * 8
-y = [0, 1, 1, 0] * 8
-model = oq.Model(task="classification", hidden_features=8, depth=2)
-model.fit(x, y, epochs=10)
-print(model.predict(x[:2]))
-```
+A dense statevector stores one complex amplitude per basis state. If you only
+need expectation values and the circuit has modest entanglement, the
+matrix-product-state (MPS) backend can use much less memory. Exact mode keeps the full bond at each step.
+If you allow Schmidt truncation, the readout reports an error bound for each
+observable.
 
-Select `framework="jax"` or `framework="flax"` to change training frameworks. `backend` chooses circuit execution; `device` chooses native tensor placement. Qubit counts follow the selected backend's available resources.
+On Linux x86-64, `openqml[gpu]` provides native Triton kernels for supported
+NVIDIA GPUs. Use CUDA binding tensors with `backend="torch"` to keep both the
+state and its gradients on the device.
+[Execution backends](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md) · [Memory budgets and readout accuracy](https://github.com/OpenQML-org/OpenQML/blob/main/docs/compute.md)
 
-Export a six-qubit trainable circuit with an explicit CX chain:
-
-```python
-import openqml as oq
-
-layer = oq.hardware_efficient(6, depth=1, wire_order=(0, 4, 1, 3, 2, 5))
-circuit = layer.circuit.rx(0.31, 5)
-result = oq.convert(circuit, target="openqasm3")
-print(result.value)
-```
-
-`convert` imports, checks and exports in one call. Native SDK targets require
-their corresponding integration. Use `plan_conversion` when repeatedly binding
-or exporting the same source.
-
-Hybrid models, financial operators and circuit execution share a
-native compute kernel. It centralizes array placement, matrix products,
-contraction planning, numerical checks and memory admission. Configure a common
-workspace ceiling for an isolated execution scope:
-
-```python
-import openqml as oq
-
-with oq.compute_context(policy=oq.ComputePolicy(max_memory_mb=512)):
-    result = oq.expectations(oq.Circuit(1).h(0), [oq.PauliString("Z")])
-```
-
-Use `compile_compute` for checked Torch/JAX compilation. Iterative solves certify
-their true residual before returning a solution. Operation-specific budgets
-remain available. Shared caches hold bounded,
-immutable planning metadata; trainable tensors stay in each forward pass.
-[Compute policies and numerical contracts](https://github.com/OpenQML-org/OpenQML/blob/main/docs/compute.md).
-
-`Circuit.append` shares immutable prefix chunks. Local NumPy execution fuses
-single/two-wire gate groups and applies them through tensor views. Use
-`compile_circuit` to compile a complete native circuit and its declared readouts.
-Implementations are organized in responsibility packages; the root API and
-published module imports remain available.
-
-[API](https://github.com/OpenQML-org/OpenQML/blob/main/docs/api.md) · [Training and validation](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md) · [Quantitative research](https://github.com/OpenQML-org/OpenQML/blob/main/docs/finance.md) · [Interoperability](https://github.com/OpenQML-org/OpenQML/blob/main/docs/interoperability.md) · [Runtime](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md)
-
-## License
-
-[Apache-2.0](LICENSE)
+[Apache-2.0 license](https://github.com/OpenQML-org/OpenQML/blob/main/LICENSE) · [Contributing](https://github.com/OpenQML-org/OpenQML/blob/main/CONTRIBUTING.md) · [Governance](https://github.com/OpenQML-org/OpenQML/blob/main/GOVERNANCE.md) · [Security](https://github.com/OpenQML-org/OpenQML/blob/main/SECURITY.md)

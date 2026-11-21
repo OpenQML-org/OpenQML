@@ -52,6 +52,12 @@ def noisy_spec():
     return LayerSpec(circuit, ("x",), ("p", "w"), (PauliString("IZ"), PauliString("IX")))
 
 
+def torch_leaves(tree):
+    import torch
+
+    return [v.detach().cpu().numpy() for v in torch.utils._pytree.tree_leaves(tree)]
+
+
 def tree_close(a, b, leaves, atol):
     first, second = leaves(a), leaves(b)
     assert len(first) == len(second)
@@ -78,8 +84,7 @@ def test_torch_standard_products_jacobians_and_broadcast_reductions(method):
     x = torch.linspace(-0.3, 0.5, 6, dtype=torch.float64).reshape(2, 3)
     dw, dx = torch.ones_like(w) * 0.2, torch.ones_like(x) * -0.1
 
-    def leaves(t):
-        return [v.detach().numpy() for v in torch.utils._pytree.tree_leaves(t)]
+    leaves = torch_leaves
 
     operations = [
         lambda f: torch.func.jvp(f, (w, x), (dw, dx)),
@@ -142,8 +147,7 @@ def test_transform_axes_stay_independent_of_model_broadcast_dimensions(framework
 
         stack, vmap, move = package.stack, package.func.vmap, lambda a, d: a.movedim(0, d)
 
-        def leaves(t):
-            return [v.detach().numpy() for v in package.utils._pytree.tree_leaves(t)]
+        leaves = torch_leaves
     else:
         import jax.numpy as jnp
 
@@ -210,8 +214,7 @@ def test_vmap_of_grad_and_jvp_and_reverse_of_vmap(framework):
 
         opts, api, axis = {"dtype": lib.float64}, lib.func, "in_dims"
 
-        def leaves(t):
-            return [v.detach().numpy() for v in lib.utils._pytree.tree_leaves(t)]
+        leaves = torch_leaves
 
         def square(a):
             return a.square()
@@ -256,8 +259,7 @@ def test_noise_measurement_feedback_standard_first_order_transforms(framework):
         def arr(a):
             return lib.tensor(a, dtype=lib.float64)
 
-        def leaves(t):
-            return [v.detach().numpy() for v in lib.utils._pytree.tree_leaves(t)]
+        leaves = torch_leaves
     else:
         import jax.numpy as jnp
 
@@ -411,8 +413,7 @@ def test_imported_native_programs_use_standard_transforms(framework, source):
         opts, api = {"dtype": lib.float64}, lib.func
         w, x = lib.ones(4, dtype=lib.float64) * 0.3, lib.ones(3, dtype=lib.float64) * 0.2
 
-        def leaves(t):
-            return [v.detach().numpy() for v in lib.utils._pytree.tree_leaves(t)]
+        leaves = torch_leaves
     else:
         import jax.numpy as jnp
 
@@ -454,8 +455,7 @@ def test_sdk_execution_backends_support_standard_jvp_and_vjp(framework, backend)
         options, api = {"dtype": lib.float64}, lib.func
         w, x = lib.ones(4, dtype=lib.float64) * 0.3, lib.ones(3, dtype=lib.float64) * 0.2
 
-        def leaves(value):
-            return [v.detach().numpy() for v in lib.utils._pytree.tree_leaves(value)]
+        leaves = torch_leaves
     else:
         import jax.numpy as jnp
 
@@ -509,8 +509,7 @@ def test_empty_dimensions_and_eliminated_symbols_keep_transform_shapes(framework
         options, api, axis = {"dtype": lib.float64}, lib.func, "in_dims"
         w, x = lib.tensor(ww, dtype=lib.float64), lib.tensor(xx, dtype=lib.float64)
 
-        def leaves(value):
-            return [v.detach().numpy() for v in lib.utils._pytree.tree_leaves(value)]
+        leaves = torch_leaves
     else:
         import jax.numpy as jnp
 

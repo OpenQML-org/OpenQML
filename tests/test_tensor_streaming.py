@@ -1,21 +1,12 @@
 """Memory-admitted parameter-grid streaming and native derivative equivalence."""
 
-import gc
-import sys
-
 import numpy as np
 import pytest
 
 import openqml as oq
 from openqml._tensor_contraction import TensorNetworkPlan
 
-
-@pytest.fixture(autouse=True)
-def release_compilations():
-    yield
-    if "jax" in sys.modules:
-        sys.modules["jax"].clear_caches()
-    gc.collect()
+pytestmark = pytest.mark.usefixtures("release_compilations")
 
 
 def plans():

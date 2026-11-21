@@ -4,16 +4,13 @@ import numpy as np
 import pytest
 
 import openqml as oq
+from tests import as_numpy
 
 
 def _plan():
     a, b, phase = (oq.Parameter(n) for n in ("a", "b", "phase"))
     circuit = oq.Circuit(6).ry(a * b, 0).rz(a.sin(), 0).ry(b, 5).with_global_phase(phase)
     return oq.quantum_metric(circuit, parameters=("a", "b", "phase"))
-
-
-def _array(value, backend):
-    return value.detach().cpu().numpy() if backend == "torch" else np.asarray(value)
 
 
 @pytest.mark.parametrize("backend", ["torch", "jax"])
@@ -31,9 +28,7 @@ def test_native_metric_factorization_phase_nullspace_and_parameter_derivatives(b
         )
 
     actual = function(theta)
-    np.testing.assert_allclose(
-        _array(actual, backend), reference @ _array(vector, backend), rtol=3e-5, atol=2e-7
-    )
+    np.testing.assert_allclose(as_numpy(actual), reference @ as_numpy(vector), rtol=3e-5, atol=2e-7)
     assert abs(float(actual[-1])) < 2e-7
     if backend == "torch":
         theta.requires_grad_()
@@ -52,7 +47,7 @@ def test_native_metric_factorization_phase_nullspace_and_parameter_derivatives(b
         expected.append(
             (((matrices[0] - matrices[1]) / (2 * h)) @ np.array([0.2, -0.4, 0.8])).sum()
         )
-    np.testing.assert_allclose(_array(derivative, backend), expected, atol=2e-6, rtol=3e-4)
+    np.testing.assert_allclose(as_numpy(derivative), expected, atol=2e-6, rtol=3e-4)
 
 
 @pytest.mark.parametrize("backend", ["torch", "jax"])
@@ -76,12 +71,10 @@ def test_native_cg_certifies_the_actual_system_and_preserves_native_results(back
 
     result = run(gradient) if backend == "torch" else lib.jit(run)(gradient)
     matrix = plan.matrix(bindings) + 0.05 * np.eye(3)
-    expected = np.linalg.solve(matrix, _array(gradient, backend))
+    expected = np.linalg.solve(matrix, as_numpy(gradient))
     assert bool(result.converged)
-    np.testing.assert_allclose(_array(result.direction, backend), expected, rtol=3e-5, atol=3e-6)
-    residual = np.linalg.norm(
-        matrix @ _array(result.direction, backend) - _array(gradient, backend)
-    )
+    np.testing.assert_allclose(as_numpy(result.direction), expected, rtol=3e-5, atol=3e-6)
+    residual = np.linalg.norm(matrix @ as_numpy(result.direction) - as_numpy(gradient))
     assert residual < 1e-5
     assert float(result.residual_norm) < 1e-5
     assert int(result.metric_products) >= int(result.iterations) + 1 + rank
@@ -92,7 +85,7 @@ def test_native_cg_certifies_the_actual_system_and_preserves_native_results(back
         else:
             derivative = lib.jit(lib.grad(lambda g: run(g).direction.sum()))(gradient)
         np.testing.assert_allclose(
-            _array(derivative, backend), np.linalg.solve(matrix, np.ones(3)), atol=3e-4, rtol=3e-4
+            as_numpy(derivative), np.linalg.solve(matrix, np.ones(3)), atol=3e-4, rtol=3e-4
         )
 
 
@@ -117,16 +110,16 @@ def test_spectral_step_preserves_inactive_subspaces_and_certifies_only_the_origi
         learning_rate=1,
         damping=0.05,
     )
-    np.testing.assert_allclose(_array(result.step, backend), [0.02, 0, 0, 0], atol=2e-7)
+    np.testing.assert_allclose(as_numpy(result.step), [0.02, 0, 0, 0], atol=2e-7)
     assert bool(result.natural.converged) and float(result.alignment) > 0
     assert not bool(result.used_natural_direction)
     np.testing.assert_allclose(
-        (plan.matrix(bindings) + 0.05 * np.eye(4)) @ _array(result.natural.direction, backend),
+        (plan.matrix(bindings) + 0.05 * np.eye(4)) @ as_numpy(result.natural.direction),
         [1, 0, 0, 0],
         atol=3e-6,
     )
     zero = plan.spectral_step(bindings, gradient * 0, block_shapes=((2, 2),), backend=backend)
-    np.testing.assert_array_equal(_array(zero.step, backend), np.zeros(4))
+    np.testing.assert_array_equal(as_numpy(zero.step), np.zeros(4))
     assert bool(zero.natural.converged)
 
 
@@ -166,7 +159,7 @@ def test_native_sample_geometry_is_the_weighted_mean_without_per_sample_metric_m
     expected = sum(p * matrix for p, matrix in zip((0.2, 0.3, 0.5), matrices, strict=True))
     result = run(mass) if backend == "torch" else lib.jit(run)(mass)
     np.testing.assert_allclose(
-        _array(result, backend), expected @ np.array([0.2, -0.4, 0.8]), rtol=3e-5, atol=2e-7
+        as_numpy(result), expected @ np.array([0.2, -0.4, 0.8]), rtol=3e-5, atol=2e-7
     )
     if backend == "torch":
         mass.requires_grad_()

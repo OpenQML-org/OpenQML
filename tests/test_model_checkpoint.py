@@ -1,8 +1,6 @@
 """Portable high-level prediction and optimizer/shuffle continuation contracts."""
 
-import gc
 import json
-import sys
 import zipfile
 
 import numpy as np
@@ -10,13 +8,7 @@ import pytest
 
 import openqml as oq
 
-
-@pytest.fixture(autouse=True)
-def release_compilations():
-    yield
-    if "jax" in sys.modules:
-        sys.modules["jax"].clear_caches()
-    gc.collect()
+pytestmark = pytest.mark.usefixtures("release_compilations")
 
 
 def _framework(framework):

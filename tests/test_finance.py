@@ -1,38 +1,12 @@
 """Independent financial optimization, accounting and native-training contracts."""
 
-import gc
 import itertools
-import subprocess
-import sys
 
 import numpy as np
 import pytest
 
 import openqml as q
 from openqml import finance as f
-
-
-@pytest.fixture
-def native():
-    torch = pytest.importorskip("torch")
-    jax = pytest.importorskip("jax")
-    jnp = pytest.importorskip("jax.numpy")
-    previous = jax.config.jax_enable_x64
-    jax.config.update("jax_enable_x64", True)
-    try:
-        yield torch, jax, jnp
-    finally:
-        jax.config.update("jax_enable_x64", previous)
-        jax.clear_caches()
-        gc.collect()
-
-
-def test_finance_namespace_keeps_core_install_light():
-    source = (
-        "import sys,openqml as q; assert q.finance.AllocationPlan; "
-        "assert not {'torch','jax','flax','scipy','pandas'} & set(sys.modules)"
-    )
-    subprocess.run([sys.executable, "-c", source], check=True)
 
 
 def test_weighted_covariance_fractional_cvar_and_zero_mass_reference():
@@ -146,8 +120,8 @@ def test_matrix_free_factor_path_scales_without_asset_kkt(monkeypatch):
     assert plan.resource_profile(512, 6)["solver"] == "factor_Woodbury_refinement"
 
 
-def test_implicit_allocation_derivatives_and_higher_derivatives(native):
-    torch, jax, jnp = native
+def test_implicit_allocation_derivatives_and_higher_derivatives(native_x64):
+    torch, jax, jnp = native_x64
     rng = np.random.default_rng(31)
     samples = rng.normal(size=(15, 5)) * 0.05
     risk = f.factor_risk(samples)
@@ -195,8 +169,8 @@ def test_implicit_allocation_derivatives_and_higher_derivatives(native):
     np.testing.assert_allclose(batched.weights, np.broadcast_to(tw.detach(), (2, 5)), atol=2e-10)
 
 
-def test_zero_probability_factor_gradients_are_finite_and_correct(native):
-    torch, jax, jnp = native
+def test_zero_probability_factor_gradients_are_finite_and_correct(native_x64):
+    torch, jax, jnp = native_x64
     atoms = np.random.default_rng(4).normal(size=(4, 3)) * 0.01
     probabilities = np.array([0.0, 0.2, 0.3, 0.5])
     plan = f.AllocationPlan(turnover=0.5)
@@ -263,8 +237,8 @@ def test_self_financing_accounting_independent_reference_and_streaming(lag):
     )
 
 
-def test_self_financing_native_gradients_and_masked_chunk_boundaries(native):
-    torch, jax, jnp = native
+def test_self_financing_native_gradients_and_masked_chunk_boundaries(native_x64):
+    torch, jax, jnp = native_x64
     rng = np.random.default_rng(18)
     r = rng.normal(size=(2, 6, 3)) * 0.02
     w = rng.dirichlet(np.ones(4), size=(2, 6))[:, :, :3]
@@ -368,8 +342,8 @@ def test_conditional_quantum_blocks_keep_global_cross_cost_and_cardinality():
     assert sampled.feasible_shots == 4 and sampled.invalid_shots == 3
 
 
-def test_quantum_portfolio_native_autodiff_and_existing_layer_transform(native):
-    torch, jax, jnp = native
+def test_quantum_portfolio_native_autodiff_and_existing_layer_transform(native_x64):
+    torch, jax, jnp = native_x64
     rng = np.random.default_rng(5)
     a = rng.normal(size=(4, 4)) * 0.02
     plan = f.PortfolioSelection(rng.normal(size=4) * 0.01, a.T @ a, 2).problem.qaoa(
@@ -441,8 +415,8 @@ def test_full_counterdiabatic_generator_matches_independent_dense_commutator():
 
 
 @pytest.mark.parametrize("model", ["recurrent", "state-attention", "tensor"])
-def test_market_forecasts_use_shared_quantum_tensor_program_and_native_gradients(model, native):
-    torch, jax, jnp = native
+def test_market_forecasts_use_shared_quantum_tensor_program_and_native_gradients(model, native_x64):
+    torch, jax, jnp = native_x64
     plan = f.MarketForecastPlan(
         3, 2, depth=1, hidden_features=4, model=model, projection_policy="tensor-train"
     )
@@ -476,8 +450,10 @@ def test_market_forecasts_use_shared_quantum_tensor_program_and_native_gradients
     assert any(projection is not None for projection in architecture.projections.values())
 
 
-def test_born_joint_scenarios_factor_decisions_and_training_connect_end_to_end(native, tmp_path):
-    torch, jax, jnp = native
+def test_born_joint_scenarios_factor_decisions_and_training_connect_end_to_end(
+    native_x64, tmp_path
+):
+    torch, jax, jnp = native_x64
     atoms = np.array(
         [[-0.03, 0.01, 0.02], [0.04, -0.02, 0.03], [0.01, 0.03, -0.04], [-0.01, -0.01, -0.02]]
     )
@@ -581,8 +557,8 @@ def test_financial_domain_failures_and_budget_admission():
         problem.qaoa().decode_counts({"00000000": 1})
 
 
-def test_masked_financial_targets_and_traced_domain_failures(native):
-    torch, jax, jnp = native
+def test_masked_financial_targets_and_traced_domain_failures(native_x64):
+    torch, jax, jnp = native_x64
     plan = f.MarketForecastPlan(2, 2)
     raw = torch.zeros((1, 2 * 5), dtype=torch.float64, requires_grad=True)
     target = torch.tensor([[0.01, float("nan")]], dtype=torch.float64)

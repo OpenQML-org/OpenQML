@@ -13,7 +13,8 @@ import numpy as np
 from ..compute.kernel import get_compute_kernel, memory_budget
 from ..errors import ResourceError, ValidationError
 from ..ir.core import Circuit, _require_circuit, integer
-from ..ir.observables import Hamiltonian
+from ..ir.observables import Hamiltonian, _masks
+from ..sim._device_ops import matrix_cotangent
 from ..sim.dense import (
     _X,
     _Y,
@@ -21,6 +22,7 @@ from ..sim.dense import (
     _apply_matrix,
     _expectations_from_state,
     _gate_matrix,
+    _numpy_parity,
     _TensorOps,
 )
 from ._common import _binding_columns, _names, _observables, _real_array
@@ -95,22 +97,41 @@ def _forward(circuit, bindings, batch_size):
     return state
 
 
-def _pauli_action(state, paulis):
-    index = np.arange(state.shape[-1], dtype=np.int64)
-    index ^= sum(1 << (len(paulis) - q - 1) for q, p in enumerate(paulis) if p in "XY")
-    transformed = state[..., index] * (1j ** paulis.count("Y"))
-    for q, p in enumerate(paulis):
-        if p in "YZ":
-            transformed *= 1 - 2 * ((index >> (len(paulis) - q - 1)) & 1)
-    return transformed
+def _weighted_pauli_action(state, terms):
+    """Gather one amplitude tile per X mask, sharing it across all Z phases."""
+    groups = {}
+    for word, coefficient in terms:
+        if not np.isfinite(coefficient).all():
+            raise ValidationError("Adjoint readout coefficients exceed finite real precision.")
+        if np.any(coefficient):
+            flip, sign = _masks(word[::-1])
+            weight = np.asarray(coefficient)[..., None] * (1j ** word.count("Y"))
+            groups.setdefault(flip, []).append((sign, weight))
+
+    result = np.zeros_like(state)
+    if not groups:
+        return result
+    width = state.shape[-1]
+    rows = max(1, state.size // width)
+    tile = max(1, (1 << 20) // (80 * rows + 48))
+    for start in range(0, width, tile):
+        stop = min(width, start + tile)
+        index = np.arange(start, stop, dtype=np.int64)
+        for flip, phases in groups.items():
+            source = index ^ flip if flip else index
+            total = 0
+            for sign, weight in phases:
+                total = total + (
+                    np.where(_numpy_parity(source, sign), -weight, weight) if sign else weight
+                )
+            amplitudes = state[..., source] if flip else state[..., start:stop]
+            result[..., start:stop] += amplitudes * total
+    return result
 
 
 def _observable_action(state, observable):
-    result = np.zeros_like(state)
-    for term in observable.terms if isinstance(observable, Hamiltonian) else (observable,):
-        if term.coefficient:
-            result += term.coefficient * _pauli_action(state, term.paulis)
-    return result
+    terms = observable.terms if isinstance(observable, Hamiltonian) else (observable,)
+    return _weighted_pauli_action(state, ((term.paulis, term.coefficient) for term in terms))
 
 
 def _costate(state, observables, cotangents):
@@ -118,13 +139,7 @@ def _costate(state, observables, cotangents):
     for j, observable in enumerate(observables):
         for term in observable.terms if isinstance(observable, Hamiltonian) else (observable,):
             terms[term.paulis] = terms.get(term.paulis, 0.0) + cotangents[:, j] * term.coefficient
-    result = np.zeros_like(state)
-    for paulis, coefficient in terms.items():
-        if not np.isfinite(coefficient).all():
-            raise ValidationError("Adjoint readout coefficients exceed finite real precision.")
-        if np.any(coefficient):
-            result += coefficient[:, None] * _pauli_action(state, paulis)
-    return result
+    return _weighted_pauli_action(state, terms.items())
 
 
 def _reverse(circuit, bindings, state, costate, derivatives, size):
@@ -136,15 +151,14 @@ def _reverse(circuit, bindings, state, costate, derivatives, size):
         matrix = _gate_matrix(op.name, params, ops, op.matrix)
         inverse = matrix.conj().swapaxes(-1, -2)
         before = _apply_matrix(state, inverse, op.qubits, circuit.num_qubits, ops)
+        if angles:
+            # Contract spectators once for every active angle of this gate.
+            local_grad = matrix_cotangent(
+                before, costate, op.qubits, circuit.num_qubits, ops
+            ).conj()
         for index, coefficients in angles:
-            tangent = _apply_matrix(
-                before,
-                _derivative_matrix(op.name, params, index, matrix),
-                op.qubits,
-                circuit.num_qubits,
-                ops,
-            )
-            local = 2 * np.real(np.sum(np.conj(costate) * tangent, axis=-1))
+            derivative = _derivative_matrix(op.name, params, index, matrix)
+            local = 2 * np.real(np.einsum("...ij,...ij->...", local_grad, derivative))
             for position, coefficient in coefficients:
                 result[:, position] += local * coefficient.evaluate(bindings)
         costate = _apply_matrix(costate, inverse, op.qubits, circuit.num_qubits, ops)
@@ -185,17 +199,18 @@ def _tangent_forward(circuit, bindings, derivatives, tangents):
             if active
             else tangent
         )
+        directional_matrix = None
         for index, coefficients in angles:
             direction = _angle_direction(coefficients, bindings, tangents)
             if np.any(direction):
-                evolved += direction[:, None] * _apply_matrix(
-                    state,
-                    _derivative_matrix(op.name, params, index, matrix),
-                    op.qubits,
-                    circuit.num_qubits,
-                    ops,
-                )
-                active = True
+                term = direction[:, None, None] * _derivative_matrix(op.name, params, index, matrix)
+                if directional_matrix is None:
+                    directional_matrix = term
+                else:
+                    directional_matrix += term
+        if directional_matrix is not None:
+            evolved += _apply_matrix(state, directional_matrix, op.qubits, circuit.num_qubits, ops)
+            active = True
         state = _apply_matrix(state, matrix, op.qubits, circuit.num_qubits, ops)
         tangent = evolved
     return state, tangent

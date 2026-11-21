@@ -313,3 +313,116 @@ def launch_contraction(plan, left, right):
                 block,
             )
     return result
+
+
+@triton.jit
+def _pauli_pair(
+    state,
+    weight,
+    output,
+    PAIRS: tl.constexpr,
+    FLIP: tl.constexpr,
+    SIGN: tl.constexpr,
+    PIVOT: tl.constexpr,
+    PHASE: tl.constexpr,
+    SHAPE: tl.constexpr,
+    XS: tl.constexpr,
+    WS: tl.constexpr,
+    LAST: tl.constexpr,
+    CONJ: tl.constexpr,
+    BACKWARD: tl.constexpr,
+    BLOCK: tl.constexpr,
+):
+    pid = tl.program_id(0).to(tl.int64)
+    tiles = tl.cdiv(PAIRS, BLOCK)
+    row = pid // tiles
+    pair = (pid % tiles) * BLOCK + tl.arange(0, BLOCK)
+    a = ((pair & -PIVOT) << 1) | (pair & (PIVOT - 1))
+    b = a ^ FLIP
+    start, scale_offset = row * 0, row * 0
+    batch = row
+    for axis in tl.static_range(len(SHAPE)):
+        digit = batch % SHAPE[axis]
+        start += digit * XS[axis]
+        if BACKWARD:
+            scale_offset += digit * WS[axis]
+        batch = batch // SHAPE[axis]
+    ar = tl.load(state + 2 * (start + a * LAST), pair < PAIRS, 0.0)
+    ai = tl.load(state + 2 * (start + a * LAST) + 1, pair < PAIRS, 0.0)
+    br = tl.load(state + 2 * (start + b * LAST), pair < PAIRS, 0.0)
+    bi = tl.load(state + 2 * (start + b * LAST) + 1, pair < PAIRS, 0.0)
+    if CONJ:
+        ai, bi = -ai, -bi
+    bits = a & SIGN
+    for n in tl.static_range(4):
+        if SIGN >> (32 >> n):
+            bits = bits ^ (bits >> (32 >> n))
+    odd = (0x6996 >> (bits & 15)) & 1
+    factor = tl.where(odd != 0, -2.0, 2.0)
+    if PHASE >= 2:
+        factor = -factor
+    if BACKWARD:
+        factor = factor * tl.load(weight + scale_offset)
+        # grad <x|P|x> = 2 P x. The two matrix elements are conjugates.
+        if PHASE & 1:
+            dar, dai, dbr, dbi = bi, -br, -ai, ar
+        else:
+            dar, dai, dbr, dbi = br, bi, ar, ai
+        dst = output + 2 * row * (2 * PAIRS)
+        tl.store(dst + 2 * a, factor * dar, pair < PAIRS)
+        tl.store(dst + 2 * a + 1, factor * dai, pair < PAIRS)
+        tl.store(dst + 2 * b, factor * dbr, pair < PAIRS)
+        tl.store(dst + 2 * b + 1, factor * dbi, pair < PAIRS)
+    else:
+        if PHASE & 1:
+            component = ar * bi - ai * br
+        else:
+            component = ar * br + ai * bi
+        tl.store(output + pid, tl.sum(factor * component, axis=0))
+
+
+def launch_pauli_pair(state, word, weight=None):
+    """Reduce disjoint amplitude pairs or apply their exact real-loss pullback."""
+    from contextlib import nullcontext
+
+    from ..compute.kernel import get_compute_kernel
+    from ..ir.observables import _masks
+
+    flip, sign = _masks(word[::-1])
+    pairs, block = state.shape[-1] // 2, 256
+    tiles = triton.cdiv(pairs, block)
+    batch = tuple(state.shape[:-1])
+    if weight is None:
+        shape = batch + (tiles,)
+        get_compute_kernel()._workspace((state,), shape, buffers=2)
+        output = state.real.new_empty(shape)
+        raw_output = output
+    else:
+        weight = weight.resolve_neg()
+        get_compute_kernel()._workspace((state, weight), state.shape)
+        output = torch.empty_like(state, memory_format=torch.contiguous_format)
+        raw_output = torch.view_as_real(output)
+    if state.numel():
+        state = state.resolve_neg()
+        data = torch.view_as_real(state.conj() if state.is_conj() else state)
+        with torch.cuda.device(state.device) if state.is_cuda else nullcontext():
+            _pauli_pair[(prod(batch) * tiles,)](
+                data,
+                data if weight is None else weight,
+                raw_output,
+                pairs,
+                flip,
+                sign,
+                1 << (flip.bit_length() - 1),
+                word.count("Y") % 4,
+                batch[::-1],
+                state.stride()[:-1][::-1],
+                () if weight is None else weight.stride()[::-1],
+                state.stride(-1),
+                state.is_conj(),
+                weight is not None,
+                block,
+            )
+    if weight is not None:
+        return output
+    return output.squeeze(-1) if tiles == 1 else output.sum(dim=-1)

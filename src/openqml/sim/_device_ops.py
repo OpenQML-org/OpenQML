@@ -21,7 +21,7 @@ def supports_device_kernel(state, matrix, torch):
         torch.version.cuda is not None
         and not torch._C._are_functorch_transforms_active()
         and torch.autograd.forward_ad.unpack_dual(state).tangent is None
-        and torch.autograd.forward_ad.unpack_dual(matrix).tangent is None
+        and (matrix is None or torch.autograd.forward_ad.unpack_dual(matrix).tangent is None)
         and _has_triton()
         and torch.cuda.get_device_capability(state.device)[0] >= 8
     )
@@ -135,3 +135,38 @@ def apply_device_contraction(plan, left, right, ops):
     from ._triton_kernels import launch_contraction
 
     return launch_contraction(plan, left, right)
+
+
+@lru_cache(maxsize=1)
+def _differentiable_pauli():
+    import torch
+
+    from ._triton_kernels import launch_pauli_pair
+    from .dense import _native_pauli_plan, _TensorOps
+
+    class PauliExpectation(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, state, word):
+            ctx.save_for_backward(state)
+            ctx.word = word
+            return launch_pauli_pair(state, word)
+
+        @staticmethod
+        def backward(ctx, weight):
+            (state,) = ctx.saved_tensors
+            if torch.is_grad_enabled():
+                index, phase = _native_pauli_plan(ctx.word, _TensorOps("torch", state.real))
+                return (2 * weight[..., None]) * state.index_select(-1, index) * phase, None
+            return launch_pauli_pair(state, ctx.word, weight), None
+
+    return PauliExpectation
+
+
+def device_pauli_expectation(state, word):
+    import torch
+
+    from ._triton_kernels import launch_pauli_pair
+
+    if torch.is_grad_enabled() and state.requires_grad:
+        return _differentiable_pauli().apply(state, word)
+    return launch_pauli_pair(state, word)

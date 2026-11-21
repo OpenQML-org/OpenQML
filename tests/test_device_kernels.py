@@ -100,6 +100,49 @@ def test_gate_cotangent_reduces_strided_amplitudes_and_shared_batches(precision,
     )
 
 
+@pytest.mark.parametrize("precision", ["complex64", "complex128"])
+def test_paired_pauli_readout_and_pullback_match_independent_local_matrices(precision):
+    torch, device = _runtime()
+    from openqml.sim._device_ops import _differentiable_pauli
+    from openqml.sim.dense import _FIXED, _apply_matrix_portable, _pauli_expectation, _TensorOps
+
+    dtype = getattr(torch, precision)
+    width = 13
+    raw = torch.randn(3, 2, 2 << width, dtype=dtype, device=device) / (1 << width) ** 0.5
+    state = raw.transpose(0, 1)[..., 1::2].conj().requires_grad_()
+    weight = state.real.new_tensor([0.5, -0.75, 0.0]).expand(2, 3)
+    ops = _TensorOps("torch", state.real)
+    words = (
+        "IX" + "I" * 10 + "Z",
+        "Z" + "I" * 11 + "Y",
+        "I" * 5 + "Y" + "I" * 6 + "Y",
+        "X" + "I" * 9 + "YYY",
+        "X" + "I" * 8 + "YYYY",
+    )
+    for word in words:
+        transformed = state
+        for wire, pauli in enumerate(word):
+            if pauli != "I":
+                matrix = torch.as_tensor(_FIXED[pauli.lower()], device=device, dtype=dtype)
+                transformed = _apply_matrix_portable(transformed, matrix, (wire,), width, ops)
+        expected = (state.conj() * transformed).sum(-1).real
+        actual = (
+            _pauli_expectation(state, word, width, ops)
+            if device == "cuda"
+            else _differentiable_pauli().apply(state, word)
+        )
+        assert type(actual.grad_fn).__name__ == "PauliExpectationBackward"
+        torch.testing.assert_close(actual, expected)
+        (grad,) = torch.autograd.grad(actual, state, weight, retain_graph=True)
+        (reference,) = torch.autograd.grad(expected, state, weight)
+        torch.testing.assert_close(grad, reference)
+        if word == words[1]:
+            (first,) = torch.autograd.grad(actual, state, weight, create_graph=True)
+            torch.testing.assert_close(first, reference)
+            (second,) = torch.autograd.grad(first, state, state.detach())
+            torch.testing.assert_close(second, reference)
+
+
 @pytest.mark.parametrize("precision", ["fp32", "fp64"])
 def test_offline_cuda_codegen(precision):
     pytest.importorskip("torch")
@@ -109,7 +152,7 @@ def test_offline_cuda_codegen(precision):
     from triton.backends.compiler import GPUTarget
     from triton.compiler import ASTSource, compile
 
-    from openqml.sim._triton_kernels import _apply_gate, _contract, _gate_cotangent
+    from openqml.sim._triton_kernels import _apply_gate, _contract, _gate_cotangent, _pauli_pair
 
     def compile_kernel(fn, constants, scalars):
         signature = {name: scalars.get(name, "constexpr") for name in fn.arg_names}
@@ -120,6 +163,25 @@ def test_offline_cuda_codegen(precision):
         )
         assert ".target sm_80" in compiled.asm["ptx"] and compiled.asm["cubin"]
 
+    for backward in (False, True):
+        compile_kernel(
+            _pauli_pair,
+            dict(
+                PAIRS=4096,
+                FLIP=4097,
+                SIGN=4099,
+                PIVOT=4096,
+                PHASE=1,
+                SHAPE=(3, 2),
+                XS=(32768, 16384),
+                WS=(1, 0),
+                LAST=2,
+                CONJ=True,
+                BACKWARD=backward,
+                BLOCK=256,
+            ),
+            {name: "*" + precision for name in ("state", "weight", "output")},
+        )
     pointers = {name: "*" + precision for name in ("state", "gate", "output")}
     compile_kernel(
         _gate_cotangent,

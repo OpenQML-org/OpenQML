@@ -19,7 +19,7 @@ from ..compute.kernel import _broadcast_shape, get_compute_kernel, memory_budget
 from ..errors import Diagnostic, ResourceError, ValidationError, conversion_error
 from ..ir.compiler import _check_circuit_limits, circuit_stats, decompose
 from ..ir.core import Circuit, integer
-from ..ir.observables import Hamiltonian, PauliString
+from ..ir.observables import Hamiltonian, PauliString, _masks
 from ..ir.parameters import real
 from .dense import _FIXED, _I, _X, _Y, _Z, _TensorOps
 
@@ -76,13 +76,6 @@ def _clifford(x, z, qubits, table):
         x = (x & ~bit) | ((digit & 1) << q)
         z = (z & ~bit) | (((digit >> 1) & 1) << q)
     return (x, z), sign
-
-
-def _masks(paulis):
-    return (
-        sum(1 << q for q, p in enumerate(paulis) if p in "XY"),
-        sum(1 << q for q, p in enumerate(paulis) if p in "YZ"),
-    )
 
 
 def _rotation_sign(gx, gz, x, z):

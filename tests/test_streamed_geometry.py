@@ -4,16 +4,13 @@ import numpy as np
 import pytest
 
 import openqml as oq
+from tests import as_numpy
 
 
 def _plan(budget=256):
     a, b, x = (oq.Parameter(n) for n in ("a", "b", "x"))
     circuit = oq.Circuit(3).ry(a + x.log(), 0).cx(0, 1).rx(a * b, 1).cx(1, 2).rz(b, 2)
     return oq.quantum_metric(circuit, parameters=("a", "b"), max_memory_mb=budget)
-
-
-def _numpy(value, backend):
-    return value.detach().numpy() if backend == "torch" else np.asarray(value)
 
 
 @pytest.mark.parametrize("backend", ["torch", "jax"])
@@ -46,7 +43,7 @@ def test_streaming_matches_weighted_dense_reference_with_nonlinear_auxiliary_inp
 
     run = product if backend == "torch" else lib.jit(product)
     actual = run(bindings, xp.asarray(vector, dtype=dtype))
-    np.testing.assert_allclose(_numpy(actual, backend), reference, rtol=2e-5, atol=2e-7)
+    np.testing.assert_allclose(as_numpy(actual), reference, rtol=2e-5, atol=2e-7)
 
 
 @pytest.mark.parametrize("backend", ["torch", "jax"])
@@ -86,7 +83,7 @@ def test_streaming_native_gradient_and_hessian_match_dense_finite_differences(ba
         (dense(center + np.eye(2)[i] * step) - dense(center - np.eye(2)[i] * step)) / (2 * step)
         for i in range(2)
     ]
-    np.testing.assert_allclose(_numpy(gradient, backend), expected, rtol=4e-4, atol=3e-6)
+    np.testing.assert_allclose(as_numpy(gradient), expected, rtol=4e-4, atol=3e-6)
 
 
 @pytest.mark.parametrize("backend", ["torch", "jax"])
@@ -103,7 +100,7 @@ def test_chunking_admits_a_batch_that_exceeds_the_full_state_workspace(backend):
     with pytest.raises(oq.ResourceError):
         plan.native_matvec(bindings, vector, backend=backend)
     value = plan.native_matvec(bindings, vector, backend=backend, sample_chunk_size=8)
-    assert np.isfinite(_numpy(value, backend)).all()
+    assert np.isfinite(as_numpy(value)).all()
     result = plan.native_natural_gradient(
         bindings, vector, backend=backend, sample_chunk_size=8, damping=0.1, max_iterations=8
     )
@@ -129,9 +126,7 @@ def test_distance_state_can_resume_with_a_different_sample_chunk_size(backend):
     carry = full.step(local, gradient, backend=backend).state
     a = full.step(local, gradient, state=carry, backend=backend)
     b = chunked.step(local, gradient, state=carry, backend=backend)
-    np.testing.assert_allclose(
-        _numpy(a.step, backend), _numpy(b.step, backend), rtol=5e-5, atol=1e-7
-    )
+    np.testing.assert_allclose(as_numpy(a.step), as_numpy(b.step), rtol=5e-5, atol=1e-7)
 
 
 @pytest.mark.parametrize("backend", ["torch", "jax"])
@@ -170,7 +165,7 @@ def test_streaming_weights_keep_exact_probability_gradients(backend):
     else:
         gradient = lib.jit(lib.grad(objective))(mass)
     expected = (coefficients - weights @ coefficients / weights.sum()) / weights.sum()
-    np.testing.assert_allclose(_numpy(gradient, backend), expected, rtol=1e-3, atol=1e-7)
+    np.testing.assert_allclose(as_numpy(gradient), expected, rtol=1e-3, atol=1e-7)
 
 
 def test_streaming_preserves_torch_fullgraph_capture():

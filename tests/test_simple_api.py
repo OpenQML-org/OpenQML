@@ -23,7 +23,7 @@ r = oq.finance.allocate([[.01,-.02],[-.01,.03],[.02,.01]])
 assert abs(sum(r.weights)-1)<1e-10
 p = oq.finance.price([0,10,25], probabilities=[.2,.5,.3], discount=.98)
 assert abs(p.value-12.25)<1e-12 and p.oracle_queries==0
-engines={"torch","jax","flax","openqml.simulator","openqml.backends","openqml.amplitude",
+engines={"torch","jax","flax","pandas","scipy","openqml.simulator","openqml.backends","openqml.amplitude",
          "openqml.sim.dense","openqml.runtime.backends","openqml.sim.amplitude"}
 assert not engines & set(sys.modules)
 """
@@ -35,7 +35,6 @@ def test_lazy_reexports_preserve_symbol_identity_and_old_result_pickle_path():
 
     for name, (module, symbol) in EXPORTS.items():
         assert getattr(oq, name) is getattr(importlib.import_module(module, "openqml"), symbol)
-    assert oq.Circuit is oq.ir.Circuit
     assert pickle.loads(b"copenqml.finance.pricing\nPayoffEstimate\n.") is oq.finance.PayoffEstimate
     assert oq.finance.PayoffEstimate is oq.finance.pricing.PayoffEstimate
 

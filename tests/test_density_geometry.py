@@ -6,16 +6,13 @@ import numpy as np
 import pytest
 
 import openqml as oq
+from tests import as_numpy
 
 
 def _native(backend, value):
     lib = pytest.importorskip(backend)
     xp = lib if backend == "torch" else lib.numpy
     return xp.asarray(value, dtype=xp.float64 if backend == "torch" else xp.float32)
-
-
-def _numpy(backend, value):
-    return value.detach().numpy() if backend == "torch" else np.asarray(value)
 
 
 @pytest.mark.parametrize("backend", ["torch", "jax"])
@@ -31,9 +28,7 @@ def test_depolarized_qubit_matches_analytic_sld_including_repeated_eigenvalues(
     radius = 1 - 4 * p / 3
     expected = np.diag([16 * width / (9 * (width**2 - radius**2)), radius**2 / width, 0])
     result = plan.native_matvec({"noise": p, "theta": 0.47, "phase": 0.2}, vector, backend=backend)
-    np.testing.assert_allclose(
-        _numpy(backend, result), expected @ [0.4, -0.6, 0.8], rtol=2e-4, atol=2e-5
-    )
+    np.testing.assert_allclose(as_numpy(result), expected @ [0.4, -0.6, 0.8], rtol=2e-4, atol=2e-5)
 
 
 @pytest.mark.parametrize("backend", ["torch", "jax"])
@@ -48,7 +43,7 @@ def test_mixed_geometry_chunking_shared_coordinates_and_natural_residual(backend
     b = plan.native_matvec(
         bindings, gradient, backend=backend, sample_weights=weights, sample_chunk_size=2
     )
-    np.testing.assert_allclose(_numpy(backend, a), _numpy(backend, b), rtol=2e-5, atol=2e-7)
+    np.testing.assert_allclose(as_numpy(a), as_numpy(b), rtol=2e-5, atol=2e-7)
     solve = plan.native_natural_gradient(
         bindings,
         gradient,
@@ -65,7 +60,7 @@ def test_mixed_geometry_chunking_shared_coordinates_and_natural_residual(backend
         - gradient
     )
     assert bool(solve.converged)
-    assert np.linalg.norm(_numpy(backend, residual)) < 2e-5
+    assert np.linalg.norm(as_numpy(residual)) < 2e-5
 
 
 @pytest.mark.parametrize("backend", ["torch", "jax"])
@@ -89,9 +84,9 @@ def test_density_fisher_derivatives_are_finite_at_maximally_mixed_state(backend)
         first = lib.jit(lib.grad(function))(point)
         second = lib.jit(lib.grad(lib.grad(function)))(point)
     width = 1.006
-    np.testing.assert_allclose(_numpy(backend, value), 16 / (9 * width), rtol=3e-5)
+    np.testing.assert_allclose(as_numpy(value), 16 / (9 * width), rtol=3e-5)
     assert abs(float(first)) < 1e-5
-    np.testing.assert_allclose(_numpy(backend, second), 512 / (81 * width**3), rtol=2e-4)
+    np.testing.assert_allclose(as_numpy(second), 512 / (81 * width**3), rtol=2e-4)
 
 
 def test_torch_sld_complex_derivatives_and_forward_transform():

@@ -384,7 +384,7 @@ def plan_execution(
                     eligible,
                     reason
                     if eligible or mps_profile is None
-                    else "Full-SVD MPS bond/workspace bound exceeds policy.",
+                    else "Exact MPS bond/workspace bound exceeds policy.",
                     None if mps_profile is None else mps_profile["workspace_bytes"],
                 )
             )

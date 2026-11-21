@@ -60,11 +60,15 @@ def test_execution_rejects_unsupported_measurement_and_bad_limits():
 
 
 @pytest.mark.parametrize("gate", ["rx", "ry", "rz", "p", "rxx", "ryy", "rzz"])
-def test_rotation_inverse_and_global_phase(gate):
+def test_rotation_inverse(gate):
     q = (0, 2) if len(gate) == 3 else (1,)
     circuit = Circuit(3).h(0).ry(0.71, 1).cx(1, 2)
     roundtrip = circuit.gate(gate, *q, params=(0.72,)).gate(gate, *q, params=(-0.72,))
     np.testing.assert_allclose(statevector(roundtrip), statevector(circuit), atol=1e-14)
+
+
+def test_symbolic_global_phase_multiplies_the_full_state():
+    circuit = Circuit(3).h(0).ry(0.71, 1).cx(1, 2)
     phase = circuit.with_global_phase(Parameter("phase"))
     np.testing.assert_allclose(
         statevector(phase, {"phase": math.pi / 3}), statevector(circuit) * np.exp(1j * math.pi / 3)

@@ -56,7 +56,8 @@ def test_nonclifford_wide_chain_uses_mps_after_expansion_rejection(monkeypatch):
     assert any(not c.eligible and c.method == "pauli" for c in plan.candidates)
     assert plan.mps_profile["max_bond"] <= 256
     assert isinstance(plan._runner, MPSBackend)
-    assert plan.mps_profile["truncation"] == "none_full_SVD_columns_retained"
+    assert plan.mps_profile["truncation"] == "none_full_bond_retained"
+    assert plan.mps_profile["svd_work"] == 0
     values = plan.evaluate()
     assert np.isfinite(values).all() and (np.abs(values) <= 1 + 1e-12).all()
     reference = oq.expectations(circuit, observables, backend="aer-mps")
@@ -215,11 +216,12 @@ def test_rejected_explicit_width_limit_is_inspectable(monkeypatch):
     assert plan.memory_policy == "not_queried_after_explicit_width_rejection"
 
 
-def test_mps_reversed_wire_order_and_opaque_two_site_matrix_match_dense():
+def test_exact_mps_uses_no_svd_for_reversed_wires_and_opaque_two_site_gates(monkeypatch):
     rng = np.random.default_rng(3)
     matrix = np.linalg.qr(rng.normal(size=(4, 4)) + 1j * rng.normal(size=(4, 4)))[0]
     circuit = oq.Circuit(4).ry(0.31, 1).rx(-0.17, 2).cy(2, 1).crx(0.41, 3, 2).unitary(matrix, 1, 0)
-    obs = (oq.PauliString("XYZI"), oq.PauliString("ZZXY"))
+    obs = (oq.PauliString("XYZI"), oq.PauliString("ZZXY"), oq.PauliString("IXYI"))
+    monkeypatch.setattr(oq.ComputeKernel, "svd", lambda *a, **kw: pytest.fail("Exact MPS used SVD"))
     np.testing.assert_allclose(
         oq.expectations(circuit, obs, backend="mps"), oq.expectations(circuit, obs), atol=1e-12
     )

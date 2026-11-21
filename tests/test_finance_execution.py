@@ -1,6 +1,5 @@
 """Exact tail selection, native gradients, and independent GBM barrier prices."""
 
-import gc
 import math
 from dataclasses import replace
 
@@ -40,22 +39,8 @@ def test_uniform_tail_does_not_sort_and_is_translation_equivariant(monkeypatch):
     np.testing.assert_allclose(f.expected_shortfall(losses + 17, confidence=0.93), expected + 17)
 
 
-@pytest.fixture
-def native():
-    torch = pytest.importorskip("torch")
-    jax = pytest.importorskip("jax")
-    previous = jax.config.jax_enable_x64
-    jax.config.update("jax_enable_x64", True)
-    try:
-        yield torch, jax
-    finally:
-        jax.config.update("jax_enable_x64", previous)
-        jax.clear_caches()
-        gc.collect()
-
-
-def test_uniform_selection_native_values_and_gradients_equal_weighted_sort(native):
-    torch, jax = native
+def test_uniform_selection_native_values_and_gradients_equal_weighted_sort(native_x64):
+    torch, jax, _ = native_x64
     values = np.random.default_rng(32).normal(size=(2, 17))
     for p in (None, np.ones(17)):
         x = torch.tensor(values, requires_grad=True)
@@ -78,8 +63,8 @@ def test_uniform_selection_native_values_and_gradients_equal_weighted_sort(nativ
     assert bool((gradient >= 0).all()) and bool((gradient <= 1 / 2.2 + 1e-12).all())
 
 
-def test_native_tensors_win_over_python_constants_without_losing_gradients(native):
-    torch, jax = native
+def test_native_tensors_win_over_python_constants_without_losing_gradients(native_x64):
+    torch, jax, _ = native_x64
     data = np.array([[0.01, -0.02], [-0.01, 0.03], [0.02, 0.01]])
     for xp in (torch, jax.numpy):
         returns = xp.asarray(data)
@@ -102,8 +87,8 @@ def test_native_tensors_win_over_python_constants_without_losing_gradients(nativ
     assert float(f.price(values, probabilities=negative_stride).value.detach()) == pytest.approx(10)
 
 
-def test_native_operands_also_select_projection_scenario_and_trading_backends(native):
-    torch, _ = native
+def test_native_operands_also_select_projection_scenario_and_trading_backends():
+    torch = pytest.importorskip("torch")
     previous = torch.tensor([0.4, 0.6], dtype=torch.float64, requires_grad=True)
     weights = f.cost_aware_projection([0.41, 0.59], previous=previous, penalty=0.05)
     assert isinstance(weights, torch.Tensor)
@@ -125,8 +110,8 @@ def test_native_operands_also_select_projection_scenario_and_trading_backends(na
     assert torch.isfinite(gradient).all() and bool((gradient != 0).any())
 
 
-def test_native_float_precision_is_preserved_with_integer_probability_tensors(native):
-    torch, jax = native
+def test_native_float_precision_is_preserved_with_integer_probability_tensors(native_x64):
+    torch, jax, _ = native_x64
     values = torch.tensor([0.0, 10.0, 25.0], dtype=torch.float64, requires_grad=True)
     quote = f.price(values, probabilities=torch.tensor([1, 2, 1]))
     assert quote.value.dtype == torch.float64
@@ -191,8 +176,8 @@ def test_conditional_grid_price_matches_independent_absorbed_density_closed_form
     assert quote.oracle_queries == 0
 
 
-def test_barrier_native_greeks_and_parameter_batch_axes(native):
-    torch, jax = native
+def test_barrier_native_greeks_and_parameter_batch_axes(native_x64):
+    torch, jax, _ = native_x64
     terminal = np.array([92.0, 108.0, 116.0])
     volatility = torch.tensor(0.2, dtype=torch.float64, requires_grad=True)
     option = f.BarrierOption(100, 90, 125, volatility, 1.3)

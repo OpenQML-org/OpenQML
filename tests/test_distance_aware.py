@@ -4,16 +4,13 @@ import numpy as np
 import pytest
 
 import openqml as oq
+from tests import as_numpy
 
 
 def _plan():
     a, b, c, p = (oq.Parameter(n) for n in ("a", "b", "c", "phase"))
     circuit = oq.Circuit(2).ry(a, 0).cx(0, 1).rz(b, 1).ry(c, 1).with_global_phase(p)
     return oq.quantum_metric(circuit, parameters=("a", "b", "c", "phase"))
-
-
-def _array(value, backend):
-    return value.detach().cpu().numpy() if backend == "torch" else np.asarray(value)
 
 
 @pytest.mark.parametrize("backend", ["torch", "jax"])
@@ -64,18 +61,16 @@ def test_stateful_trajectory_matches_independent_dense_fisher_momentum_and_polar
         step = radius * direction / (np.linalg.norm(direction) + 1e-8)
         result = run(xp.asarray(parameters, dtype=dtype), xp.asarray(gradient, dtype=dtype), state)
         np.testing.assert_allclose(
-            _array(result.natural.direction, backend), natural, rtol=3e-5, atol=2e-7
+            as_numpy(result.natural.direction), natural, rtol=3e-5, atol=2e-7
         )
-        np.testing.assert_allclose(_array(result.step, backend), step, rtol=5e-5, atol=3e-7)
-        np.testing.assert_allclose(
-            _array(result.state.momentum, backend), momentum, rtol=4e-5, atol=3e-7
-        )
-        assert float(_array(result.state.max_distance, backend)) == pytest.approx(maximum, abs=1e-6)
+        np.testing.assert_allclose(as_numpy(result.step), step, rtol=5e-5, atol=3e-7)
+        np.testing.assert_allclose(as_numpy(result.state.momentum), momentum, rtol=4e-5, atol=3e-7)
+        assert float(as_numpy(result.state.max_distance)) == pytest.approx(maximum, abs=1e-6)
         assert int(result.state.steps) == i + 1 and bool(result.natural.converged)
-        assert np.linalg.norm(_array(result.step, backend)) <= radius + 2e-7
+        assert np.linalg.norm(as_numpy(result.step)) <= radius + 2e-7
         parameters -= step
         # A copied serialized tensor tree resumes the same trajectory.
-        state = oq.DistanceAwareState(*(xp.asarray(_array(v, backend)) for v in result.state))
+        state = oq.DistanceAwareState(*(xp.asarray(as_numpy(v)) for v in result.state))
         if backend == "torch":
             assert not state.momentum.requires_grad
 
@@ -93,12 +88,10 @@ def test_momentum_restart_zero_gradient_and_state_identity_checks(backend):
     first = optimizer.step(bindings, gradient, backend=backend)
     reversed_state = first.state._replace(momentum=-100 * first.natural.direction)
     result = optimizer.step(bindings, gradient, state=reversed_state, backend=backend)
-    assert bool(result.restarted) and float(_array(result.alignment, backend)) > 0
-    np.testing.assert_allclose(
-        _array(result.state.momentum, backend), _array(result.natural.direction, backend)
-    )
+    assert bool(result.restarted) and float(as_numpy(result.alignment)) > 0
+    np.testing.assert_allclose(as_numpy(result.state.momentum), as_numpy(result.natural.direction))
     zero = optimizer.step(bindings, gradient * 0, state=first.state, backend=backend)
-    assert np.isfinite(_array(zero.step, backend)).all() and not np.any(_array(zero.step, backend))
+    assert np.isfinite(as_numpy(zero.step)).all() and not np.any(as_numpy(zero.step))
     other = oq.DistanceAwareQNM(plan, ((2, 2),), mixing=0.2, max_iterations=8)
     with pytest.raises(oq.ValidationError):
         other.step(bindings, gradient, state=first.state, backend=backend)
@@ -139,7 +132,7 @@ def test_weighted_feature_samples_keep_shared_optimizer_coordinates(backend):
         sample_weights=weights,
     )
     fisher = sum(p * np.sin(v) ** 2 for p, v in zip([0.2, 0.3, 0.5], [0.2, 0.4, 0.7], strict=True))
-    assert float(_array(result.natural.direction, backend)[0]) == pytest.approx(
+    assert float(as_numpy(result.natural.direction)[0]) == pytest.approx(
         0.3 / (fisher + 0.01), rel=3e-5
     )
     with pytest.raises(oq.ValidationError, match="scalar"):

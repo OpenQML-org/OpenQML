@@ -1,8 +1,5 @@
 """Exact tree surgery, slice-aware common subtrees and native derivative contracts."""
 
-import gc
-import sys
-
 import numpy as np
 import pytest
 
@@ -11,13 +8,7 @@ from openqml._contraction_program import ContractionKernel
 from openqml._tensor_contraction import TensorNetworkPlan
 from openqml.simulator import _TensorOps
 
-
-@pytest.fixture(autouse=True)
-def release_compilations():
-    yield
-    if "jax" in sys.modules:
-        sys.modules["jax"].clear_caches()
-    gc.collect()
+pytestmark = pytest.mark.usefixtures("release_compilations")
 
 
 def circuit(seed=1, n=6, depth=6):

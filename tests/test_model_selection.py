@@ -1,20 +1,11 @@
 """Validation loss, full-state selection and checkpoint continuation contracts."""
 
-import gc
-import sys
-
 import numpy as np
 import pytest
 
 import openqml as oq
 
-
-@pytest.fixture(autouse=True)
-def release_compilations():
-    yield
-    if "jax" in sys.modules:
-        sys.modules["jax"].clear_caches()
-    gc.collect()
+pytestmark = pytest.mark.usefixtures("release_compilations")
 
 
 def make_model(framework, **options):
