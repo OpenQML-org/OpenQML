@@ -104,12 +104,13 @@ print(model.predict(x[:2]))
 
 Select `framework="jax"` or `framework="flax"` to change training frameworks. `backend` chooses circuit execution; `device` chooses native tensor placement. Qubit counts follow the selected backend's available resources.
 
-Convert a circuit with the core installation:
+Export a six-qubit trainable circuit with an explicit CX chain:
 
 ```python
 import openqml as oq
 
-circuit = oq.Circuit(2).h(0).cx(0, 1)
+layer = oq.hardware_efficient(6, depth=1, wire_order=(0, 4, 1, 3, 2, 5))
+circuit = layer.circuit.rx(0.31, 5)
 result = oq.convert(circuit, target="openqasm3")
 print(result.value)
 ```

@@ -1,5 +1,13 @@
 # Changes
 
+## 0.35.1
+
+- Hardware-efficient and data-reuploading layers accept a logical wire
+  permutation for their CX gates through the core, PyTorch, JAX and Flax
+  constructors. Feature, weight and output coordinates stay in logical order.
+- A six-qubit circuit checks SDK conversions, hybrid gradients and discounted
+  payoff readout against an independent 64-amplitude state.
+
 ## 0.35.0
 
 - CUDA gate application reads strided state and matrix views directly. A fused

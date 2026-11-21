@@ -1,3 +1,5 @@
+from itertools import combinations, pairwise, repeat
+
 import numpy as np
 import pytest
 
@@ -15,12 +17,20 @@ from openqml import (
 )
 
 
-@pytest.mark.parametrize("topology,edges", [("linear", 2), ("ring", 3), ("full", 3), ("none", 0)])
-def test_reuploading_parameter_ownership_and_topology(topology, edges):
-    spec = data_reuploading(3, 2, entanglement=topology)
-    assert spec.input_parameters == ("x_0", "x_1", "x_2")
-    assert len(spec.weight_parameters) == 18
-    assert sum(op.name == "cx" for op in spec.circuit.operations) == 2 * edges
+@pytest.mark.parametrize("topology", ["linear", "ring", "full", "none"])
+@pytest.mark.parametrize("path", [None, (0, 4, 1, 3, 2, 5)])
+def test_reuploading_parameter_ownership_and_topology(topology, path):
+    spec = data_reuploading(6, 2, entanglement=topology, wire_order=path)
+    order = tuple(range(6)) if path is None else path
+    edges = {
+        "linear": list(pairwise(order)),
+        "ring": [*pairwise(order), (order[-1], order[0])],
+        "full": list(combinations(order, 2)),
+        "none": [],
+    }
+    assert spec.input_parameters == tuple(f"x_{q}" for q in range(6))
+    assert len(spec.weight_parameters) == 36
+    assert [op.qubits for op in spec.circuit.operations if op.name == "cx"] == 2 * edges[topology]
     assert (
         sum(
             op.name == "ry" and set(op.params[0].parameters) == {"x_0"}
@@ -30,6 +40,31 @@ def test_reuploading_parameter_ownership_and_topology(topology, edges):
         == 2
     )
     assert len(data_reuploading(1, 2, entanglement="ring").circuit.operations) == 8
+
+
+@pytest.mark.parametrize("order", [(0, 1, 1), (0, 1, 3), (1, 0), (True, 1, 2), {0, 1, 2}])
+def test_template_requires_an_ordered_permutation(order):
+    with pytest.raises(ValidationError, match="wire_order"):
+        data_reuploading(3, wire_order=order)
+
+
+def test_template_stops_reading_an_oversize_wire_iterator():
+    with pytest.raises(ResourceError, match="wire_order"):
+        data_reuploading(3, wire_order=repeat(0))
+
+
+@pytest.mark.parametrize("interface", ["torch", "jax", "flax"])
+def test_native_constructors_forward_the_six_wire_order(interface):
+    import openqml as oq
+
+    pytest.importorskip(interface)
+    path = (0, 4, 1, 3, 2, 5)
+    cls = getattr(oq, interface).QuantumLayer
+    for constructor in (cls.data_reuploading, cls.hardware_efficient):
+        layer = constructor(6, 1, wire_order=iter(path))
+        assert [op.qubits for op in layer.circuit.operations if op.name == "cx"] == list(
+            pairwise(path)
+        )
 
 
 def test_reused_input_gradient_and_qasm_roundtrip():

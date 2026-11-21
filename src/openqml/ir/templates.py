@@ -1,32 +1,58 @@
 """Feature maps and ansatz builders."""
 
+from collections.abc import Iterable, Set
 from dataclasses import dataclass
+from itertools import combinations, pairwise
 
-from ..errors import ValidationError
+from ..errors import ValidationError, _as_tuple
 from ..qml.layers import LayerSpec
 from .core import CircuitBuilder, integer
 from .parameters import Parameter
 
 
-def data_reuploading(num_qubits: int, depth: int = 2, *, entanglement: str = "linear") -> LayerSpec:
+def _entangler_order(width, wire_order):
+    if wire_order is None:
+        return range(width)
+    if isinstance(wire_order, Set):
+        raise ValidationError("wire_order must list circuit wires in CX traversal order.")
+    items = _as_tuple(wire_order, "wire_order", max_items=width)
+    order = tuple(integer(q, "wire_order entry") for q in items)
+    if len(order) != width or len(set(order)) != width or max(order) >= width:
+        raise ValidationError("wire_order must be a permutation of the circuit wires.")
+    return order
+
+
+def _entangle(circuit, order, topology):
+    if topology == "none":
+        return
+    edges = combinations(order, 2) if topology == "full" else pairwise(order)
+    for control, target in edges:
+        circuit.cx(control, target)
+    if topology == "ring" and len(order) > 2:
+        circuit.cx(order[-1], order[0])
+
+
+def data_reuploading(
+    num_qubits: int,
+    depth: int = 2,
+    *,
+    entanglement: str = "linear",
+    wire_order: Iterable[int] | None = None,
+) -> LayerSpec:
     """Repeated RY encoding with trainable RX/RY/RZ blocks and CX entanglers.
 
     The same input symbols are reused at every depth; each variational block
     owns independent weights. Entanglement may be linear, ring, full or none.
+    The optional wire permutation sets CX order and direction. Inputs, weights
+    and readouts retain logical wire order.
     """
     integer(depth, "depth", 1)
     circuit = CircuitBuilder(num_qubits)
     if not isinstance(entanglement, str) or entanglement not in {"linear", "ring", "full", "none"}:
         raise ValidationError("entanglement must be linear, ring, full or none.")
+    order = _entangler_order(circuit.num_qubits, wire_order)
     inputs = tuple(f"x_{q}" for q in range(num_qubits))
     weights = []
-    edges = []
-    if entanglement in {"linear", "ring"}:
-        edges = [(q, q + 1) for q in range(num_qubits - 1)]
-        if entanglement == "ring" and num_qubits > 2:
-            edges.append((num_qubits - 1, 0))
-    elif entanglement == "full":
-        edges = [(a, b) for a in range(num_qubits) for b in range(a + 1, num_qubits)]
     for layer in range(depth):
         for q, name in enumerate(inputs):
             circuit = circuit.ry(Parameter(name), q)
@@ -34,15 +60,17 @@ def data_reuploading(num_qubits: int, depth: int = 2, *, entanglement: str = "li
                 weight = f"w_{layer}_{q}_{axis}"
                 weights.append(weight)
                 circuit = circuit.gate(axis, q, params=(Parameter(weight),))
-        for a, b in edges:
-            circuit = circuit.cx(a, b)
+        _entangle(circuit, order, entanglement)
     return LayerSpec(circuit.build(), inputs, tuple(weights))
 
 
-def hardware_efficient(num_qubits: int, depth: int = 2) -> LayerSpec:
-    """RY input encoding, trainable RY/RZ blocks, and a nearest-neighbour CX chain."""
+def hardware_efficient(
+    num_qubits: int, depth: int = 2, *, wire_order: Iterable[int] | None = None
+) -> LayerSpec:
+    """RY input encoding, trainable RY/RZ blocks and a CX chain in the given wire order."""
     integer(depth, "depth", 1)
     circuit = CircuitBuilder(num_qubits)
+    order = _entangler_order(circuit.num_qubits, wire_order)
     inputs = tuple(f"x_{q}" for q in range(num_qubits))
     weights = []
     for q, name in enumerate(inputs):
@@ -53,8 +81,7 @@ def hardware_efficient(num_qubits: int, depth: int = 2) -> LayerSpec:
                 name = f"w_{layer}_{q}_{axis}"
                 weights.append(name)
                 circuit = circuit.gate(axis, q, params=(Parameter(name),))
-        for q in range(num_qubits - 1):
-            circuit = circuit.cx(q, q + 1)
+        _entangle(circuit, order, "linear")
     return LayerSpec(circuit.build(), inputs, tuple(weights))
 
 

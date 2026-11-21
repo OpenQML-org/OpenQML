@@ -136,17 +136,19 @@ class LayerSpecMixin:
         return cls.from_spec(recipe.spec, **kwargs)._initialize_identity_blocks(recipe.pairs)
 
     @classmethod
-    def data_reuploading(cls, num_qubits, depth=2, *, entanglement="linear", **kwargs):
+    def data_reuploading(
+        cls, num_qubits, depth=2, *, entanglement="linear", wire_order=None, **kwargs
+    ):
         from ...ir.templates import data_reuploading
 
-        spec = data_reuploading(num_qubits, depth, entanglement=entanglement)
+        spec = data_reuploading(num_qubits, depth, entanglement=entanglement, wire_order=wire_order)
         return cls.from_spec(spec, **kwargs)
 
     @classmethod
-    def hardware_efficient(cls, num_qubits, depth=2, **kwargs):
+    def hardware_efficient(cls, num_qubits, depth=2, *, wire_order=None, **kwargs):
         from ...ir.templates import hardware_efficient
 
-        spec = hardware_efficient(num_qubits, depth)
+        spec = hardware_efficient(num_qubits, depth, wire_order=wire_order)
         return cls(spec.circuit, spec.input_parameters, spec.weight_parameters, **kwargs)
 
     @classmethod
