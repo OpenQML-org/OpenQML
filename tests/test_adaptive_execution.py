@@ -68,7 +68,6 @@ def test_nonclifford_wide_chain_uses_mps_after_expansion_rejection(monkeypatch):
 def test_stabilizer_matches_exact_pauli_reference_on_nonlocal_clifford_circuit(monkeypatch):
     import openqml.simulator as simulator
 
-    pytest.importorskip("qiskit_aer")
     monkeypatch.setattr(
         simulator, "_initial_state", lambda *a, **k: pytest.fail("Dense allocation")
     )
@@ -86,7 +85,9 @@ def test_stabilizer_matches_exact_pauli_reference_on_nonlocal_clifford_circuit(m
     np.testing.assert_allclose(
         plan.evaluate(), oq.PauliPlan(circuit, observables).evaluate(), atol=1e-12
     )
-    assert oq.get_backend("aer-stabilizer").method == "stabilizer"
+    np.testing.assert_allclose(
+        oq.expectations(circuit, observables, backend="stabilizer"), plan.evaluate()
+    )
 
 
 def test_adaptive_backend_routes_existing_numeric_and_gradient_apis():
@@ -325,3 +326,49 @@ def test_layer_default_width_is_optional_and_compiled_growth_remains_bounded(mon
     value = oq.torch.tensor([[0.31]], dtype=oq.torch.float64)
     assert layer.limits["max_qubits"] is None
     oq.torch.testing.assert_close(layer(value)[0, 0], oq.torch.cos(value[0, 0] * layer.weights[0]))
+
+
+def test_native_clifford_counts_preserve_joint_support_and_classical_projection():
+    builder = oq.CircuitBuilder(52)
+    for q in range(18):
+        builder.h(q).cx(q, q + 20)
+    circuit = builder.x(51).build()
+    counts = oq.sample(circuit, 173, seed=17, max_memory_mb=4)
+    assert sum(counts.values()) == 173 and len(counts) > 1
+    assert all(key[:18] == key[20:38] and key[-1] == "1" for key in counts)
+    assert oq.sample(circuit, 173, seed=17, max_memory_mb=4) == counts
+    measured = circuit.measure(51, 8).measure(0, 8).measure(20, 2).measure(51, 7)
+    options = dict(shots=1000, seed=5, classical_bits=(7, 2, 3, 8), max_memory_mb=4)
+    for backend in ("auto", "numpy", "stabilizer"):
+        result = oq.execute(measured, backend=backend, **options)
+        assert result.backend == "stabilizer" and result.probabilities is None
+        assert set(result.counts) == {"1000", "1101"} and sum(result.counts.values()) == 1000
+        assert oq.execute_batch([measured], backend=backend, **options)[0].counts == result.counts
+    assert oq.sample(measured, 10, classical_bits=()) == {"": 10}
+    assert oq.sample(oq.Circuit(1).x(0), 3, max_memory_mb=0.001) == {"1": 3}
+    assert oq.execute(oq.Circuit(3).h(1), shots=7, backend="numpy").statevector.shape == (8,)
+    with pytest.raises(oq.ResourceError):
+        oq.sample(circuit, 4, max_qubits=10)
+    with pytest.raises(oq.ValidationError):
+        oq.sample(oq.Circuit(1).t(0), backend="stabilizer")
+
+
+def test_clifford_projected_idle_register_and_pauli_word_inputs():
+    width = 10**8
+    measured = oq.Circuit(width).x(width - 1).measure(width - 1, width - 2)
+    assert oq.sample(measured, 8, classical_bits=(0, width - 2), max_memory_mb=0.1) == {"01": 8}
+    with pytest.raises(oq.ResourceError):
+        oq.sample(measured, 8, max_memory_mb=0.1)
+    bell = oq.Circuit(2).h(0).cx(0, 1)
+    for backend in ("numpy", "auto", "stabilizer"):
+        assert oq.expectation(bell, "ZZ", backend=backend) == pytest.approx(1)
+        np.testing.assert_allclose(oq.expectations(bell, "YY", backend=backend), [-1])
+        np.testing.assert_allclose(
+            oq.expectations_batch(bell, ["ZZ", "YY"], backend=backend), [[1, -1]]
+        )
+    plan = oq.plan_execution(bell.with_global_phase(oq.Parameter("a")), "YY", method="stabilizer")
+    np.testing.assert_array_equal(
+        plan.evaluate({"a": [0.1, 0.2]}, batch_shape=(2, 2)), -np.ones((2, 2, 1))
+    )
+    with pytest.raises(oq.ValidationError):
+        oq.expectation(bell, "XYZ")

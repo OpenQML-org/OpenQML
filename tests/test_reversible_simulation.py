@@ -229,3 +229,23 @@ def test_mps_interaction_order_and_bidirectional_readout_sweeps():
             c, words, absolute_error=0.001, strict=False
         )
         assert np.all(abs(np.array(r.values) - ref) <= np.array(r.absolute_error_bounds) + 1e-12)
+
+
+def test_numpy_phase_blocks_preserve_order_and_broadcast_parameters():
+    from openqml.sim._fusion import DiagonalGroup, fusion_program
+
+    a, b = oq.Parameter("a"), oq.Parameter("b")
+    builder = oq.CircuitBuilder(10)
+    for q in range(10):
+        builder.h(q)
+    for q in range(9, 0, -1):
+        builder.crz(a, q, q - 1).cp(b, q - 1, q).rzz(a - b, q, q - 1).p(a, q)
+    circuit = builder.barrier(0, 9).rx(b, 2).build()
+    params = {"a": np.array([[0.16], [-0.73]]), "b": np.array([0.0, 0.4, 0.81])}
+    groups = fusion_program(circuit.operations, 10, phase_blocks=True).groups
+    assert sum(isinstance(group, DiagonalGroup) for group in groups) >= 2
+    assert all(len(group.qubits) <= 8 for group in groups)
+    expected = oq.statevector(circuit, params, backend="numpy", fusion=False)
+    np.testing.assert_allclose(
+        oq.statevector(circuit, params, backend="numpy"), expected, atol=2e-15
+    )

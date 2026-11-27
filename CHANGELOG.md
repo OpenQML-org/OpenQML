@@ -1,5 +1,12 @@
 # Changes
 
+## 0.38.0
+
+- Simulate named Clifford circuits with a packed CPU stabilizer engine in the core installation. Sample terminal measurements directly, including projected and overwritten classical bits, and evaluate weighted Pauli readouts.
+- Fuse runs of diagonal gates across up to eight wires in the NumPy statevector simulator. Parameter sweeps reuse the same structural plan.
+- Use the same Clifford conjugation rules for exact conversion proofs and simulation. Skip redundant lowering when the backend accepts the full gate set.
+- Accept Pauli words such as `"ZZ"` in expectation, batch and planning APIs. The quickstart now runs with a core install.
+
 ## 0.37.0
 
 - Add paired, budget-aware selection for fitted hybrid and classical predictors.

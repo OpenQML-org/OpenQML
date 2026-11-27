@@ -194,7 +194,7 @@ retains the previous first-compatible QPU → GPU → CPU policy.
 | --- | --- |
 | QPU | Qiskit V2 parameter-vectorized Estimator/Sampler PUBs; one compiled symbolic circuit per topology, layout-aware observables, row-specific counts |
 | GPU | Lazy Torch CUDA dependency; shared symbolic Pauli or quantum/classical factor plans, bounded tensor batches, native dense states/densities and terminal sampling |
-| CPU | Cached exact symbolic/factor plans, vectorized parameter arithmetic and bounded dense batches; MPS/tableau providers retain their own execution contracts |
+| CPU | Packed Clifford sampling and readouts, symbolic Pauli and factor plans, matrix-product states and batched statevectors with diagonal gate fusion |
 
 GPU work stays in CUDA tensors until readouts/counts are returned. Feedback
 sampling currently uses the CPU branch ensemble if no compatible QPU is
@@ -202,6 +202,24 @@ configured; exact feedback expectations can use native CUDA density factors.
 Highly connected circuits that cannot fit GPU representations can still use
 admitted exact CPU MPS/tableau algorithms. Device priority applies to eligible
 implementations; a device label cannot bypass representation or memory limits.
+
+On CPU, `sample(circuit)` uses the core stabilizer simulator for named Clifford
+gates and terminal measurements. It propagates the requested Pauli coordinates
+backwards, reduces the joint readout to independent fair bits and draws the
+requested shots. Classical projection uses the specified bit order and the last
+write to each bit. `backend="stabilizer"` selects this simulator explicitly.
+It can also evaluate `expectations(circuit, ["XX", "ZZ"])` or a weighted
+Hamiltonian. Qiskit Aer is optional and remains available as `aer-stabilizer`.
+
+When `execute(..., shots=n)` can fit its dense output on CPU, it returns the
+usual probabilities and counts. For a Clifford program whose dense output
+exceeds the memory budget, it returns counts with `backend="stabilizer"` and
+`probabilities=None`. Fixed seeds repeat on the same sampler. Different
+samplers can produce different draws. Use `sample` for counts alone.
+
+For NumPy statevectors, the planner collects runs of diagonal gates such as
+RZ, RZZ and controlled phase into tables on at most eight wires per block.
+Batched parameters share the circuit plan and supply their own phase values.
 
 Working budgets have no default total-width cap. They bound representation
 admission and batch sizes, not process RSS, framework allocator reservations or
@@ -356,3 +374,11 @@ exclude new submissions until cooldown; one probe is admitted after cooldown.
 Already submitted jobs remain recoverable. A later automatic scheduling call
 can select another eligible backend. Training calls keep their pinned noise
 and gradient contract.
+
+
+### PyTorch on Intel macOS
+
+The PyTorch extra uses the available PyTorch 2.2 wheels with NumPy 1.x on
+Intel macOS. Other supported platforms use PyTorch 2.4.1 or later. The core
+installation can use NumPy 2 on Intel macOS. To check the bridge, run
+`python -m openqml doctor --extra torch --check-imports`.

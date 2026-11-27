@@ -418,7 +418,7 @@ class Circuit(_CircuitGates):
 
     @property
     def has_effects(self):
-        return any(op.name not in UNITARY_GATES | {"barrier"} for op in self.operations)
+        return any(op.name != "barrier" and op.name not in UNITARY_GATES for op in self.operations)
 
     def walk_operations(self, prefix=()):
         for index, op in enumerate(self.operations):
@@ -624,21 +624,22 @@ class Circuit(_CircuitGates):
 
     def unitary_part(self) -> Circuit:
         """Remove terminal measurements; reject any subsequent quantum operation."""
-        if any(op.name not in UNITARY_GATES | {"measure", "barrier"} for op in self.operations):
-            raise ValidationError(
-                "Nonunitary effects have no pure unitary output. Use density_matrix()."
-            )
         seen = False
         kept = []
         for op in self.operations:
             if op.name == "measure":
                 seen = True
-            elif op.name != "barrier":
+                continue
+            if op.name != "barrier":
+                if op.name not in UNITARY_GATES:
+                    raise ValidationError(
+                        "Nonunitary effects have no pure unitary output. Use density_matrix()."
+                    )
                 if seen:
                     raise ValidationError("Mid-circuit measurement is not supported by execution.")
-                kept.append(op)
-            else:
-                kept.append(op)
+            kept.append(op)
+        if not seen and not self.num_clbits:
+            return self
         return replace(self, operations=tuple(kept), num_clbits=0)
 
     def to_dict(self) -> dict:

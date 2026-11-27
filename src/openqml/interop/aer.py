@@ -78,14 +78,14 @@ class AerBackend:
         if self.mps_max_bond_dimension is not None:
             integer(self.mps_max_bond_dimension, "mps_max_bond_dimension", 1)
         if self.method == "stabilizer":
-            from .semantics import _CLIFFORD
+            from ..ir._clifford import CLIFFORD_GATES
 
             object.__setattr__(
                 self,
                 "capabilities",
                 replace(
                     self.capabilities,
-                    gates=_CLIFFORD,
+                    gates=CLIFFORD_GATES,
                     channels=False,
                     deterministic_expectations=True,
                 ),

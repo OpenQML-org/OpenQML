@@ -1,6 +1,7 @@
 """Bounded, inspectable selection of exact floating-point readout algorithms."""
 
 import json
+import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -8,7 +9,6 @@ import numpy as np
 
 from ..compute.kernel import memory_budget
 from ..errors import ConversionError, ResourceError, ValidationError
-from ..interop.semantics import _CLIFFORD
 from ..ir.compiler import _check_circuit_limits
 from ..ir.core import integer
 from ..ir.parameters import real
@@ -99,6 +99,7 @@ class AdaptivePlan:
     dense_device: str = "CPU"
     _components: object = field(default=None, repr=False, compare=False)
     _tensor: object = field(default=None, repr=False, compare=False)
+    _stabilizer_values: tuple | None = field(default=None, repr=False, compare=False)
 
     @property
     def supported(self):
@@ -144,6 +145,21 @@ class AdaptivePlan:
             return self._pauli.evaluate(
                 bindings, backend=backend, like=like, batch_shape=batch_shape
             )
+        if self.selected_method == "stabilizer":
+            from .pauli import _prepare_bindings
+
+            ops, local, shape = _prepare_bindings(
+                bindings, backend, like, batch_shape, set(self.circuit.parameters), ()
+            )
+            if (
+                8 * max(1, math.prod(shape)) * (len(local) + len(self.observables))
+                > memory_budget(self.max_memory_mb) * 2**20
+            ):
+                raise ResourceError("Stabilizer readout batch exceeds max_memory_mb.")
+            values = ops.array(self._stabilizer_values, real_value=True)
+            for parameter in local.values():
+                values = values + parameter[..., None] * 0
+            return ops.xp.broadcast_to(values, shape + (len(self.observables),))
         if self.selected_method == "components":
             return self._components.evaluate(
                 bindings, backend=backend, like=like, batch_shape=batch_shape
@@ -213,7 +229,7 @@ class AdaptivePlan:
             return values if backend == "torch" else values.detach().cpu().numpy()
         if backend != "numpy" or like is not None:
             raise ValidationError(
-                "The selected MPS/stabilizer executor returns numerical readouts; "
+                "The selected MPS executor returns numerical readouts; "
                 "use a numerical gradient bridge, or choose pauli/statevector for native autodiff."
             )
         from .batch import expectations_batch
@@ -292,6 +308,7 @@ def plan_execution(
     candidates, selected, pauli, runner, mps_profile = [], None, None, None, None
     components = None
     tensor = None
+    stabilizer_values = None
     deferred_stabilizer = False
     if explicit_width:
         candidates.append(
@@ -299,29 +316,24 @@ def plan_execution(
         )
     else:
         unitary = not circuit.has_effects
-        clifford = unitary and all(op.name in _CLIFFORD | {"barrier"} for op in circuit.operations)
         if method in {"auto", "stabilizer"}:
-            from importlib.util import find_spec
+            from ._stabilizer import readout_workspace, supported
 
-            try:
-                installed = find_spec("qiskit_aer") is not None
-            except ImportError:
-                installed = False
-            # A packed tableau needs O(n^2) bits. Reserve a deliberately larger
-            # byte-per-entry workspace model for native snapshots and readouts.
-            workspace = (
-                16 * circuit.num_qubits * circuit.num_qubits
-                + 128 * len(observables) * circuit.num_qubits
+            workspace = readout_workspace(circuit.num_qubits, terms)
+            work = terms * circuit.num_qubits + len(circuit.operations) * ((terms + 63) // 64)
+            eligible = (
+                unitary
+                and supported(circuit)
+                and workspace <= memory_budget(budget) * 2**20
+                and work <= max_work
             )
-            eligible = clifford and workspace <= budget * 2**20 and installed
             candidates.append(
                 ExecutionCandidate(
                     "stabilizer",
                     eligible,
-                    "Named Clifford gates and bounded tableau workspace."
+                    "Bit-packed exact Clifford readouts fit the work and memory budget."
                     if eligible
-                    else "Requires named Clifford gates, the aer extra "
-                    "and sufficient tableau workspace.",
+                    else "Requires named Clifford gates and sufficient work and memory budgets.",
                     workspace,
                 )
             )
@@ -329,8 +341,7 @@ def plan_execution(
                 if method == "stabilizer" or circuit.num_qubits >= 64 or len(observables) >= 16:
                     selected = "stabilizer"
                 else:
-                    # Avoid importing/compiling an SDK for tiny Clifford
-                    # queries that the local symbolic engine can answer.
+                    # Keep reusable symbolic plans for small queries.
                     deferred_stabilizer = True
         if selected is None and method in {"auto", "pauli"}:
             try:
@@ -497,14 +508,9 @@ def plan_execution(
                     elif device == "GPU":
                         selected = None
         if selected == "stabilizer":
-            from ..interop.aer import AerBackend
+            from ._stabilizer import readouts
 
-            runner = AerBackend(
-                name="adaptive-" + selected,
-                method="stabilizer",
-                parameter_batching=True,
-                mps_truncation_threshold=0.0,
-            )
+            stabilizer_values = readouts(circuit, observables)
         elif selected == "mps":
             from ._mps import MPSBackend
 
@@ -528,6 +534,7 @@ def plan_execution(
         device,
         components,
         tensor,
+        stabilizer_values,
     )
 
 
@@ -577,7 +584,9 @@ class AdaptiveBackend:
                     max_branches=options.max_branches,
                 ),
             )
-            if plan.selected_method in {
+            if plan.selected_method == "stabilizer":
+                output[list(rows)] = plan._stabilizer_values
+            elif plan.selected_method in {
                 "pauli",
                 "components",
                 "density",
@@ -616,7 +625,7 @@ class AdaptiveBackend:
                             result = np.broadcast_to(result, (len(selected), len(observables)))
                     output[list(selected)] = result
             else:
-                # MPS/tableau providers own their numeric batching contract.
+                # The MPS provider owns its numeric batching contract.
                 from .batch import expectations_batch
 
                 output[list(rows)] = expectations_batch(
@@ -651,9 +660,17 @@ class AdaptiveBackend:
         )
 
     def sample_batch(self, circuits, shots, *, options):
-        from .batch import execute_batch
+        from .dense import sample
 
         return [
-            r.counts
-            for r in execute_batch(circuits, backend="numpy", shots=shots, **options.__dict__)
+            sample(
+                c,
+                shots,
+                backend="numpy",
+                max_qubits=options.max_qubits,
+                max_memory_mb=options.max_memory_mb,
+                max_branches=options.max_branches,
+                seed=None if options.seed is None else options.seed + i,
+            )
+            for i, c in enumerate(circuits)
         ]

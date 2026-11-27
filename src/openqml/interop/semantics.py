@@ -12,11 +12,12 @@ from dataclasses import asdict, dataclass
 from fractions import Fraction
 
 from ..errors import ConversionError, Diagnostic, ResourceError, ValidationError
+from ..ir._clifford import CLIFFORD_GATES as _CLIFFORD
+from ..ir._clifford import PackedPaulis
 from ..ir.compiler import _check_circuit_limits
 from ..ir.core import integer
 from .verification import _expression_work
 
-_CLIFFORD = frozenset("id x y z h s sdg sx sxdg cx cy cz swap iswap".split())
 _PHASE = frozenset("id x y z s sdg t tdg p rz cx cz cp swap rzz barrier".split())
 _PI = ("pi",)
 _ONE = ("constant",)
@@ -231,67 +232,18 @@ def _phase_form(circuit, max_terms, max_work):
     return (tuple(sorted(wires.items())), terms), work
 
 
-def _conjugate(x, z, phase, name, q):
-    a = q[0]
-    bit = 1 << a
-    xa, za = (x >> a) & 1, (z >> a) & 1
-    if name == "h":
-        phase += 2 * xa * za
-        if xa != za:
-            x ^= bit
-            z ^= bit
-    elif name in {"s", "sdg"}:
-        phase += xa * (1 if name == "s" else -1)
-        if xa:
-            z ^= bit
-    elif name in {"x", "y", "z"}:
-        phase += 2 * (za if name == "x" else xa if name == "z" else xa ^ za)
-    elif name == "cx":
-        b = q[1]
-        x ^= xa << b
-        z ^= ((z >> b) & 1) << a
-    elif name == "swap":
-        b = q[1]
-        if xa != (x >> b) & 1:
-            x ^= bit | (1 << b)
-        if za != (z >> b) & 1:
-            z ^= bit | (1 << b)
-    elif name != "id":
-        rules = (
-            {
-                "cz": (("h", (q[1],)), ("cx", q), ("h", (q[1],))),
-                "cy": (("sdg", (q[1],)), ("cx", q), ("s", (q[1],))),
-            }
-            if len(q) == 2
-            else {
-                "sx": (("h", q), ("s", q), ("h", q)),
-                "sxdg": (("h", q), ("sdg", q), ("h", q)),
-            }
-        )
-        if name == "iswap":
-            sequence = (("swap", q), ("s", (q[0],)), ("s", (q[1],)), ("cz", q))
-        else:
-            sequence = rules[name]
-        for gate, wires in sequence:
-            x, z, phase = _conjugate(x, z, phase, gate, wires)
-    return x, z, phase % 4
-
-
 def _tableau(circuit, max_work):
     operations = tuple(op for op in circuit.operations if op.name != "barrier")
     if any(op.name not in _CLIFFORD or op.condition or op.blocks for op in operations):
         return None, 0
-    work = 2 * circuit.num_qubits * len(operations)
+    width = circuit.num_qubits
+    work = 2 * width * len(operations)
     if work > max_work:
         raise ResourceError("Clifford conjugation proof exceeds max_work.")
-    images = []
-    for generator in range(2 * circuit.num_qubits):
-        q = generator % circuit.num_qubits
-        x, z, phase = (1 << q, 0, 0) if generator < circuit.num_qubits else (0, 1 << q, 0)
-        for op in operations:
-            x, z, phase = _conjugate(x, z, phase, op.name, op.qubits)
-        images.append((x, z, phase))
-    return tuple(images), work
+    tableau = PackedPaulis()
+    tableau.columns = {q: (1 << q, 1 << (width + q)) for q in range(width)}
+    tableau.propagate(operations)
+    return tuple(tableau.rows(range(width), 2 * width)), work
 
 
 def _word(circuit, max_terms, max_work):

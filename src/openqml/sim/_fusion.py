@@ -1,6 +1,7 @@
-"""Bounded single/two-wire fusion plans containing only immutable metadata."""
+"""Bounded local-matrix and diagonal fusion plans for statevector evolution."""
 
 from dataclasses import dataclass
+from itertools import groupby
 from typing import NamedTuple
 
 import numpy as np
@@ -179,11 +180,52 @@ def _program(operations, *, fold_constants=True):
     return FusionProgram(operations, tuple(groups))
 
 
-def fusion_program(operations, num_qubits):
+class DiagonalGroup(NamedTuple):
+    qubits: tuple
+    operations: tuple
+    parameters: tuple
+
+
+_DIAGONAL = frozenset("z s sdg t tdg p rz cz cp crz rzz".split())
+
+
+def _diagonal_group(wires, operations):
+    parameters = {p for op in operations for expr in op.params for p in expr.parameters}
+    return DiagonalGroup(tuple(sorted(wires)), tuple(operations), tuple(sorted(parameters)))
+
+
+def _phase_program(operations):
+    # Keep the ordinary scheduler for short runs. Longer diagonal runs commute
+    # and need only one amplitude multiply per block, including distant wires.
+    groups, pending = [], []
+    for diagonal, run in groupby(operations, key=lambda op: op.name in _DIAGONAL):
+        gates = tuple(run)
+        if not diagonal or len(gates) < 4 or len({q for op in gates for q in op.qubits}) <= 2:
+            pending.extend(gates)
+            continue
+        if pending:
+            groups.extend(_program(tuple(pending)).groups)
+            pending.clear()
+        wires, block = set(), []
+        for op in gates:
+            if len(wires.union(op.qubits)) > 8 or len(block) >= 256:
+                groups.append(_diagonal_group(wires, block))
+                wires, block = set(), []
+            wires.update(op.qubits)
+            block.append(op)
+        groups.append(_diagonal_group(wires, block))
+    if pending:
+        groups.extend(_program(tuple(pending)).groups)
+    return FusionProgram(operations, tuple(groups))
+
+
+def fusion_program(operations, num_qubits, *, phase_blocks=False):
     operations = operations if isinstance(operations, tuple) else tuple(operations)
     if _torch_compiling():
         return _program(operations, fold_constants=False)
 
     return get_compute_kernel().plan(
-        "gate-fusion", (id(operations), num_qubits), lambda: _program(operations)
+        "gate-fusion",
+        (id(operations), num_qubits, phase_blocks),
+        lambda: _phase_program(operations) if phase_blocks else _program(operations),
     )

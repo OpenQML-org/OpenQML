@@ -17,13 +17,13 @@ import numpy as np
 from ..compute._program import lower_program
 from ..compute.kernel import _broadcast_shape, get_compute_kernel, memory_budget
 from ..errors import Diagnostic, ResourceError, ValidationError, conversion_error
+from ..ir._clifford import CLIFFORD_GATES as _CLIFFORD
 from ..ir.compiler import _check_circuit_limits, circuit_stats, decompose
 from ..ir.core import Circuit, integer
 from ..ir.observables import Hamiltonian, PauliString, _masks
 from ..ir.parameters import real
 from .dense import _FIXED, _I, _X, _Y, _Z, _TensorOps
 
-_CLIFFORD = frozenset("id x y z h s sdg sx sxdg cx cy cz swap iswap".split())
 _ROTATIONS = {"rx": "X", "ry": "Y", "rz": "Z", "p": "Z", "rxx": "X", "ryy": "Y", "rzz": "Z"}
 _BASIS = _CLIFFORD | _ROTATIONS.keys()
 _UNARY = frozenset({"sin", "cos", "tan", "exp", "log", "sqrt"})

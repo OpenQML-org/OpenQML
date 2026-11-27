@@ -24,11 +24,10 @@ from ..errors import (
     MissingDependencyError,
     ResourceError,
     ValidationError,
-    _as_tuple,
     _require_mapping,
 )
-from ..ir.core import UNITARY_GATES, Circuit, _require_circuit, integer
-from ..ir.observables import _masks
+from ..ir.core import Circuit, _require_circuit, integer
+from ..ir.observables import PauliString, _masks
 from ..ir.parameters import _checked
 
 _I = np.eye(2, dtype=complex)
@@ -364,13 +363,17 @@ def _apply_matrix_portable(state, matrix, qubits, num_qubits, ops):
     return ops.transpose(evolved, inverse).reshape(batch_shape + (2**num_qubits,))
 
 
+def _dense_capacity(num_qubits, budget):
+    return budget.max_bytes >> (num_qubits + 6)
+
+
 def _resource_check(circuit, max_qubits, max_memory_mb, batch_size=1):
     _require_circuit(circuit)
     if max_qubits is not None:
         integer(max_qubits, "max_qubits", 1)
     budget = get_compute_kernel()._prepare_budget(max_memory_mb)
     # Four state buffers; autodiff graphs may retain additional memory.
-    capacity = budget.max_bytes >> (circuit.num_qubits + 6)
+    capacity = _dense_capacity(circuit.num_qubits, budget)
     if max(1, batch_size) > capacity or (
         max_qubits is not None and circuit.num_qubits > max_qubits
     ):
@@ -393,12 +396,31 @@ def _checkpoint_interval(circuit, backend, value):
     return value
 
 
+def _apply_phase_block(state, group, shape, bindings, num_qubits, ops):
+    # At most 2**8 diagonal entries per parameter row. Embed each local
+    # diagonal by broadcasting; a 2**k by 2**k fused matrix is never formed.
+    phases = np.ones(shape + (2,) * len(group.qubits), dtype=complex)
+    for op in group.operations:
+        matrix = _gate_matrix(op.name, [p.evaluate(bindings) for p in op.params], ops)
+        diagonal = matrix.diagonal(axis1=-2, axis2=-1)
+        local = diagonal.reshape(diagonal.shape[:-1] + (2,) * len(op.qubits))
+        if len(op.qubits) == 2 and op.qubits[0] > op.qubits[1]:
+            local = local.swapaxes(-1, -2)
+        axes = tuple(2 if wire in op.qubits else 1 for wire in group.qubits)
+        phases *= local.reshape(diagonal.shape[:-1] + axes)
+    axes = tuple(2 if q in group.qubits else 1 for q in range(num_qubits))
+    tensor = state.reshape(state.shape[:-1] + (2,) * num_qubits)
+    return (tensor * phases.reshape(shape + axes)).reshape(state.shape)
+
+
 def _evolve_fused(state, operations, bindings, num_qubits, ops, max_memory_mb):
-    from ._fusion import FixedMatrix, embed_native, embed_numpy, fusion_program
+    from ._fusion import DiagonalGroup, FixedMatrix, embed_native, embed_numpy, fusion_program
 
     kernel = get_compute_kernel()
     budget = kernel._prepare_budget(max_memory_mb)
-    program = fusion_program(operations, num_qubits)
+    program = fusion_program(
+        operations, num_qubits, phase_blocks=ops.backend == "numpy" and num_qubits >= 5
+    )
     for group in program.groups:
         if ops.backend == "numpy":
             shape = np.broadcast_shapes(*(np.shape(bindings[name]) for name in group.parameters))
@@ -408,6 +430,11 @@ def _evolve_fused(state, operations, bindings, num_qubits, ops, max_memory_mb):
             # also works while tracing, without inspecting live tensor values.
             matrix_rows = max(1, math.prod(state.shape[:-1]))
         dimension = 1 << len(group.qubits)
+        if isinstance(group, DiagonalGroup):
+            required = (2 * state.size + matrix_rows * (dimension + 64)) * 16
+            if required <= budget.max_bytes:
+                state = _apply_phase_block(state, group, shape, bindings, num_qubits, ops)
+                continue
         required = (2 * math.prod(state.shape) + 3 * matrix_rows * dimension**2) * 16
         # Small native states can cost less than the additional matrix products.
         # Preserve the inexpensive original graph in that regime. Pre-folded
@@ -417,7 +444,12 @@ def _evolve_fused(state, operations, bindings, num_qubits, ops, max_memory_mb):
             and state.shape[-1] < 8 * dimension
             and not (len(group.pieces) == 1 and isinstance(group.pieces[0], FixedMatrix))
         )
-        if required > budget.max_bytes or len(group.qubits) > 2 or small_native:
+        if (
+            isinstance(group, DiagonalGroup)
+            or required > budget.max_bytes
+            or len(group.qubits) > 2
+            or small_native
+        ):
             for operation in group.operations:
                 matrix = _gate_matrix(
                     operation.name,
@@ -794,6 +826,8 @@ def expectation(
     **limits,
 ):
     _require_circuit(circuit)
+    if isinstance(observable, str):
+        observable = PauliString(observable)
     if bindings is not None:
         _require_mapping(bindings)
     checkpoint_interval = _checkpoint_interval(circuit, backend, checkpoint_interval)
@@ -858,9 +892,9 @@ def expectations(
     if checkpoint_interval is not None:
         limits["checkpoint_interval"] = checkpoint_interval
     integer(max_branches, "max_branches", 1)
-    observables = _as_tuple(observables, "observables")
-    if not observables:
-        raise ValidationError("At least one observable is required.")
+    from .batch import _observables
+
+    observables = _observables(observables, (circuit,))
     if circuit.has_effects and isinstance(backend, str) and backend in {"numpy", "torch", "jax"}:
         from .density import _expectations_from_density, density_matrix
 
@@ -883,7 +917,7 @@ def expectations(
         if batch_shape is not None and not isinstance(device, PriorityBackend):
             raise ValidationError("batch_shape requires a native or automatic backend.")
         if device.capabilities.native_expectations:
-            from .batch import _observables, expectations_batch
+            from .batch import expectations_batch
 
             bindings = {} if bindings is None else bindings
             if isinstance(device, PriorityBackend) and (
@@ -907,7 +941,6 @@ def expectations(
                         raise ValidationError(
                             f"Expected exactly these parameter bindings: {circuit.parameters}."
                         )
-                    _observables(observables, (circuit,))
                 columns = {k: np.broadcast_to(v, shape).reshape(-1) for k, v in bindings.items()}
                 rows = [{k: v[r] for k, v in columns.items()} for r in range(count)]
                 result = expectations_batch(
@@ -1035,6 +1068,32 @@ def execute(
     returned, describe the final quantum computational basis; mixed execution
     can also return an unconditional density matrix.
     """
+    return _execute(
+        circuit,
+        bindings,
+        backend=backend,
+        shots=shots,
+        seed=seed,
+        max_qubits=max_qubits,
+        max_memory_mb=max_memory_mb,
+        max_branches=max_branches,
+        classical_bits=classical_bits,
+    )
+
+
+def _execute(
+    circuit,
+    bindings,
+    *,
+    backend="auto",
+    shots=None,
+    seed=None,
+    max_qubits=None,
+    max_memory_mb=256,
+    max_branches=256,
+    classical_bits=None,
+    counts_only=False,
+):
     _require_circuit(circuit)
     if bindings is not None:
         _require_mapping(bindings)
@@ -1047,9 +1106,10 @@ def execute(
     )
     from ..runtime.backends import ExecutionOptions, get_backend
 
+    options = ExecutionOptions(max_qubits, max_memory_mb, seed, max_branches)
     device = get_backend(backend)
-    if shots is not None:
-        validate_shots(shots)
+    if shots is not None or counts_only:
+        shots = validate_shots(shots)
     classical_bits = validate_classical_bits(circuit, classical_bits)
     if classical_bits is not None and shots is None:
         raise ValidationError("Set shots when selecting classical count bits.")
@@ -1063,35 +1123,63 @@ def execute(
         device,
         task,
         [bound],
-        options=ExecutionOptions(max_qubits, max_memory_mb, seed, max_branches),
+        options=options,
         shots=shots,
     )
+    from ..runtime.backends import _LocalBackend
+    from ._stabilizer import LayoutTooLarge, StabilizerBackend, sample_counts, supported
     from .adaptive import AdaptiveBackend
 
-    if isinstance(device, AdaptiveBackend):
-        # The CPU engine can produce states/probabilities and project classical
-        # records before simulation. A counts-only round trip loses both.
+    adaptive = isinstance(device, AdaptiveBackend)
+    stabilizer = isinstance(device, StabilizerBackend)
+    local = adaptive or (type(device) is _LocalBackend and device.name == "numpy")
+    if max_qubits is not None and bound.num_qubits > max_qubits:
+        raise ResourceError("Circuit exceeds the requested qubit limit.")
+    if stabilizer and shots is None:
+        raise ValidationError(
+            "The stabilizer backend provides counts and Pauli readouts. "
+            "Use sample() or expectations()."
+        )
+    if shots is not None and (stabilizer or local):
+        # Preserve dense state/probability outputs when execute can supply them.
+        # Counts-only requests never need an exponential output allocation.
+        dense_fits = _dense_capacity(
+            bound.num_qubits, get_compute_kernel()._prepare_budget(max_memory_mb)
+        )
+        if (stabilizer or counts_only or not dense_fits) and supported(bound, sampling=True):
+            try:
+                counts = sample_counts(bound, shots, options, classical_bits)
+            except LayoutTooLarge:
+                if stabilizer or not dense_fits:
+                    raise
+                # A small dense state can fit below the packed bookkeeping cost.
+            else:
+                return ExecutionResult(
+                    "stabilizer", None, None, counts, classical_bits=classical_bits
+                )
+        elif stabilizer:
+            raise ValidationError(
+                "Stabilizer sampling requires Clifford gates and terminal measurements."
+            )
+    if adaptive:
         device = get_backend("numpy")
     if (
         device.capabilities.max_qubits is not None
-        and circuit.num_qubits > device.capabilities.max_qubits
+        and bound.num_qubits > device.capabilities.max_qubits
     ):
         raise ResourceError(
             f"Backend {device.name!r} supports at most {device.capabilities.max_qubits} qubits."
         )
-    ExecutionOptions(max_qubits, max_memory_mb, seed, max_branches)
     from ..runtime.backends import check_effects
 
     check_effects(bound, device)
     if shots is not None and device.capabilities.native_sampling:
-        if max_qubits is not None and circuit.num_qubits > max_qubits:
-            raise ResourceError("Circuit exceeds the requested qubit limit.")
         results = invoke(
             device,
             "sample_batch",
             [bound],
             shots,
-            options=ExecutionOptions(max_qubits, max_memory_mb, seed, max_branches),
+            options=options,
         )
         if not isinstance(results, (list, tuple)) or len(results) != 1:
             raise BackendError("Native sampler returned an invalid batch length.")
@@ -1104,17 +1192,15 @@ def execute(
             project_counts(counts, classical_bits),
             classical_bits=classical_bits,
         )
-    mixed = any(op.name not in UNITARY_GATES | {"measure", "barrier"} for op in bound.operations)
-    if not mixed and bound.has_measurements:
-        try:
-            bound.unitary_part()
-        except ValidationError:
-            mixed = True
+    try:
+        pure = bound.unitary_part()
+    except ValidationError:
+        pure = None
     density_only = device.capabilities.density_matrix and (
         not callable(getattr(device, "run", None))
         or getattr(device, "method", None) == "density_matrix"
     )
-    if mixed or density_only:
+    if pure is None or density_only:
         from .density import density_matrix, execute_density
 
         if device is get_backend("numpy"):
@@ -1149,20 +1235,11 @@ def execute(
             )
         return ExecutionResult(device.name, probabilities, None, counts, rho, classical_bits)
     _resource_check(circuit, max_qubits, max_memory_mb)
-    pure = bound.unitary_part()
     from ..ir.compiler import decompose
 
-    if (
-        device.capabilities.max_qubits is not None
-        and pure.num_qubits > device.capabilities.max_qubits
-    ):
-        raise ResourceError(
-            f"Backend {device.name!r} supports at most {device.capabilities.max_qubits} qubits."
-        )
-    # Barriers affect scheduling, not statevector evolution.
-    pure = replace(pure, operations=tuple(op for op in pure.operations if op.name != "barrier"))
+    if any(op.name == "barrier" for op in pure.operations):
+        pure = replace(pure, operations=tuple(op for op in pure.operations if op.name != "barrier"))
     pure = decompose(pure, basis=device.capabilities.gates)
-    options = ExecutionOptions(max_qubits, max_memory_mb, seed, max_branches)
     state = validate_state(invoke(device, "run", pure, options=options), pure)
     with np.errstate(over="ignore", invalid="ignore"):
         probabilities = np.abs(state) ** 2
@@ -1205,5 +1282,7 @@ def _sample_probabilities(circuit, probabilities, shots, seed, max_memory_mb, cl
     return counts
 
 
+@compute_operation
 def sample(circuit, shots=1024, bindings=None, **kwargs) -> dict[str, int]:
-    return execute(circuit, bindings, shots=shots, **kwargs).counts
+    """Sample q0-first bit strings or the terminal classical record."""
+    return _execute(circuit, bindings, shots=shots, counts_only=True, **kwargs).counts

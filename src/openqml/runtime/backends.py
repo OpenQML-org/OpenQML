@@ -218,6 +218,7 @@ _BUILTIN_NAMES = frozenset(
         "cpu",
         "gpu",
         "mps",
+        "stabilizer",
     }
 )
 _REGISTRY = {name: _LocalBackend(name) for name in ("numpy", "qiskit", "pennylane", "cirq")}
@@ -310,6 +311,10 @@ def get_backend(backend: str | StatevectorBackend) -> StatevectorBackend:
             from ..sim._mps import MPSBackend
 
             _REGISTRY[backend] = MPSBackend()
+        elif backend not in _REGISTRY and backend == "stabilizer":
+            from ..sim._stabilizer import StabilizerBackend
+
+            _REGISTRY[backend] = StabilizerBackend()
         elif backend not in _REGISTRY and backend == "auto":
             from .scheduler import CostAwareBackend
 

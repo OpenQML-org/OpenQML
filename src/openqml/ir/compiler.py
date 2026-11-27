@@ -188,16 +188,17 @@ def _check_circuit_limits(circuit, *, max_operations=100_000, max_depth=64):
                 "Circuit exceeds max_depth or the 128-level ceiling.",
                 _operation_location(prefix[:-1]),
             )
+        if count + len(body.operations) > max_operations:
+            raise conversion_error(
+                "DECOMPOSITION_LIMIT",
+                "Circuit exceeds max_operations.",
+                _operation_location(prefix + (max_operations - count,)),
+            )
+        count += len(body.operations)
         for index, op in enumerate(body.operations):
-            path = prefix + (index,)
-            count += 1
-            if count > max_operations:
-                raise conversion_error(
-                    "DECOMPOSITION_LIMIT",
-                    "Circuit exceeds max_operations.",
-                    _operation_location(path),
-                )
-            pending.extend((block, path + (i,), depth + 1) for i, block in enumerate(op.blocks))
+            if op.blocks:
+                path = prefix + (index,)
+                pending.extend((block, path + (i,), depth + 1) for i, block in enumerate(op.blocks))
 
 
 def decompose(
@@ -214,6 +215,8 @@ def decompose(
             "basis must be a nonempty collection of supported unitary gate names."
         )
     _check_circuit_limits(circuit, max_operations=max_operations, max_depth=max_depth)
+    if basis == UNITARY_GATES:
+        return circuit
     count = 0
 
     def lower(body, prefix):

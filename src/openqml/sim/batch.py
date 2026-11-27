@@ -87,7 +87,12 @@ def _vectorized_states(circuits, options, *, backend="numpy", like=None):
 
 
 def _observables(observables, circuits, *, max_items=None):
-    observables = _as_tuple(observables, "observables", max_items=max_items)
+    if isinstance(observables, str):
+        observables = (observables,)
+    observables = tuple(
+        PauliString(item) if isinstance(item, str) else item
+        for item in _as_tuple(observables, "observables", max_items=max_items)
+    )
     if not observables:
         raise ValidationError("At least one observable is required.")
     for observable in observables:
@@ -355,6 +360,7 @@ def execute_batch(
         validate_classical_bits,
         validate_shots,
     )
+    from ._stabilizer import StabilizerBackend
     from .dense import ExecutionResult, _validate_counts, execute
 
     options = ExecutionOptions(max_qubits, max_memory_mb, seed, max_branches)
@@ -388,7 +394,11 @@ def execute_batch(
 
     for c in values:
         check_effects(c, device)
-    if shots is not None and device.capabilities.native_sampling:
+    if (
+        shots is not None
+        and device.capabilities.native_sampling
+        and not isinstance(device, StabilizerBackend)
+    ):
         counts = invoke(device, "sample_batch", values, shots, options=options)
         if not isinstance(counts, (list, tuple)) or len(counts) != len(values):
             raise BackendError("Invalid native sampler batch length.")

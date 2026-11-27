@@ -243,7 +243,7 @@ def test_random_phase_circuit_and_inverse_have_exact_identity_certificate(seed):
     "name", ("h", "x", "y", "z", "s", "sdg", "sx", "sxdg", "cx", "cy", "cz", "swap", "iswap")
 )
 def test_exact_integer_clifford_rules_agree_with_independent_native_operators(name):
-    from openqml.semantics import _conjugate
+    from openqml.ir._clifford import PackedPaulis
 
     operator = pytest.importorskip("qiskit.quantum_info").Operator
     width = 2 if name in {"cx", "cy", "cz", "swap", "iswap"} else 1
@@ -257,10 +257,18 @@ def test_exact_integer_clifford_rules_agree_with_independent_native_operators(na
             matrix[column ^ x, column] = 1j**phase * (-1) ** ((column & z).bit_count())
         return matrix
 
-    for x in range(1 << width):
-        for z in range(1 << width):
-            phase = (x & z).bit_count()
-            result = _conjugate(x, z, phase, name, wires)
+    words = [(x, z) for x in range(1 << width) for z in range(1 << width)]
+    for inverse in (False, True):
+        packed = PackedPaulis()
+        for q in wires:
+            packed.columns[q] = (
+                sum(((x >> q) & 1) << i for i, (x, _) in enumerate(words)),
+                sum(((z >> q) & 1) << i for i, (_, z) in enumerate(words)),
+            )
+        packed.apply(name, wires, inverse=inverse)
+        matrix = unitary.conj().T if inverse else unitary
+        for (x, z), result in zip(words, packed.rows(wires, len(words)), strict=True):
+            before = pauli(x, z, (x & z).bit_count())
             np.testing.assert_allclose(
-                pauli(*result), unitary @ pauli(x, z, phase) @ unitary.conj().T, atol=1e-12
+                pauli(*result), matrix @ before @ matrix.conj().T, atol=1e-12
             )

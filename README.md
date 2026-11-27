@@ -7,45 +7,33 @@ or JAX model.
 
 [PyPI](https://pypi.org/project/openqml/) · [API reference](https://github.com/OpenQML-org/OpenQML/blob/main/docs/api.md) · [Changelog](https://github.com/OpenQML-org/OpenQML/blob/main/CHANGELOG.md)
 
-## Installation
+## Run your first circuit
 
-OpenQML requires Python 3.10 or later.
+Install the core package on Python 3.10 or later.
 
 ```bash
 python -m pip install openqml
 ```
 
-The core includes NumPy simulation, portfolio allocation and OpenQASM export.
-Install an extra when you need a training framework or a quantum SDK. For
-example, `python -m pip install "openqml[torch]"` adds PyTorch.
-Other choices include `openqml[jax]`, `openqml[flax]` and `openqml[qiskit,cirq]`.
-
-The PyTorch extra requires PyTorch 2.4.1 or later. On Intel macOS it uses the
-available PyTorch 2.2 wheels with NumPy 1.x. The core installation can use
-NumPy 2 on Intel macOS. To check the bridge in an existing environment, run
-`python -m openqml doctor --extra torch --check-imports`.
-
-## Simulate and export a circuit
-
-This six-qubit circuit entangles the first and last wires. Measuring either
-wire alone gives a random bit, but the two results always agree. Their
-`ZIIIIZ` correlation is therefore 1, up to floating-point rounding.
-
 ```python
 import openqml as oq
 
-circuit = oq.Circuit(6).h(0)
-for control, target in zip(range(5), range(1, 6)):
-    circuit = circuit.cx(control, target)
-
-correlation = oq.expectation(circuit, oq.PauliString("ZIIIIZ"), backend="numpy")
-print(correlation)
-print(oq.convert(circuit, target="openqasm3").value)
+bell = oq.Circuit(2).h(0).cx(0, 1)
+print(oq.sample(bell, shots=1000, seed=7))
+print(oq.expectation(bell, "ZZ"))
 ```
 
-`convert` also works with supported Qiskit circuits, Cirq circuits and
-PennyLane tapes. For a parameter sweep, `plan_conversion` lets you prepare the
-conversion once and reuse it across bindings. [Circuit formats and supported operations](https://github.com/OpenQML-org/OpenQML/blob/main/docs/interoperability.md)
+The first line of output counts `00` and `11`. The second gives their exact
+Z correlation, `1.0`. Bit strings and Pauli words both start with qubit 0.
+OpenQML selects an available backend automatically.
+
+Export the same circuit with `oq.convert(bell, target="openqasm3").value`.
+OpenQASM export and local simulation are included in the core package.
+[Circuit formats and supported operations](https://github.com/OpenQML-org/OpenQML/blob/main/docs/interoperability.md)
+
+Install `openqml[torch]`, `openqml[jax]` or `openqml[flax]` for training.
+SDK integrations can also be combined, for example `openqml[qiskit,cirq]`.
+[Platform and backend details](https://github.com/OpenQML-org/OpenQML/blob/main/docs/runtime.md)
 
 ## Train a hybrid model
 
@@ -91,11 +79,11 @@ scores the next period. [Portfolio construction, risk and pricing](https://githu
 
 ## Execution options
 
-A dense statevector stores one complex amplitude per basis state. If you only
-need expectation values and the circuit has modest entanglement, the
-matrix-product-state (MPS) backend can use much less memory. Exact mode keeps the full bond at each step.
-If you allow Schmidt truncation, the readout reports an error bound for each
-observable.
+The CPU simulator samples Clifford circuits directly and evaluates Pauli words
+without building a statevector. For general circuits, NumPy fuses local gates
+and consecutive diagonal rotations. Use `oq.statevector(circuit)` when you need
+every amplitude. The MPS backend also supports circuits with modest
+entanglement and reports a readout error bound when truncation is enabled.
 
 On Linux x86-64, `openqml[gpu]` provides native Triton kernels for supported
 NVIDIA GPUs. Use CUDA binding tensors with `backend="torch"` to keep both the
