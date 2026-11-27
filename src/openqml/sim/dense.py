@@ -12,6 +12,7 @@ import numpy as np
 
 from ..compute.kernel import (
     KernelOps,
+    _array_backend,
     _broadcast_shape,
     _torch_compiling,
     compute_operation,
@@ -28,6 +29,7 @@ from ..errors import (
 )
 from ..ir.core import UNITARY_GATES, Circuit, _require_circuit, integer
 from ..ir.observables import _masks
+from ..ir.parameters import _checked
 
 _I = np.eye(2, dtype=complex)
 _X = np.array([[0, 1], [1, 0]], dtype=complex)
@@ -81,10 +83,9 @@ _IDENTITY4 = tuple(tuple(float(value) for value in row) for row in np.eye(4))
 class _TensorOps(KernelOps):
     """Keep framework tensors on their device and inside their differentiation graph."""
 
-    def __init__(self, backend="numpy", like=None):
+    def __init__(self, backend="numpy", like=None, *, binding_values=()):
         self._kernel = get_compute_kernel()
         self.backend, self.device = backend, None
-        self.like = like
         try:
             if backend == "numpy":
                 self.xp, self.dtype, self.real_dtype = np, np.complex128, np.float64
@@ -92,7 +93,15 @@ class _TensorOps(KernelOps):
                 import torch
 
                 self.xp = torch
-                self.real_dtype = like.dtype if like is not None else torch.get_default_dtype()
+                if like is None:
+                    like = next((v for v in binding_values if isinstance(v, torch.Tensor)), None)
+                    self.real_dtype = (
+                        like.dtype
+                        if like is not None and like.dtype.is_floating_point
+                        else torch.get_default_dtype()
+                    )
+                else:
+                    self.real_dtype = like.dtype
                 if self.real_dtype not in {torch.float32, torch.float64}:
                     raise ValidationError("PyTorch simulation requires float32 or float64 angles.")
                 self.dtype = (
@@ -103,7 +112,15 @@ class _TensorOps(KernelOps):
                 import jax.numpy as jnp
 
                 self.xp = jnp
-                self.real_dtype = jnp.asarray(like if like is not None else 0.0).dtype
+                if like is None:
+                    like = next((v for v in binding_values if _array_backend(v) == "jax"), None)
+                    if like is None:
+                        like = next((v for v in binding_values if hasattr(v, "dtype")), None)
+                    self.real_dtype = jnp.asarray(0.0 if like is None else like).dtype
+                    if jnp.issubdtype(self.real_dtype, jnp.integer):
+                        self.real_dtype = jnp.asarray(0.0).dtype
+                else:
+                    self.real_dtype = jnp.asarray(like).dtype
                 if self.real_dtype not in {jnp.dtype("float32"), jnp.dtype("float64")}:
                     raise ValidationError("JAX simulation requires float32 or float64 angles.")
                 self.dtype = jnp.complex128 if self.real_dtype == jnp.float64 else jnp.complex64
@@ -113,6 +130,7 @@ class _TensorOps(KernelOps):
             raise MissingDependencyError(
                 f'Cannot load {backend}. Run: python -m pip install "openqml[{backend}]".'
             ) from exc
+        self.like = like
 
     def array(self, value, *, real_value=False):
         dtype = self.real_dtype if real_value else self.dtype
@@ -149,6 +167,19 @@ class _TensorOps(KernelOps):
         if self.backend == "torch" and isinstance(value, self.xp.Tensor):
             return tuple(value.shape)
         return tuple(getattr(value, "shape", ()))
+
+    def native_bindings(self, bindings):
+        # NumPy/Torch arithmetic may try to detach native differentiable tensors.
+        if self.backend != "torch" or not any(
+            isinstance(value, (np.ndarray, np.generic)) for value in bindings.values()
+        ):
+            return bindings
+        return {
+            name: self.array(_checked(value), real_value=True)
+            if isinstance(value, (np.ndarray, np.generic))
+            else value
+            for name, value in bindings.items()
+        }
 
 
 def _gate_matrix(name, params, ops, matrix=None):
@@ -500,7 +531,7 @@ def _initial_state(num_qubits, shape, ops):
         state = ops.xp.zeros(2**num_qubits, dtype=ops.dtype, device=ops.device)
         state[0] = 1
     elif ops.backend == "jax":
-        state = ops.xp.zeros(2**num_qubits, dtype=ops.dtype).at[0].set(1)
+        state = ops.xp.broadcast_to(ops.array(0), (2**num_qubits,)).at[0].set(1)
     else:
         state = np.zeros(2**num_qubits, dtype=complex)
         state[0] = 1
@@ -600,9 +631,7 @@ def statevector(
                 raise ValidationError("Bindings must be finite real scalars or arrays.")
             clean[k] = value.astype(float, copy=False)
         bindings = clean
-    if like is None and backend != "numpy":
-        like = next((v for v in bindings.values() if hasattr(v, "dtype")), None)
-    ops = _TensorOps(backend, like)
+    ops = _TensorOps(backend, like, binding_values=bindings.values())
     try:
         inferred = _broadcast_shape(tuple(ops.parameter_shape(v) for v in bindings.values()))
         shape = (
@@ -617,6 +646,7 @@ def statevector(
         required = _check_adjoint(circuit, max_qubits, max_memory_mb)
         if required * max(1, math.prod(shape)) > memory_budget(max_memory_mb):
             raise ResourceError("Batched reversible adjoint exceeds max_memory_mb.")
+    bindings = ops.native_bindings(bindings)
     state = _initial_state(circuit.num_qubits, shape, ops)
     state = _evolve_unitary(
         state,
@@ -784,30 +814,10 @@ def expectation(
         from ..runtime.backends import get_backend
 
         device = get_backend(backend)
-        if device.capabilities.native_expectations:
-            from ..runtime.scheduler import PriorityBackend
-
-            if isinstance(device, PriorityBackend) and any(
-                np.ndim(v) for v in (bindings or {}).values()
-            ):
-                return expectations(
-                    circuit,
-                    (observable,),
-                    bindings,
-                    backend=backend,
-                    max_branches=max_branches,
-                    **limits,
-                )[..., 0]
-            return expectations(
-                circuit,
-                (observable,),
-                bindings,
-                backend=backend,
-                max_branches=max_branches,
-                **limits,
-            )[0]
-        if circuit.has_effects or (
-            device.capabilities.density_matrix and not callable(getattr(device, "run", None))
+        if (
+            device.capabilities.native_expectations
+            or circuit.has_effects
+            or (device.capabilities.density_matrix and not callable(getattr(device, "run", None)))
         ):
             return expectations(
                 circuit,
@@ -816,7 +826,7 @@ def expectation(
                 backend=backend,
                 max_branches=max_branches,
                 **limits,
-            )[0]
+            )[..., 0]
     state = statevector(circuit, bindings, backend=backend, like=like, **limits)
     tensor_backend = (
         backend if isinstance(backend, str) and backend in {"torch", "jax"} else "numpy"
@@ -838,6 +848,7 @@ def expectations(
     like=None,
     max_branches=256,
     checkpoint_interval=None,
+    batch_shape=None,
     **limits,
 ):
     _require_circuit(circuit)
@@ -854,33 +865,49 @@ def expectations(
         from .density import _expectations_from_density, density_matrix
 
         rho = density_matrix(
-            circuit, bindings, backend=backend, like=like, max_branches=max_branches, **limits
+            circuit,
+            bindings,
+            backend=backend,
+            like=like,
+            max_branches=max_branches,
+            batch_shape=batch_shape,
+            **limits,
         )
         ops = _TensorOps(backend, rho.real if like is None else like)
         return _expectations_from_density(rho, observables, circuit.num_qubits, ops)
     if not (isinstance(backend, str) and backend in {"numpy", "torch", "jax"}):
         from ..runtime.backends import get_backend
+        from ..runtime.scheduler import PriorityBackend
 
         device = get_backend(backend)
+        if batch_shape is not None and not isinstance(device, PriorityBackend):
+            raise ValidationError("batch_shape requires a native or automatic backend.")
         if device.capabilities.native_expectations:
-            from ..runtime.scheduler import PriorityBackend
-            from .batch import expectations_batch
+            from .batch import _observables, expectations_batch
 
-            if isinstance(device, PriorityBackend) and any(
-                np.ndim(v) for v in (bindings or {}).values()
+            bindings = {} if bindings is None else bindings
+            if isinstance(device, PriorityBackend) and (
+                batch_shape is not None or any(np.ndim(v) for v in bindings.values())
             ):
                 try:
-                    shape = np.broadcast_shapes(*(np.shape(v) for v in bindings.values()))
-                except ValueError as exc:
+                    requested = () if batch_shape is None else tuple(batch_shape)
+                    shapes = (np.shape(v) for v in bindings.values())
+                    shape = np.broadcast_shapes(requested, *shapes)
+                except (TypeError, ValueError) as exc:
                     raise ValidationError(
                         "Circuit parameter batch shapes cannot be broadcast together."
                     ) from exc
                 count = math.prod(shape)
-                if (
-                    8 * count * (len(bindings) + len(observables))
-                    > limits.get("max_memory_mb", 256) * 2**20
-                ):
+                budget = get_compute_kernel()._prepare_budget(limits.get("max_memory_mb", 256))
+                if 8 * count * (len(bindings) + len(observables)) > budget.max_bytes:
                     raise ResourceError("Automatic readout batch exceeds max_memory_mb.")
+                if not count:
+                    # The batch executor has no circuits to validate for zero rows.
+                    if set(bindings) != set(circuit.parameters):
+                        raise ValidationError(
+                            f"Expected exactly these parameter bindings: {circuit.parameters}."
+                        )
+                    _observables(observables, (circuit,))
                 columns = {k: np.broadcast_to(v, shape).reshape(-1) for k, v in bindings.items()}
                 rows = [{k: v[r] for k, v in columns.items()} for r in range(count)]
                 result = expectations_batch(
@@ -891,7 +918,7 @@ def expectations(
             return expectations_batch(
                 circuit,
                 observables,
-                [bindings or {}],
+                [bindings],
                 backend=backend,
                 max_branches=max_branches,
                 **limits,
@@ -905,7 +932,9 @@ def expectations(
                 circuit, bindings, backend=backend, max_branches=max_branches, **limits
             )
             return _expectations_from_density(rho, observables, circuit.num_qubits, _TensorOps())
-    state = statevector(circuit, bindings, backend=backend, like=like, **limits)
+    state = statevector(
+        circuit, bindings, backend=backend, like=like, batch_shape=batch_shape, **limits
+    )
     tensor_backend = (
         backend if isinstance(backend, str) and backend in {"torch", "jax"} else "numpy"
     )

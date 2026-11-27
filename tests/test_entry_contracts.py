@@ -219,6 +219,22 @@ def test_automatic_readout_retains_multiaxis_broadcast_semantics():
     np.testing.assert_allclose(values[..., 0], np.cos(a) * np.cos(b), atol=2e-12)
 
 
+def test_automatic_readouts_broadcast_explicit_batch_shape():
+    angle = oq.Parameter("angle")
+    circuit, z = oq.Circuit(1).ry(angle, 0), oq.PauliString("Z")
+    bindings = {"angle": np.array([[0.2], [-0.4]])}
+    expected = np.broadcast_to(np.cos(bindings["angle"]), (2, 3))
+    np.testing.assert_allclose(oq.expectation(circuit, z, bindings, batch_shape=(1, 3)), expected)
+    np.testing.assert_allclose(
+        oq.expectations(circuit, (z,), bindings, batch_shape=(1, 3)), expected[..., None]
+    )
+    assert oq.expectation(circuit, z, {"angle": 0.2}, batch_shape=(0, 3)).shape == (0, 3)
+    with pytest.raises(oq.ValidationError, match="bindings"):
+        oq.expectation(circuit, z, batch_shape=(0, 3))
+    with pytest.raises(oq.ValidationError, match="width"):
+        oq.expectation(circuit, oq.PauliString("ZZ"), {"angle": 0.2}, batch_shape=(0, 3))
+
+
 @pytest.mark.parametrize("options", [{"task": []}, {"framework": {}}, {"task": "unknown"}])
 def test_model_choices_reject_unhashable_and_unknown_values(options):
     with pytest.raises(oq.ValidationError, match="Model"):
@@ -262,6 +278,8 @@ def test_optional_import_errors_identify_a_missing_transitive_dependency(monkeyp
         _dependencies.load_dependency("torch", "torch")
     assert error.value.__cause__ is cause
     assert "openqml[torch]" in str(error.value)
+    with pytest.raises(oq.MissingDependencyError, match=r"openqml\[torch\]"):
+        oq.compile_circuit(oq.Circuit(1), backend="torch", transform=lambda fn: fn)
 
 
 def test_financial_risk_types_and_ragged_inputs_have_domain_errors():

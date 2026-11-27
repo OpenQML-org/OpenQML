@@ -166,9 +166,20 @@ def make_train_step(
             updates, opt_state = optimizer.update(gradient, opt_state, params)
             return jax.tree_util.tree_map(jnp.add, params, updates), opt_state
 
-        params, opt_state = jax.lax.cond(
-            finite, update, lambda state: state, (parameters, optimizer_state)
-        )
+        state = parameters, optimizer_state
+        try:
+            params, opt_state = jax.lax.cond(finite, update, lambda state: state, state)
+        except NotImplementedError as exc:
+            if axis_name is None or "No replication rule for cond." not in str(exc):
+                raise
+            # Legacy shard_map cannot prove replication through cond. The
+            # globally reduced predicate selects one complete optimizer state.
+            gradient = jax.tree_util.tree_map(lambda x: jnp.where(finite, x, 0), gradient)
+            params, opt_state = jax.tree_util.tree_map(
+                lambda candidate, previous: jnp.where(finite, candidate, previous),
+                update(state),
+                state,
+            )
         return (
             params,
             opt_state,

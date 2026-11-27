@@ -60,6 +60,7 @@ def test_nonclifford_wide_chain_uses_mps_after_expansion_rejection(monkeypatch):
     assert plan.mps_profile["svd_work"] == 0
     values = plan.evaluate()
     assert np.isfinite(values).all() and (np.abs(values) <= 1 + 1e-12).all()
+    pytest.importorskip("qiskit_aer")
     reference = oq.expectations(circuit, observables, backend="aer-mps")
     np.testing.assert_allclose(values, reference, atol=1e-12)
 
@@ -67,6 +68,7 @@ def test_nonclifford_wide_chain_uses_mps_after_expansion_rejection(monkeypatch):
 def test_stabilizer_matches_exact_pauli_reference_on_nonlocal_clifford_circuit(monkeypatch):
     import openqml.simulator as simulator
 
+    pytest.importorskip("qiskit_aer")
     monkeypatch.setattr(
         simulator, "_initial_state", lambda *a, **k: pytest.fail("Dense allocation")
     )
@@ -257,6 +259,7 @@ def test_mps_hybrid_gradients_match_native_torch_and_share_one_optimizer():
 
 @pytest.mark.parametrize("framework", ("torch", "jax"))
 def test_adaptive_pauli_native_autodiff_retains_second_derivatives(framework):
+    pytest.importorskip(framework)
     angle = oq.Parameter("theta")
     circuit = oq.Circuit(2).ry(angle, 0).cx(0, 1)
     plan = oq.plan_execution(circuit, (oq.PauliString("ZI"),), max_memory_mb=16)
@@ -279,6 +282,7 @@ def test_adaptive_pauli_native_autodiff_retains_second_derivatives(framework):
 def test_wide_mps_hybrid_layer_uses_numeric_gradients_without_dense_allocation(monkeypatch):
     import openqml.simulator as simulator
 
+    pytest.importorskip("torch")
     monkeypatch.setattr(
         simulator, "_initial_state", lambda *a, **k: pytest.fail("Dense allocation")
     )
@@ -305,6 +309,7 @@ def test_wide_mps_hybrid_layer_uses_numeric_gradients_without_dense_allocation(m
 def test_layer_default_width_is_optional_and_compiled_growth_remains_bounded(monkeypatch):
     import openqml.simulator as simulator
 
+    pytest.importorskip("torch")
     monkeypatch.setattr(
         simulator, "_initial_state", lambda *a, **k: pytest.fail("Dense allocation")
     )

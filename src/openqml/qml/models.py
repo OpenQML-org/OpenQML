@@ -215,7 +215,7 @@ class Model:
             raise ValidationError("Pass Python/NumPy or JAX data to a JAX/Flax model.")
         value = jax.numpy.asarray(value, dtype=jax.numpy.int32 if labels else jax.numpy.float32)
         like = next(iter(self.trainer.parameters.values()))
-        return jax.device_put(value, like.device)
+        return jax.device_put(value, like.sharding)
 
     def _loss(self, prediction, target):
         if self.task == "forecast":
@@ -395,8 +395,10 @@ class Model:
             raise ValidationError("Input feature width differs from the model.")
         if self.task == "classification":
             outputs = self.output_features or max(2, int(y.max()) + 1)
+        elif y.ndim == 1 or (self.task == "regression" and y.shape == x.shape[:-1]):
+            outputs = self.output_features or 1
         else:
-            outputs = self.output_features or (1 if y.ndim == 1 else y.shape[-1])
+            outputs = self.output_features or y.shape[-1]
         # Check all labels before creating an optimizer or applying an update.
         self._check_targets(x, y, outputs, features=features)
         if validation is not None:

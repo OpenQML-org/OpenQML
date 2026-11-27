@@ -1,5 +1,18 @@
 # Changes
 
+## 0.36.1
+
+- Require a NumPy 2-compatible PyTorch version in the installation extras.
+  On Intel macOS, keep NumPy 1.x for PyTorch and allow NumPy 2 wheels for the
+  core installation on Python 3.13.
+- Accept NumPy bindings in PyTorch simulation and preserve gradients of native
+  bindings in the same circuit. Keep empty JAX circuits on the requested device.
+- Broadcast explicit batch shapes in automatic expectation readouts and report
+  missing PyTorch with the installation command during circuit compilation.
+- Fix model input placement and distributed finite-gradient rejection on JAX
+  0.4.30. Infer a single regression output when targets match the sample and
+  sequence axes. Mark optional checks so the core-only suite can run on its own.
+
 ## 0.36.0
 
 - Dense statevector readouts visit each Hermitian amplitude pair once for wide

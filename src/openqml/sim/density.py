@@ -400,9 +400,7 @@ def _simulate(
                 raise ValidationError("Bindings must be finite real scalars or arrays.")
             clean[name] = value.astype(float, copy=False)
         bindings = clean
-    if like is None and backend != "numpy":
-        like = next((v for v in bindings.values() if hasattr(v, "dtype")), None)
-    ops = _TensorOps(backend, like)
+    ops = _TensorOps(backend, like, binding_values=bindings.values())
     try:
         inferred = _broadcast_shape(tuple(ops.parameter_shape(v) for v in bindings.values()))
         shape = (
@@ -421,12 +419,13 @@ def _simulate(
         raise
     peak = records.peak_branches
     _resource_check(circuit, max_qubits, max_memory_mb, math.prod(shape), peak)
+    bindings = ops.native_bindings(bindings)
     size = 4**circuit.num_qubits
     if backend == "torch":
         rho = ops.xp.zeros(size, dtype=ops.dtype, device=ops.device)
         rho[0] = 1
     elif backend == "jax":
-        rho = ops.xp.zeros(size, dtype=ops.dtype).at[0].set(1)
+        rho = ops.xp.broadcast_to(ops.array(0), (size,)).at[0].set(1)
     else:
         rho = np.zeros(size, dtype=complex)
         rho[0] = 1

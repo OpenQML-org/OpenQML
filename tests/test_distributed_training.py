@@ -116,6 +116,11 @@ import optax
 from jax.sharding import Mesh,NamedSharding,PartitionSpec as P
 import openqml as oq
 assert len(jax.devices())==2
+device = jax.devices()[1]
+context = jax.device_put(jnp.float32(0), device)
+rho = oq.density_matrix(oq.Circuit(1), backend="jax", like=context)
+assert rho.devices() == {device}
+np.testing.assert_array_equal(rho, [[1, 0], [0, 0]])
 mesh=Mesh(np.asarray(jax.devices()),('batch',))
 x=jnp.arange(16,dtype=jnp.float32).reshape(8,2)/10
 y=jnp.arange(8,dtype=jnp.float32)/8
@@ -123,7 +128,7 @@ parameters={'w':jnp.array([.2,-.3])}
 def loss(p,b):return (b['x']@p['w']-b['y'])**2
 gradient=jax.grad(lambda p:loss(p,{'x':x,'y':y}).mean())(parameters)
 expected=parameters['w']-.1*gradient['w']
-optimizer=optax.sgd(.1)
+optimizer=optax.sgd(.1, momentum=.9)
 step=oq.jax.make_train_step(optimizer,loss,microbatch_size=3,max_grad_norm=None)
 p=jax.device_put(parameters,NamedSharding(mesh,P()))
 b=jax.device_put({'x':x,'y':y},NamedSharding(mesh,P('batch')))
@@ -139,6 +144,14 @@ parallel=jax.jit(mapper(local,mesh=mesh,in_specs=(P(),P(),P('batch')),out_specs=
 actual,_,metrics=parallel(p,optimizer.init(p),b)
 np.testing.assert_allclose(actual['w'],expected,rtol=2e-6)
 assert int(metrics['samples'])==8
+initial=optimizer.init(p)
+bad={**b, 'y': b['y'].at[0].set(jnp.nan)}
+unchanged, state, metrics=parallel(p,initial,bad)
+assert bool(metrics['skipped'])
+old_leaves = jax.tree_util.tree_leaves((p, initial))
+new_leaves = jax.tree_util.tree_leaves((unchanged, state))
+for before, after in zip(old_leaves, new_leaves, strict=True):
+    np.testing.assert_array_equal(before,after)
 print('Two-device NamedSharding and sample-weighted psum passed.')
 """
     environment = os.environ.copy()

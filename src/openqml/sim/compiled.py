@@ -7,6 +7,7 @@ import numpy as np
 from ..compute.kernel import get_compute_kernel
 from ..errors import ResourceError, ValidationError, _require_choice
 from ..ir.core import _require_circuit, integer
+from ..runtime._dependencies import load_dependency
 
 
 def compile_circuit(
@@ -37,8 +38,7 @@ def compile_circuit(
     if transform is not None and not callable(transform):
         raise ValidationError("transform must be callable.")
     if backend == "torch" and transform is not None:
-        import torch
-
+        torch = load_dependency("torch", "torch")
         if tuple(int(part) for part in torch.__version__.split(".")[:2]) < (2, 4):
             raise ValidationError(
                 "Compiled Torch transforms require PyTorch >= 2.4. "

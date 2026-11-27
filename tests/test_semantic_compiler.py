@@ -243,14 +243,13 @@ def test_random_phase_circuit_and_inverse_have_exact_identity_certificate(seed):
     "name", ("h", "x", "y", "z", "s", "sdg", "sx", "sxdg", "cx", "cy", "cz", "swap", "iswap")
 )
 def test_exact_integer_clifford_rules_agree_with_independent_native_operators(name):
-    from qiskit.quantum_info import Operator
-
     from openqml.semantics import _conjugate
 
+    operator = pytest.importorskip("qiskit.quantum_info").Operator
     width = 2 if name in {"cx", "cy", "cz", "swap", "iswap"} else 1
     wires = tuple(range(width))
     circuit = oq.Circuit(width, (oq.Operation(name, wires),))
-    unitary = np.asarray(Operator(oq.convert(circuit, target="qiskit").value).data)
+    unitary = np.asarray(operator(oq.convert(circuit, target="qiskit").value).data)
 
     def pauli(x, z, phase):
         matrix = np.zeros((1 << width, 1 << width), dtype=complex)

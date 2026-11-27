@@ -103,6 +103,9 @@ Torch or JAX arrays. Boolean, complex, object and text values are rejected
 before arithmetic. Native dtype/shape checks preserve tensors and gradients;
 errors raised by a caller's mapping implementation remain caller errors.
 
+For a native or automatic backend, `expectation` and `expectations` broadcast
+`batch_shape` together with the shapes of the parameter bindings.
+
 ## Package organization
 
 The implementation is grouped by responsibility. The root API remains the
@@ -167,7 +170,7 @@ batches without collecting a complete output array. Classification also accepts
 
 | Task | Targets | Prediction |
 | --- | --- | --- |
-| `regression` | `[B]` or output-shaped floating arrays | Scalar/vector predictions |
+| `regression` | One scalar per sample position or an array with a trailing output axis | Scalar/vector predictions |
 | `classification` | Integer class IDs on non-class output axes | Class IDs; `predict_proba` returns normalized probabilities |
 | `forecast` | Next-return labels `[B,T,N]` for causal features `[B,T,F]` | Asset medians; `predict_quantiles` returns ordered `[B,T,N,Q]` quantiles |
 

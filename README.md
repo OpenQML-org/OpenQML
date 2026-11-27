@@ -20,6 +20,11 @@ Install an extra when you need a training framework or a quantum SDK. For
 example, `python -m pip install "openqml[torch]"` adds PyTorch.
 Other choices include `openqml[jax]`, `openqml[flax]` and `openqml[qiskit,cirq]`.
 
+The PyTorch extra requires PyTorch 2.4.1 or later. On Intel macOS it uses the
+available PyTorch 2.2 wheels with NumPy 1.x. The core installation can use
+NumPy 2 on Intel macOS. To check the bridge in an existing environment, run
+`python -m openqml doctor --extra torch --check-imports`.
+
 ## Simulate and export a circuit
 
 This six-qubit circuit entangles the first and last wires. Measuring either

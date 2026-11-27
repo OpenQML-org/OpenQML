@@ -55,6 +55,16 @@ def test_selection_restores_optimizer_counters_rng_and_resumes_exactly(framework
 
 
 @pytest.mark.parametrize("framework", ["torch", "jax", "flax"])
+def test_sequence_regression_infers_one_output_without_a_trailing_axis(framework):
+    x = np.full((2, 3, 1), 0.1, dtype="float32")
+    y = np.full(x.shape[:-1], 0.2, dtype="float32")
+    model = make_model(framework).fit(x, y)
+    assert model.output_features == 1
+    assert model.predict(x).shape == y.shape
+    assert model.evaluate(x, y) == pytest.approx(model.evaluate(x, y[..., None]))
+
+
+@pytest.mark.parametrize("framework", ["torch", "jax", "flax"])
 @pytest.mark.parametrize("task", ["classification", "forecast"])
 def test_task_loss_uses_native_evaluation_without_updating_state(framework, task):
     model = make_model(framework, task=task)

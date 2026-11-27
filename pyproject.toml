@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openqml"
-version = "0.36.0"
+version = "0.36.1"
 description = "Quantum-classical hybrid AI, quantitative research and cross-framework quantum programming"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,20 +27,25 @@ classifiers = [
 dependencies = [
   "packaging>=23",
   "psutil>=5.9",
-  "numpy>=1.24; platform_system != 'Darwin' or platform_machine != 'x86_64'",
-  "numpy>=1.26,<2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+  "numpy>=1.24",
 ]
 
 [project.urls]
 Repository = "https://github.com/OpenQML-org/OpenQML"
 
 [project.optional-dependencies]
-torch = ["torch>=2.2"]
+torch = [
+  "torch>=2.4.1; platform_system != 'Darwin' or platform_machine != 'x86_64'",
+  "torch>=2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+  "numpy>=1.26,<2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+]
 jax = ["jax>=0.4.30", "optax>=0.2"]
 qiskit = ["qiskit[qasm3-import]>=1.2", "sympy>=1.12"]
 aer = ["qiskit[qasm3-import]>=1.2", "qiskit-aer>=0.15", "sympy>=1.12"]
 gpu = [
-  "torch>=2.2",
+  "torch>=2.4.1; platform_system != 'Darwin' or platform_machine != 'x86_64'",
+  "torch>=2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+  "numpy>=1.26,<2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
   "triton>=3.4,<4; platform_system == 'Linux' and platform_machine == 'x86_64'",
 ]
 qasm = ["qiskit[qasm3-import]>=1.2", "openqasm3[parser]>=1.0", "sympy>=1.12"]
@@ -56,7 +61,10 @@ compute = [
 pennylane = ["pennylane>=0.40", "sympy>=1.12"]
 cirq = ["cirq-core>=1.4", "sympy>=1.12"]
 all = [
-  "torch>=2.2", "jax>=0.4.30", "flax>=0.10", "optax>=0.2",
+  "torch>=2.4.1; platform_system != 'Darwin' or platform_machine != 'x86_64'",
+  "torch>=2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+  "numpy>=1.26,<2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+  "jax>=0.4.30", "flax>=0.10", "optax>=0.2",
   "qiskit[qasm3-import]>=1.2", "qiskit-aer>=0.15", "pennylane>=0.40",
   "cirq-core>=1.4", "openqasm3[parser]>=1.0", "sympy>=1.12",
   "cotengra>=0.7.5,<0.8; python_version < '3.11' or (platform_system == 'Darwin' and platform_machine == 'x86_64')",

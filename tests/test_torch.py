@@ -3,7 +3,15 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from openqml import Circuit, Parameter, PauliString, expectation, parameter_shift
+from openqml import (
+    Circuit,
+    Parameter,
+    PauliString,
+    density_matrix,
+    expectation,
+    parameter_shift,
+    statevector,
+)
 from openqml.interfaces.torch import QuantumLayer
 
 
@@ -19,6 +27,24 @@ def test_native_gradients_shared_symbols_and_second_derivative():
     assert first.item() == pytest.approx(
         parameter_shift(circuit, ob, {"theta": theta.item()})["theta"]
     )
+
+
+def test_numpy_bindings_keep_torch_simulation_and_mixed_gradients_native():
+    x, w = Parameter("x"), Parameter("w")
+    circuit = Circuit(1).ry(x * w, 0)
+    values = np.array([0.2, -0.4])[::-1]
+    state = statevector(circuit, {"x": values, "w": 0.3}, backend="torch")
+    np.testing.assert_allclose(
+        state.numpy(), statevector(circuit, {"x": values, "w": 0.3}, backend="numpy"), atol=1e-7
+    )
+    weights = torch.tensor(0.3, dtype=torch.float64, requires_grad=True)
+    bindings = {"x": values, "w": weights}
+    state = statevector(circuit, bindings, backend="torch")
+    rho = density_matrix(circuit, bindings, backend="torch")
+    torch.testing.assert_close(rho, state[..., :, None] * state.conj()[..., None, :])
+    for loss in (state[..., 1].abs().square().sum(), rho[..., 1, 1].real.sum()):
+        (gradient,) = torch.autograd.grad(loss, weights)
+        assert gradient.item() == pytest.approx(np.sum(values * np.sin(0.3 * values)) / 2)
 
 
 def test_layer_input_and_weight_gradcheck_and_gradgradcheck():
