@@ -90,6 +90,16 @@ roundoff remains. The family excludes noncommuting interiors, higher-body
 generators and general output distributions. `graph.circuit()` exports the
 prepared state as ordinary IR; readout axes remain an explicit output contract.
 
+`graph.prepare_z_pairs(pairs)` prepares exact computational-basis correlations
+for pairs of distinct wires. Omitting `pairs` selects the graph edges. Call
+`plan.evaluate(coordinates, backend="torch")` or select NumPy or JAX. The
+last axis follows the requested pair order. Holding the two measured spins
+fixed turns the sum over their exterior neighbors into products of cosines.
+A shared neighbor contributes its sum or difference of edge angles, while the
+edge between the two measured spins cancels. For this two-body family the
+work per pair grows with its incident edges. Polar and azimuth coordinates
+only affect the separate local-axis readout.
+
 The hypernetwork maps an input through a rank-limited code, emits bounded
 single-site/coupling angles and spherical measurement axes, evaluates the exact
 readouts, then projects them into a learned residual. Residual scaling starts
@@ -102,6 +112,50 @@ initialization, coordinate-gradient variance is `1/(3 * 2**degree(q))`.
 `graph.to_dict()` labels these assumptions explicitly. This is not a theorem
 about an arbitrary task loss, a learned hypernetwork distribution or the whole
 training trajectory. Dense connectivity can still suppress gradients.
+
+## Selecting a predictor
+
+Reserve a calibration set after training and hyperparameter selection. Keep a
+separate test set for reporting deployment performance. For a fitted classifier
+and fitted classical alternatives, pass their prediction methods along with
+end-to-end costs in a common unit.
+
+```python
+choice = model.select_predictor(
+    {"rbf": svm.predict, "logistic": logistic.predict},
+    x_cal,
+    y_cal,
+    costs=measured_seconds,
+    max_cost=60,
+    confidence=0.95,
+)
+y_pred = choice.predict(x_test)
+```
+
+`measured_seconds` contains an entry for each classical name and for
+`"hybrid"`. Fix the workload and cost ceiling in advance. Include the same
+training and inference workload for each candidate. Over-budget predictors
+are excluded before calibration inference. Supply at least one affordable
+classical candidate.
+
+Classification uses per-observation error, regression uses squared error, and
+forecasts use the median's absolute error. For regression, forecasting or a
+custom loss, supply a valid `loss_bound` chosen before seeing calibration
+outcomes. A custom `loss(targets, predictions)` returns one value per
+observation in `[0, loss_bound]`. Outputs outside the declared range raise an
+error. The same policy accepts other model families and structured inputs via
+`oq.select_predictor(hybrid_predict, baselines, inputs, targets, ...)`.
+
+For each baseline, a mixture of six fixed bets tests whether the mean paired
+loss improvement exceeds `min_gain`. The decision requires all log e-values to
+reach `log(number_of_eligible_baselines / (1 - confidence))`. Otherwise it
+selects the classical model with lowest mean calibration loss, breaking ties by
+cost and name. Independent held-out observations justify the test for a common
+mean. Sequential data require the corresponding conditional-mean null or
+independent evaluation units such as whole trajectories. Reusing calibration
+outcomes to tune candidates invalidates this interpretation. Costs, mean losses
+and log e-values are available on the result. The comparison covers the
+registered candidates and stated workload. [Waudby-Smith and Ramdas, JRSS B](https://doi.org/10.1093/jrsssb/qkad009)
 
 ## Prepared-state geometry without quantum-state buffers
 

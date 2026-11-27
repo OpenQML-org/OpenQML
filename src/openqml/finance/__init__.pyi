@@ -26,6 +26,7 @@ from .pricing import PayoffOraclePlan as PayoffOraclePlan
 from .projection import cost_aware_projection as cost_aware_projection
 from .quantum import CardinalityProblem as CardinalityProblem
 from .quantum import CardinalityQAOAPlan as CardinalityQAOAPlan
+from .quantum import PortfolioDecision as PortfolioDecision
 from .quantum import PortfolioSamples as PortfolioSamples
 from .quantum import PortfolioSelection as PortfolioSelection
 from .quantum import SelectionResult as SelectionResult

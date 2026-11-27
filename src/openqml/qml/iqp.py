@@ -112,7 +112,7 @@ class IQPGraph:
             "variance_assumptions": "independent_uniform_angles_and_uniform_S2_axes; not_task_loss",
         }
 
-    def evaluate(self, coordinates, *, backend="numpy", like=None, _indices=None):
+    def _coordinates(self, coordinates, backend, like):
         if like is None and backend != "numpy":
             like = coordinates
         ops = _TensorOps(backend, like)
@@ -129,6 +129,10 @@ class IQPGraph:
             > memory_budget(self.max_memory_mb) * 2**20
         ):
             raise ResourceError("IQP batched coordinate/readout workspace exceeds max_memory_mb.")
+        return ops, value
+
+    def evaluate(self, coordinates, *, backend="numpy", like=None, _indices=None):
+        ops, value = self._coordinates(coordinates, backend, like)
         n, m = self.num_qubits, len(self.edges)
         alpha, omega = value[..., :n], value[..., n : n + m]
         polar, azimuth = value[..., n + m : 2 * n + m], value[..., 2 * n + m :]
@@ -154,6 +158,49 @@ class IQPGraph:
             - ops.xp.sin(polar) * ops.xp.sin(azimuth) * ops.xp.sin(alpha)
         ) * multiplier
 
+    def prepare_z_pairs(self, pairs=None):
+        """Compile exact Z_i Z_j readouts of circuit(), in the requested pair order."""
+        pairs = self.edges if pairs is None else pairs
+        if isinstance(pairs, (str, bytes, Mapping, Set)):
+            raise ValidationError("Provide an ordered iterable of IQP wire pairs.")
+        neighbors = [{} for _ in range(self.num_qubits)]
+        for edge, (a, b) in enumerate(self.edges):
+            neighbors[a][b] = neighbors[b][a] = edge
+        buckets = {}
+        work = 0
+        try:
+            for row, (a, b) in enumerate(pairs):
+                a, b = integer(a, "pair wire"), integer(b, "pair wire")
+                if a == b or max(a, b) >= self.num_qubits:
+                    raise ValidationError("IQP readout pairs need distinct in-range wires.")
+                left, right = neighbors[a], neighbors[b]
+                work += 1 + len(left) + len(right)
+                if work > self.max_work or 256 * work > memory_budget(self.max_memory_mb) * 2**20:
+                    raise ResourceError("IQP pair descriptors exceed work/memory budget.")
+                common = sorted(left.keys() & right.keys())
+                single = tuple(left[q] for q in left if q != b and q not in right)
+                single += tuple(right[q] for q in right if q != a and q not in left)
+                group = buckets.setdefault((len(single), len(common)), [])
+                group.append(
+                    (
+                        row,
+                        a,
+                        b,
+                        single,
+                        tuple(left[q] for q in common),
+                        tuple(right[q] for q in common),
+                    )
+                )
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("Provide ordered pairs of IQP wire indices.") from exc
+        groups, order = [], []
+        for entries in buckets.values():
+            rows, *selectors = zip(*entries, strict=True)
+            order.extend(rows)
+            groups.append(tuple(selectors))
+        inverse = tuple(int(i) for i in np.argsort(order))
+        return IQPPairReadout(self, tuple(groups), inverse, work)
+
     def circuit(self):
         """Export the prepared IQP state, excluding the adaptive readout axes."""
         if 3 * self.num_qubits + len(self.edges) > self.max_work:
@@ -168,6 +215,49 @@ class IQPGraph:
         for q in range(self.num_qubits):
             builder.h(q)
         return builder.build()
+
+
+@dataclass(frozen=True)
+class IQPPairReadout:
+    graph: IQPGraph
+    _groups: tuple = field(repr=False)
+    _order: tuple = field(repr=False)
+    _work: int = field(repr=False)
+
+    def evaluate(self, coordinates, *, backend="numpy", like=None):
+        """Return [..., pairs] in the computational basis, before adaptive readout rotations."""
+        ops, value = self.graph._coordinates(coordinates, backend, like)
+        work = math.prod(value.shape[:-1]) * self._work
+        if (
+            work > self.graph.max_work
+            or 64 * work > memory_budget(self.graph.max_memory_mb) * 2**20
+        ):
+            raise ResourceError("IQP pair evaluation exceeds work/memory budget.")
+        if not self._order:
+            return value[..., :0]
+        n = self.graph.num_qubits
+        omega = value[..., n : n + len(self.graph.edges)]
+        xp = ops.xp
+
+        def cosine_product(angle):
+            factors = xp.cos(angle)
+            return factors.prod(dim=-1) if backend == "torch" else factors.prod(axis=-1)
+
+        outputs = []
+        for left, right, single, common_left, common_right in self._groups:
+            a, b = value[..., _index(left, ops)], value[..., _index(right, ops)]
+            plus, minus = xp.cos(a + b), xp.cos(a - b)
+            if common_left[0]:
+                u = omega[..., _index(common_left, ops)]
+                v = omega[..., _index(common_right, ops)]
+                plus = plus * cosine_product(u + v)
+                minus = minus * cosine_product(u - v)
+            pair = 0.5 * (plus + minus)
+            if single[0]:
+                pair = pair * cosine_product(omega[..., _index(single, ops)])
+            outputs.append(pair)
+        joined = xp.cat(outputs, dim=-1) if backend == "torch" else xp.concatenate(outputs, axis=-1)
+        return joined[..., _index(self._order, ops)]
 
 
 def _index(values, ops):

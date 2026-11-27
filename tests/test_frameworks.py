@@ -6,6 +6,32 @@ import pytest
 from openqml import Circuit, ConversionError, Parameter, convert, execute, sample, statevector
 
 
+def test_cirq_symbolic_hardware_gates_preserve_full_unitaries_and_expansion_limits():
+    cirq = pytest.importorskip("cirq")
+    sympy = pytest.importorskip("sympy")
+    a, b = cirq.LineQubit.range(2)
+    theta, phi = sympy.symbols("theta phi")
+    gates = [
+        (cirq.FSimGate(theta, phi)(a, b), 3),
+        (cirq.ISwapPowGate(exponent=theta, global_shift=0.125)(b, a), 2),
+        (cirq.PhasedXPowGate(phase_exponent=phi, exponent=theta, global_shift=-0.2)(b), 3),
+        (cirq.ControlledGate(cirq.YPowGate(exponent=theta))(b, a), 2),
+    ]
+    for operation, count in gates:
+        source = cirq.Circuit(operation)
+        ir = convert(source, target="ir", max_operations=count).value
+        assert len(ir.operations) == count and all(op.name != "unitary" for op in ir.operations)
+        with pytest.raises(ConversionError, match="EXPANSION_LIMIT"):
+            convert(source, target="ir", max_operations=count - 1)
+        for angle in (-0.73, 0.0, 1.28):
+            bindings = {"theta": angle, "phi": angle - 0.32}
+            target = convert(
+                ir, target="cirq", bindings={k: bindings[k] for k in ir.parameters}
+            ).value
+            reference = cirq.resolve_parameters(source, bindings)
+            np.testing.assert_allclose(cirq.unitary(target), cirq.unitary(reference), atol=2e-14)
+
+
 def full_circuit():
     return (
         Circuit(3)

@@ -8,6 +8,8 @@ _EXPORTS = {
     "LindbladResult": (".lindblad", "LindbladResult"),
     "LindbladUncertainty": (".lindblad", "LindbladUncertainty"),
     "Model": (".models", "Model"),
+    "select_predictor": (".selection", "select_predictor"),
+    "PredictorSelection": (".selection", "PredictorSelection"),
     "HybridArchitecture": (".architecture", "HybridArchitecture"),
     "QuantumCellSpec": (".architecture", "QuantumCellSpec"),
     "LayerSpec": (".layers", "LayerSpec"),

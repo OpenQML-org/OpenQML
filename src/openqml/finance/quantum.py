@@ -53,6 +53,16 @@ class PortfolioSamples(NamedTuple):
     conditional_mean_cost: float
 
 
+class PortfolioDecision(NamedTuple):
+    selection: np.ndarray
+    cost: float
+    source: str
+    classical_cost: float
+    sampled_cost: float | None
+    feasible_shots: int
+    invalid_shots: int
+
+
 @dataclass(frozen=True)
 class CardinalityProblem:
     matrix: object
@@ -141,14 +151,62 @@ class CardinalityProblem:
             raise ResourceError(
                 "Exact cardinality search exceeds max_states; condition a smaller block."
             )
-        best = None
-        for chosen in itertools.combinations(range(self.num_assets), self.cardinality):
-            x = np.zeros(self.num_assets, np.int8)
-            x[list(chosen)] = 1
-            cost = self.cost(x)
-            if best is None or cost < best.cost:
-                best = SelectionResult(x, cost)
-        return best
+        n, k = self.num_assets, self.cardinality
+        complement = k > n // 2
+        width = min(k, n - k)
+        selection = np.full(n, int(complement), dtype=np.int8)
+        if width:
+            # Rank by the varying part of the objective. For x=1-y the linear
+            # term becomes -(linear + Q1 + Q.T1); the quadratic term is unchanged.
+            linear = self.linear
+            if complement:
+                linear = -(linear + self.matrix.sum(axis=0) + self.matrix.sum(axis=1))
+            diagonal = linear + self.matrix.diagonal()
+            budget = memory_budget(self.max_memory_mb) * 2**20
+            batch = max(1, min(1024, int(budget // (128 * (width + 1)))))
+            combinations = itertools.combinations(range(n), width)
+            # A shared large term in the complement can erase small differences.
+            # Include every near-minimum in a direct, original-objective comparison.
+            matrix_scale = max(abs(float(self.matrix.min())), abs(float(self.matrix.max())))
+            linear_scale = max(abs(float(self.linear.min())), abs(float(self.linear.max())))
+            scale = n * n * matrix_scale + n * linear_scale + abs(self.offset)
+            uncertainty = 16 * np.finfo(float).eps * (n + width**2) * scale
+            best_value, best_indices = math.inf, None
+            while block := tuple(itertools.islice(combinations, batch)):
+                indices = np.asarray(block, dtype=np.intp)
+                scores = diagonal[indices].sum(axis=1)
+                for col in range(width - 1):
+                    left, right = indices[:, col, None], indices[:, col + 1 :]
+                    scores += (self.matrix[left, right] + self.matrix[right, left]).sum(axis=1)
+                contenders = (
+                    np.flatnonzero(scores <= scores.min() + uncertainty)
+                    if np.isfinite(scores).all()
+                    else range(len(scores))
+                )
+                for i in contenders:
+                    selection.fill(int(complement))
+                    selection[indices[i]] = int(not complement)
+                    cost = self.cost(selection)
+                    if not math.isfinite(cost):
+                        raise ValidationError(
+                            "Exact portfolio objective exceeds floating-point range."
+                        )
+                    # The last tied omission gives the first lexicographic holding.
+                    if (
+                        best_indices is None
+                        or cost < best_value
+                        or (complement and cost == best_value)
+                    ):
+                        best_value, best_indices = cost, indices[i].copy()
+            selection.fill(int(complement))
+            selection[best_indices] = int(not complement)
+        return SelectionResult(selection, self.cost(selection))
+
+    def _diagonal_seed(self):
+        x = np.zeros(self.num_assets, np.int8)
+        order = np.argsort(self.linear + self.matrix.diagonal(), kind="stable")
+        x[order[: self.cardinality]] = 1
+        return x
 
     def refine(self, selection, *, max_swaps=32, max_work=100_000_000):
         x = _bits(selection, self.num_assets)
@@ -268,12 +326,7 @@ class CardinalityQAOAPlan:
         n, problem = self.problem.num_assets, self.problem
         if n > limit:
             raise ResourceError("Circuit width exceeds max_operations.")
-        selection = np.zeros(n, np.int8)
-        selection[
-            np.argsort(problem.linear + np.diag(problem.matrix), kind="stable")[
-                : problem.cardinality
-            ]
-        ] = 1
+        selection = problem._diagonal_seed()
         if self.initial_selection is not None:
             selection = _bits(self.initial_selection, n)
         problem.cost(selection)
@@ -456,7 +509,62 @@ class CardinalityQAOAPlan:
             sample(self.bound(weights), shots=shots, backend=backend, **options)
         )
 
-    def decode_counts(self, counts):
+    def solve(
+        self,
+        weights,
+        *,
+        shots=1024,
+        backend="auto",
+        max_exact_states=4096,
+        max_swaps=32,
+        classical_selection=None,
+        min_gain=0,
+        **options,
+    ):
+        """Return a feasible decision, accepting sampled holdings only on a strict cost gain.
+
+        Small universes are solved exactly without a backend call. Larger ones
+        use a classical swap incumbent and can include a caller's stronger solution.
+        """
+        from ..sim.dense import sample
+
+        problem = self.problem
+        weights = _fixed(weights, (len(self.spec.weight_parameters),))
+        exact = integer(max_exact_states, "max_exact_states")
+        swaps = integer(max_swaps, "max_swaps")
+        shots = integer(shots, "shots", 1)
+        gain = real(min_gain)
+        if gain < 0:
+            raise ValidationError("min_gain must be nonnegative.")
+        if classical_selection is not None:
+            problem.cost(classical_selection)
+        if math.comb(problem.num_assets, problem.cardinality) <= exact:
+            best = problem.exact(max_states=exact)
+            return PortfolioDecision(*best, "classical_exact", best.cost, None, 0, 0)
+        best = problem.refine(problem._diagonal_seed(), max_swaps=swaps)
+        if classical_selection is not None:
+            incumbent = SelectionResult(
+                _bits(classical_selection, problem.num_assets), problem.cost(classical_selection)
+            )
+            refined = problem.refine(incumbent.selection, max_swaps=swaps)
+            best = min((best, incumbent, refined), key=lambda item: item.cost)
+        options.setdefault("max_memory_mb", problem.max_memory_mb)
+        counts = sample(self.bound(weights), shots=shots, backend=backend, **options)
+        candidate, feasible, invalid, _ = self._score_counts(counts)
+        if candidate is not None and candidate.cost < best.cost - gain:
+            return PortfolioDecision(
+                *candidate, "sampled", best.cost, candidate.cost, feasible, invalid
+            )
+        return PortfolioDecision(
+            *best,
+            "classical_local",
+            best.cost,
+            None if candidate is None else candidate.cost,
+            feasible,
+            invalid,
+        )
+
+    def _score_counts(self, counts):
         if not isinstance(counts, Mapping) or not counts:
             raise ValidationError("Provide nonempty canonical q0-MSB sample counts.")
         feasible, invalid, total_cost, best = 0, 0, 0.0, None
@@ -481,6 +589,10 @@ class CardinalityQAOAPlan:
             total_cost += count * cost
             if best is None or cost < best.cost:
                 best = SelectionResult(x, cost)
+        return best, feasible, invalid, total_cost
+
+    def decode_counts(self, counts):
+        best, feasible, invalid, total_cost = self._score_counts(counts)
         if not feasible:
             raise ValidationError(
                 "No feasible cardinality sample; inspect hardware noise or use a smaller circuit."

@@ -9,6 +9,56 @@ import openqml as q
 from openqml import finance as f
 
 
+def test_fixed_cardinality_exact_matches_exhaustive_cost_and_tie_order():
+    rng = np.random.default_rng(93)
+    n = 8
+    raw = rng.integers(-3, 4, (n, n))
+    for matrix in (raw + raw.T, np.zeros_like(raw)):
+        for k in range(n + 1):
+            problem = f.CardinalityProblem(matrix, np.zeros(n), k, offset=0.17)
+            vectors = (
+                np.isin(np.arange(n), picked).astype(int)
+                for picked in itertools.combinations(range(n), k)
+            )
+            expected = min(vectors, key=lambda x: float(x @ matrix @ x))
+            result = problem.exact()
+            np.testing.assert_array_equal(result.selection, expected)
+            assert result.cost == pytest.approx(float(expected @ matrix @ expected) + 0.17)
+    # A mandatory omission can dominate the complement scores in float64.
+    wide_scale = f.CardinalityProblem(np.zeros((5, 5)), [0, 4, 2, 1, 1e17], 3)
+    np.testing.assert_array_equal(wide_scale.exact().selection, [1, 0, 1, 1, 0])
+
+
+def test_portfolio_decision_checks_exact_local_and_external_incumbents(monkeypatch):
+    matrix = np.zeros((4, 4))
+    matrix[2, 3] = matrix[3, 2] = -2
+    plan = f.CardinalityProblem(matrix, [-0.5, -0.5, 0, 0], 2).qaoa()
+    weights = plan.initial_parameters()
+    from openqml.sim import dense
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("exact route submitted a circuit")
+
+    monkeypatch.setattr(dense, "sample", forbidden)
+    optimum = plan.solve(weights)
+    assert (optimum.source, optimum.cost, optimum.feasible_shots) == ("classical_exact", -4, 0)
+    for counts, incumbent, margin, source, cost in (
+        ({"0011": 3, "0000": 2}, None, 0, "sampled", -4),
+        ({"0011": 3, "0000": 2}, None, 3, "classical_local", -1),
+        ({"1100": 5}, [0, 0, 1, 1], 0, "classical_local", -4),
+        ({"0000": 5}, None, 0, "classical_local", -1),
+    ):
+        monkeypatch.setattr(
+            dense, "sample", lambda *args, sample_counts=counts, **kwargs: sample_counts
+        )
+        decision = plan.solve(
+            weights, shots=5, max_exact_states=0, classical_selection=incumbent, min_gain=margin
+        )
+        assert decision.source == source and decision.cost == cost <= decision.classical_cost
+        assert decision.invalid_shots == counts.get("0000", 0)
+        assert decision.feasible_shots + decision.invalid_shots == 5
+
+
 def test_weighted_covariance_fractional_cvar_and_zero_mass_reference():
     samples = np.array([[-0.1, 0.2], [0.03, -0.04], [0.07, 0.01], [-0.02, -0.01]])
     p = np.array([0, 0.1, 0.2, 0.7])

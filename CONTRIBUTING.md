@@ -23,6 +23,12 @@ Performance statements must identify the workload,
 precision, device and measured boundary. CPU checks do not establish GPU or
 QPU throughput.
 
+For a hybrid feature, define the task, strongest relevant classical baseline,
+metric and common resource budget before evaluation. Report where the hybrid
+method improves the result, where the classical method wins, and which hardware
+was measured. Use held-out data for learned decisions and include state
+preparation, training, shots, transfers and postprocessing where applicable.
+
 ## Compatibility and release
 
 Preserve supported Python/framework versions and documented public imports.

@@ -1,5 +1,22 @@
 # Changes
 
+## 0.37.0
+
+- Add paired, budget-aware selection for fitted hybrid and classical predictors.
+  Deployment uses the best eligible classical predictor until held-out losses
+  support the requested improvement against each registered baseline.
+- Compute exact two-wire Z correlations in sparse two-body IQP models with
+  NumPy, PyTorch or JAX. Prepared readouts share index groups across batches.
+- Accept single-asset forecast labels with shape `[batch, time]` and individual
+  sequences at inference. Apply the configured observation gap at the inner
+  validation boundary during walk-forward fitting.
+- Add a portfolio decision method that keeps the classical incumbent on a tie,
+  a worse sampled objective or a sample with no feasible holdings. Exact
+  fixed-cardinality search scores holdings or omissions in bounded batches.
+- Import symbolic Cirq FSim, fractional iSWAP and phased-X gates through
+  differentiable IR rotations. Include controlled-gate phase corrections in
+  the import operation budget.
+
 ## 0.36.1
 
 - Require a NumPy 2-compatible PyTorch version in the installation extras.

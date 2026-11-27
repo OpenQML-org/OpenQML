@@ -234,6 +234,34 @@ def from_cirq(
                     angle = sympy_expression(gate.exponent * math.pi, location)
                     operations.append(Operation("cp", qubits, (angle,)))
                     phase += angle * float(gate.global_shift)
+                elif isinstance(gate, (cirq.FSimGate, cirq.ISwapPowGate)):
+                    if isinstance(gate, cirq.FSimGate):
+                        exchange = sympy_expression(gate.theta, location)
+                        conditional = -sympy_expression(gate.phi, location)
+                    else:
+                        angle = sympy_expression(gate.exponent * math.pi, location)
+                        exchange = angle * -0.5
+                        conditional = Expression()
+                        phase += angle * float(gate.global_shift)
+                    operations.extend(
+                        Operation(axis, qubits, (exchange,)) for axis in ("rxx", "ryy")
+                    )
+                    work += 1
+                    if conditional != Expression():
+                        operations.append(Operation("cp", qubits, (conditional,)))
+                        work += 1
+                elif isinstance(gate, cirq.PhasedXPowGate):
+                    axis = sympy_expression(gate.phase_exponent * math.pi, location)
+                    angle = sympy_expression(gate.exponent * math.pi, location)
+                    operations.extend(
+                        (
+                            Operation("rz", qubits, (-axis,)),
+                            Operation("rx", qubits, (angle,)),
+                            Operation("rz", qubits, (axis,)),
+                        )
+                    )
+                    phase += angle * (float(gate.global_shift) + 0.5)
+                    work += 2
                 elif (
                     isinstance(gate, cirq.ControlledGate)
                     and gate.num_controls() == 1
@@ -261,6 +289,7 @@ def from_cirq(
                     correction = angle * (float(sub.global_shift) + 0.5)
                     if correction != Expression():
                         operations.append(Operation("p", (qubits[0],), (correction,)))
+                        work += 1
                 elif not cirq.is_parameterized(operation):
                     check_matrix_width(len(qubits), max_matrix_qubits, location)
                     if cirq.has_unitary(operation):
@@ -291,6 +320,10 @@ def from_cirq(
             if any(d.code.endswith("_LIMIT") for d in exc.diagnostics):
                 raise
             diagnostics.extend(exc.diagnostics)
+        if work > max_operations:
+            raise conversion_error(
+                "EXPANSION_LIMIT", "Cirq import exceeds max_operations.", location
+            )
     if diagnostics:
         raise ConversionError(diagnostics)
     if set(key_map) - set(keys):

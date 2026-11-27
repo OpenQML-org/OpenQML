@@ -152,6 +152,8 @@ from .qml.operators import NetworkOperator as NetworkOperator
 from .qml.operators import OperatorSpec as OperatorSpec
 from .qml.operators import list_network_operators as list_network_operators
 from .qml.operators import register_network_operator as register_network_operator
+from .qml.selection import PredictorSelection as PredictorSelection
+from .qml.selection import select_predictor as select_predictor
 from .qml.training import DepthSchedule as DepthSchedule
 from .qml.training import StagewiseOptimizer as StagewiseOptimizer
 from .runtime import CostAwareBackend as CostAwareBackend

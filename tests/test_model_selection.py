@@ -151,3 +151,64 @@ def test_validation_respects_spatial_readout_pooling(task):
 def test_empty_target_axes_raise_validation_error_before_label_reduction():
     with pytest.raises(oq.ValidationError):
         oq.Model(task="classification").fit(np.zeros((2, 3)), np.zeros((2, 0)))
+
+
+@pytest.mark.parametrize("framework", ["torch", "jax", "flax"])
+def test_univariate_forecast_fit_and_single_sequence_inference(framework):
+    model = make_model(framework, task="forecast")
+    x = np.arange(6, dtype="float32").reshape(2, 3, 1) * 0.1
+    y = x[..., 0] * 0.02
+    with pytest.raises(oq.ValidationError, match="batch, time, features"):
+        model.fit(x[:, 0], y[:, :1])
+    assert model.trainer is None
+    model.fit(x, y, validation_data=(x, y[..., None]))
+    assert model.evaluate(x, y) == pytest.approx(model.evaluate(x, y[..., None]))
+    np.testing.assert_allclose(
+        model.predict_quantiles(x[0]), model.predict_quantiles(x)[0], atol=1e-7
+    )
+    assert next(model.iter_predict(x[0])).shape == (1, 3, 1)
+    chosen = model.select_predictor(
+        {"linear": lambda v: v * 0.02},
+        x,
+        y,
+        loss_bound=1,
+        costs={"hybrid": 1, "linear": 1},
+        max_cost=1,
+    )
+    assert chosen.selected == "linear"
+
+
+def test_paired_selection_requires_evidence_against_every_affordable_baseline():
+    y = np.zeros(40)
+    x = {"main": np.ones_like(y), "meta": {"index": np.arange(len(y))}}
+
+    def hybrid(v):
+        return 0 * v["main"]
+
+    def weak(v):
+        return v["main"]
+
+    def forbidden(v):
+        pytest.fail("over-budget predictor was evaluated")
+
+    opts = dict(
+        loss=lambda a, b: abs(a - b),
+        loss_bound=1,
+        costs={"hybrid": 2, "weak": 1, "second": 2, "over": 5},
+        max_cost=2,
+    )
+    for second, winner in ((weak, "hybrid"), (hybrid, "second")):
+        candidates = {"weak": weak, "second": second, "over": forbidden}
+        result = oq.select_predictor(hybrid, candidates, x, y, batch_size=7, **opts)
+        assert result.selected == winner
+        np.testing.assert_array_equal(result.predict(x), y)
+        assert result.mean_losses["weak"] == 1
+        log_e = np.log(
+            np.mean((1 + np.array([1 / 16, 1 / 8, 1 / 4, 1 / 2, 3 / 4, 15 / 16])) ** len(y))
+        )
+        assert result.log_e_values["weak"] == pytest.approx(log_e)
+    opts.update(costs={"hybrid": 3, "weak": 1})
+    selected = oq.select_predictor(forbidden, {"weak": weak}, x, y, **opts)
+    assert selected.selected == "weak" and not selected.log_e_values
+    with pytest.raises(oq.ValidationError, match="per observation"):
+        oq.select_predictor(hybrid, {"weak": weak}, x, y + 5, **opts)

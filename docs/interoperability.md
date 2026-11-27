@@ -5,6 +5,12 @@ Use `convert` to import, check compatibility and export in one call.
 JSON and IR targets work with the core installation. Install the corresponding
 extra when importing or exporting a native SDK object.
 
+Cirq imports retain symbolic FSim angles as commuting XX, YY and conditional
+phase rotations. Fractional iSWAP and phased-X powers also retain their
+parameters and global phase. The emitted rotations can be bound, differentiated
+or exported through the other adapters. Source expansion limits count each
+emitted operation, including a control-wire phase correction.
+
 ## Readouts in the source framework's measurement order
 
 `program.certified_readout(absolute_error=e)` returns a value and a Schmidt

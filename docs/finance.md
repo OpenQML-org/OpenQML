@@ -100,8 +100,14 @@ Each fold constructs a fresh model, fits its historical rows, predicts the
 disjoint test interval and records the held-out task loss. With
 `validation_size`, it reserves a chronological tail of the training fold and
 purges training labels that reach the first validation decision time.
+The configured observation gap also separates inner training and validation.
 The outer purge also keeps every training/validation label strictly before
 the test decision interval.
+
+For a single asset, `Model(task="forecast")` accepts targets of shape
+`[batch, time]` or `[batch, time, 1]`. Fit with three-dimensional inputs
+`[batch, time, features]`. At inference a single `[time, features]` sequence
+produces one sequence of medians or quantiles.
 
 ```python
 import openqml as oq
@@ -475,6 +481,17 @@ it is not uniform Dicke preparation. The implementation adapts the first
 commutator ansatz, not the paper's complete variational gauge-potential solver.
 Noisy sample decoding reports invalid shots and the feasible-conditional mean;
 it never treats discarded shots as successful constraint preservation.
+
+`plan.solve(weights, shots=..., classical_selection=..., min_gain=...)` compares
+feasible sampled holdings against a classical incumbent under the same financial
+objective. With up to `max_exact_states` feasible holdings (default 4,096),
+it solves the objective exactly and uses zero shots. Larger problems use
+feasible swap search and accept an optional stronger classical holding vector.
+The sampled objective must improve the incumbent by more than `min_gain`.
+The returned `PortfolioDecision` reports the chosen source, both costs and the
+valid and invalid shot counts. With no feasible sample it returns the classical
+holdings. The gain concerns this fixed objective. Realized returns and
+end-to-end runtime require separate measurements.
 
 For hardware-sized subproblems, `problem.condition(indices,fixed_selection)`
 retains cross-block linear terms, the global offset and residual cardinality.

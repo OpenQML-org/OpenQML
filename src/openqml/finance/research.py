@@ -115,7 +115,9 @@ def walk_forward(
             if validation_size >= len(train):
                 raise ValidationError("validation_size must leave a nonempty training fold.")
             train, validation = train[:-validation_size], train[-validation_size:]
-            keep = ends[train] < timestamps[validation[0]]
+            keep = (ends[train] < timestamps[validation[0]]) & (
+                train < validation[0] - splitter.gap
+            )
             inner_purged = int(np.count_nonzero(~keep))
             train = train[keep]
             if not len(train):

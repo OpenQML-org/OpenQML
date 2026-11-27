@@ -67,6 +67,11 @@ training loop, add a quantum layer to your existing PyTorch, JAX or Flax model.
 The layer exposes its parameters to the framework optimizer.
 [Models](https://github.com/OpenQML-org/OpenQML/blob/main/docs/models.md) · [Training and gradients](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md)
 
+To choose a predictor for deployment, compare the fitted model with your
+strongest classical alternatives on a separate calibration set.
+`model.select_predictor(...)` returns a callable predictor and the paired loss
+evidence under a common cost ceiling. [Selecting a predictor](https://github.com/OpenQML-org/OpenQML/blob/main/docs/hybrid-training.md#selecting-a-predictor)
+
 ## Allocate a portfolio
 
 Each row of `returns` is one observation and each column is one asset.

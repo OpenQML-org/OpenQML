@@ -50,6 +50,41 @@ def test_iqp_prepared_state_metric_is_quarter_identity():
     np.testing.assert_allclose(metric, np.eye(len(values)) / 4, atol=1e-14)
 
 
+def test_iqp_pair_readouts_match_dense_columns_and_scale_by_neighborhood():
+    graph = oq.IQPGraph(6, ((0, 1), (0, 2), (1, 2), (0, 3), (1, 4)))
+    pairs = ((1, 0), (0, 5), (1, 2), (4, 3), (0, 1))
+    plan = graph.prepare_z_pairs(pairs)
+    values = np.random.default_rng(4).normal(size=(3, graph.num_coordinates))
+    names = [f"alpha_{q}" for q in range(6)] + [f"omega_{e}" for e in range(len(graph.edges))]
+    bindings = {name: values[:, i] for i, name in enumerate(names)}
+    words = [oq.PauliString("".join("Z" if i in pair else "I" for i in range(6))) for pair in pairs]
+    dense = oq.expectations(graph.circuit(), words, bindings, backend="numpy")
+    np.testing.assert_allclose(plan.evaluate(values), dense, atol=2e-14)
+    assert graph.prepare_z_pairs([]).evaluate(values).shape == (3, 0)
+    wide = oq.IQPGraph(512)
+    result = wide.prepare_z_pairs().evaluate(np.zeros(wide.num_coordinates))
+    np.testing.assert_array_equal(result, np.ones(len(wide.edges)))
+    with pytest.raises(oq.ValidationError):
+        graph.prepare_z_pairs([(1, 1)])
+    with pytest.raises(oq.ResourceError):
+        oq.IQPGraph(3, max_work=10).prepare_z_pairs([(0, 1)] * 4)
+
+
+def test_iqp_pair_native_gradients_include_shared_neighbors(native_x64):
+    torch, jax, jnp = native_x64
+    graph = oq.IQPGraph(4, ((0, 2), (1, 2), (1, 3), (0, 1)))
+    plan = graph.prepare_z_pairs(((0, 1), (0, 3)))
+    rng = np.random.default_rng(29)
+    x, direction = rng.normal(size=(2, graph.num_coordinates))
+    t = torch.tensor(x, requires_grad=True)
+    (grad,) = torch.autograd.grad(plan.evaluate(t, backend="torch").sum(), t)
+    jgrad = jax.jit(jax.grad(lambda v: plan.evaluate(v, backend="jax").sum()))(jnp.asarray(x))
+    np.testing.assert_allclose(grad.detach(), jgrad, atol=2e-13)
+    step = direction * 1e-6
+    expected = (plan.evaluate(x + step) - plan.evaluate(x - step)).sum() / 2e-6
+    assert float(grad @ torch.tensor(direction)) == pytest.approx(expected, abs=2e-9)
+
+
 @pytest.mark.parametrize("edges", (((0, 0),), ((0, 1), (1, 0)), ((0, 3),), ((True, 1),)))
 def test_invalid_generators_are_rejected_before_using_closed_form(edges):
     with pytest.raises(oq.ValidationError):

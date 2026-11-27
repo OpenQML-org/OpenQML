@@ -198,6 +198,8 @@ EXPORTS = {
     "identity_block_ansatz": (".ir.templates", "identity_block_ansatz"),
     "ConversionCheck": (".interop.verification", "ConversionCheck"),
     "Model": (".qml.models", "Model"),
+    "select_predictor": (".qml.selection", "select_predictor"),
+    "PredictorSelection": (".qml.selection", "PredictorSelection"),
     "AdaptiveAmplitudeEstimationPlan": (
         ".sim.adaptive_amplitude",
         "AdaptiveAmplitudeEstimationPlan",
@@ -309,6 +311,8 @@ PUBLIC = [
     "AdaptiveAmplitudeEstimationPlan",
     "AdaptiveAmplitudeEstimate",
     "Model",
+    "PredictorSelection",
+    "select_predictor",
     "AmplitudeOracle",
     "AmplitudeEstimationPlan",
     "AmplitudeEstimate",

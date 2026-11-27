@@ -62,6 +62,20 @@ def test_future_target_changes_leave_earlier_predictions_unchanged():
     np.testing.assert_array_equal(reference.predictions[:16], changed.predictions[:16])
 
 
+def test_nested_validation_applies_observation_gap_even_for_instant_labels():
+    log = []
+    result = run(
+        log,
+        splitter=oq.finance.PurgedWalkForward(9, 3, gap=2),
+        label_end=np.arange(20),
+        validation_size=3,
+    )
+    for (train, _, options), fold in zip(log, result.folds, strict=True):
+        validation = options["validation_data"][0][:, 0]
+        assert train[-1, 0] + 2 < validation[0] and validation[-1] + 2 < fold.test_start
+        assert fold.purged_size == 2
+
+
 @pytest.mark.parametrize(
     "options",
     [

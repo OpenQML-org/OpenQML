@@ -219,6 +219,8 @@ class Model:
 
     def _loss(self, prediction, target):
         if self.task == "forecast":
+            if self.output_features == 1 and target.shape == prediction.shape[:-1]:
+                target = target[..., None]
             return self._forecast.loss(prediction, target)
         if self.task == "classification":
             if target.shape != prediction.shape[:-1]:
@@ -245,6 +247,8 @@ class Model:
 
     def _check_targets(self, x, y, outputs, *, features=None):
         features = self.input_features if features is None else features
+        if self.task == "forecast" and x.ndim != 3:
+            raise ValidationError("Forecast inputs must have shape [batch, time, features].")
         if (
             x.ndim < 2
             or len(x) != len(y)
@@ -279,9 +283,7 @@ class Model:
                 integral = bool((y == xp.floor(y)).all())
             if not integral or int(y.min()) < 0 or int(y.max()) >= outputs:
                 raise ValidationError("Classification labels must be integers in the class range.")
-        elif y.shape != prefix + (outputs,) and not (
-            self.task == "regression" and outputs == 1 and y.shape == prefix
-        ):
+        elif y.shape != prefix + (outputs,) and not (outputs == 1 and y.shape == prefix):
             raise ValidationError("Targets must match the model's sample and output axes.")
 
     def _snapshot(self):
@@ -395,7 +397,7 @@ class Model:
             raise ValidationError("Input feature width differs from the model.")
         if self.task == "classification":
             outputs = self.output_features or max(2, int(y.max()) + 1)
-        elif y.ndim == 1 or (self.task == "regression" and y.shape == x.shape[:-1]):
+        elif y.ndim == 1 or y.shape == x.shape[:-1]:
             outputs = self.output_features or 1
         else:
             outputs = self.output_features or y.shape[-1]
@@ -456,7 +458,11 @@ class Model:
         if self.trainer is None:
             raise ValidationError("Call fit before predict.")
         x = _data(inputs, "inputs", check_finite=False)
-        if x.ndim == 1:
+        if self.task == "forecast" and x.ndim not in {2, 3}:
+            raise ValidationError(
+                "Forecast inputs need [time, features] or [batch, time, features]."
+            )
+        if x.ndim == (2 if self.task == "forecast" else 1):
             x = x[None, :]
         if x.shape[-1] != self.input_features:
             raise ValidationError("Input feature width differs from the fitted model.")
@@ -488,7 +494,7 @@ class Model:
         # Eager calls validate all inputs before producing a result. The iterator
         # instead validates each batch as it is consumed.
         x = _data(inputs, "inputs")
-        single = x.ndim == 1
+        single = x.ndim == (2 if self.task == "forecast" else 1)
         result = np.concatenate(list(self._iter_predict_raw(x, batch_size)))
         return result[0] if single else result
 
@@ -532,6 +538,48 @@ class Model:
         if self.task != "forecast":
             raise ValidationError("predict_quantiles requires a forecast model.")
         return self._decode_prediction(self._predict_raw(inputs, batch_size), "quantiles")
+
+    def select_predictor(
+        self,
+        baselines,
+        inputs,
+        targets,
+        *,
+        loss=None,
+        loss_bound=None,
+        costs,
+        max_cost,
+        min_gain=0,
+        confidence=0.95,
+        batch_size=256,
+    ):
+        """Compare fitted predictors on a calibration set reserved after model selection."""
+        from .selection import _prediction_loss, select_predictor
+
+        if self.trainer is None:
+            raise ValidationError("Call fit before selecting a predictor.")
+        if loss is None:
+
+            def loss(y, prediction):
+                return _prediction_loss(y, prediction, self.task)
+
+            if loss_bound is None and self.task == "classification":
+                loss_bound = 1
+        if loss_bound is None:
+            raise ValidationError("Predeclare a valid loss_bound for the calibration task.")
+        return select_predictor(
+            self.predict,
+            baselines,
+            inputs,
+            targets,
+            loss=loss,
+            loss_bound=loss_bound,
+            costs=costs,
+            max_cost=max_cost,
+            min_gain=min_gain,
+            confidence=confidence,
+            batch_size=batch_size,
+        )
 
     def save(self, path):
         """Atomically save configuration, training state, history and shuffle RNG."""
