@@ -1059,6 +1059,7 @@ def execute(
     max_qubits=None,
     max_memory_mb=256,
     max_branches=256,
+    max_loop_steps=100_000,
     classical_bits=None,
 ) -> ExecutionResult:
     """Execute locally, optionally sampling final classical storage.
@@ -1077,6 +1078,7 @@ def execute(
         max_qubits=max_qubits,
         max_memory_mb=max_memory_mb,
         max_branches=max_branches,
+        max_loop_steps=max_loop_steps,
         classical_bits=classical_bits,
     )
 
@@ -1091,6 +1093,7 @@ def _execute(
     max_qubits=None,
     max_memory_mb=256,
     max_branches=256,
+    max_loop_steps=100_000,
     classical_bits=None,
     counts_only=False,
 ):
@@ -1135,6 +1138,36 @@ def _execute(
     local = adaptive or (type(device) is _LocalBackend and device.name == "numpy")
     if max_qubits is not None and bound.num_qubits > max_qubits:
         raise ResourceError("Circuit exceeds the requested qubit limit.")
+    integer(max_loop_steps, "max_loop_steps", 1)
+    if bound.has_runtime_control and local:
+        from ._runtime_control import run_control
+        from .density import execute_density
+
+        if shots is None:
+            return execute_density(
+                bound,
+                max_qubits=max_qubits,
+                max_memory_mb=max_memory_mb,
+                max_branches=max_branches,
+                max_loop_steps=max_loop_steps,
+            )
+        counts = run_control(
+            bound,
+            {},
+            _TensorOps(),
+            (),
+            shots=shots,
+            seed=seed,
+            max_qubits=max_qubits,
+            max_memory_mb=max_memory_mb,
+            max_branches=max_branches,
+            max_loop_steps=max_loop_steps,
+            retain_classical=True,
+            classical_bits=classical_bits,
+        )
+        return ExecutionResult("numpy", None, None, counts, classical_bits=classical_bits)
+    if bound.has_runtime_control and max_loop_steps != 100_000:
+        raise ValidationError("max_loop_steps applies to local NumPy execution.")
     if stabilizer and shots is None:
         raise ValidationError(
             "The stabilizer backend provides counts and Pauli readouts. "

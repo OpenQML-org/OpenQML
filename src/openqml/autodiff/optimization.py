@@ -241,6 +241,12 @@ def optimize(
                 )
                 append(op)
                 continue
+            if op.name == "while_loop":
+                for _, sub in op.blocks[0].walk_operations():
+                    for bit in sub.clbits:
+                        facts.values[bit] = None
+                append(op)
+                continue
             if op.name != "if_else":
                 append(op)
                 continue

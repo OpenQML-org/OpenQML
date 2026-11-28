@@ -203,3 +203,81 @@ assert result.value.has_measurements
 assert not any(name in sys.modules for name in ['qiskit','cirq','pennylane','torch','jax'])
 """
     subprocess.run([sys.executable, "-c", script], check=True, capture_output=True, text=True)
+
+
+@pytest.mark.parametrize("selector,expected", [(0, "01"), (1, "10"), (2, "01"), (3, "11")])
+def test_nested_switch_evaluates_one_arm_and_exits_nearest_loop(selector, expected):
+    import openqml as oq
+
+    src = f"""OPENQASM 3.1; include "stdgates.inc";
+    qubit[2] q; bit[2] selector; bit[2] out; uint[2] i=0;
+    selector={selector};
+    while(i<2) {{
+        i+=1;
+        switch(selector) {{
+            case 0,2 {{ selector=1; continue; }}
+            case 1 {{ switch(i) {{ case 1 {{ x q[0]; }} default {{ x q[1]; }} }} break; }}
+            default {{ x q[0]; x q[1]; break; }}
+        }}
+        x q[0];
+    }}
+    out=measure q;"""
+    plan = oq.plan_conversion(src, target="openqasm3")
+    restored = oq.convert(plan.export().value, target="ir").value
+    assert oq.sample(restored, shots=23, classical_bits=(2, 3)) == {expected: 23}
+    assert plan.verify().matched
+
+
+def test_measurement_selects_correlated_quantum_and_classical_addresses():
+    import openqml as oq
+
+    source = """OPENQASM 3.0; include "stdgates.inc";
+    qubit a; qubit[2] q; bit address; bit[2] record;
+    h a; address=measure a; x q[uint(address)]; record[uint(address)]=measure q[uint(address)];"""
+    plan = oq.plan_conversion(source, target="openqasm3")
+    counts = oq.sample(plan.circuit, shots=512, seed=42)
+    assert set(counts) == {"010", "101"} and sum(counts.values()) == 512
+    assert plan.verify().matched
+    with pytest.raises(ConversionError, match="INVALID_OPERATION"):
+        convert(
+            source.replace("x q[uint(address)]", "cx q[uint(address)], q[uint(address)]"),
+            target="ir",
+        )
+
+
+def test_index_guard_expires_after_writes_and_loop_back_edges():
+    import openqml as oq
+
+    header = 'OPENQASM 3.0; include "stdgates.inc"; qubit[2] q; bit[2] out; uint[2] i=0; '
+    good = header + "while(i<2){x q[i]; i=i+1;} out=measure q;"
+    plan = oq.plan_conversion(good, target="json", optimize=True)
+    restored = convert(plan.export().value, source="json", target="ir").value
+    assert oq.sample(restored, shots=19, classical_bits=(0, 1)) == {"11": 19}
+    assert plan.verify().matched
+    for body in ("while(i<2){i+=1; x q[i];}", "if(i<2){while(true){x q[i]; i+=1;}}"):
+        with pytest.raises(ConversionError, match="CLASSICAL_INDEX_RANGE"):
+            convert(header + body, target="ir", source_options={"parser": "builtin"})
+    for options in ({"max_depth": 1}, {"max_operations": 4}):
+        with pytest.raises(ConversionError, match="LIMIT|DEPTH"):
+            convert(good, target="ir", **options)
+
+
+def test_64_bit_unsigned_counter_wraps_and_drives_qubit_index():
+    import openqml as oq
+
+    src = """OPENQASM 3.0; include "stdgates.inc"; qubit[2] q; bit[2] out;
+    uint[64] i=18446744073709551615; i+=1;
+    while(i<2){x q[i]; i+=1;} i-=2; if(i==0){x q[0];} out=measure q;"""
+    circuit = convert(src, target="ir", max_depth=8).value
+    assert sum(1 for _ in circuit.walk_operations()) < 1000
+    assert oq.sample(circuit, shots=12, classical_bits=(0, 1)) == {"01": 12}
+
+
+@pytest.mark.parametrize("arms", ["case 0 {} case 0 {}", "default {} default {}", "x q;"])
+def test_switch_rejects_duplicate_or_invalid_arms(arms):
+    with pytest.raises(ConversionError, match="CLASSICAL_SWITCH_LABEL|SYNTAX"):
+        convert(
+            "OPENQASM 3.1; qubit q; bit c; switch(c){" + arms + "}",
+            target="ir",
+            source_options={"parser": "builtin"},
+        )

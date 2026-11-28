@@ -352,6 +352,7 @@ def execute_batch(
     max_qubits=None,
     max_memory_mb=256,
     max_branches=256,
+    max_loop_steps=100_000,
     classical_bits=None,
 ):
     from ..runtime._validation import (
@@ -399,6 +400,8 @@ def execute_batch(
         and device.capabilities.native_sampling
         and not isinstance(device, StabilizerBackend)
     ):
+        if max_loop_steps != 100_000 and any(c.has_runtime_control for c in values):
+            raise ValidationError("max_loop_steps applies to local NumPy execution.")
         counts = invoke(device, "sample_batch", values, shots, options=options)
         if not isinstance(counts, (list, tuple)) or len(counts) != len(values):
             raise BackendError("Invalid native sampler batch length.")
@@ -434,6 +437,7 @@ def execute_batch(
                 max_qubits=max_qubits,
                 max_memory_mb=max_memory_mb,
                 max_branches=max_branches,
+                max_loop_steps=max_loop_steps,
                 classical_bits=classical_bits,
             )
             for i, c in enumerate(values)

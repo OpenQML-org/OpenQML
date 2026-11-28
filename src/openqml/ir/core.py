@@ -61,7 +61,9 @@ GATES.update({name: (1, 1) for name in CHANNEL_GATES - {"kraus"}})
 GATES.update({"kraus": (None, 0), "reset": (1, 0), "if_else": (0, 0)})
 GATES_V4 = frozenset(GATES)
 GATES["classical_set"] = (0, 1)
-IR_VERSION = 5
+LOOP_OPERATIONS = frozenset({"while_loop", "break_loop", "continue_loop"})
+GATES.update({name: (0, 0) for name in LOOP_OPERATIONS})
+IR_VERSION = 6
 _ZERO_PHASE = Expression()
 GATES_V2 = GATES_V3 - {"unitary"}
 GATES_V1 = GATES_V2 - {"u", "sxdg", "cp", "crx", "cry", "crz", "ch", "cswap", "iswap"}
@@ -115,9 +117,11 @@ class Operation:
         qubits = tuple(integer(q, "qubit") for q in self.qubits)
         clbits = tuple(integer(c, "classical bit") for c in self.clbits)
         arity, nparams = GATES[self.name]
-        if (not qubits and self.name not in {"if_else", "classical_set"}) or (
-            arity is not None and len(qubits) != arity
-        ):
+        if (
+            not qubits
+            and self.name not in LOOP_OPERATIONS
+            and self.name not in {"if_else", "classical_set"}
+        ) or (arity is not None and len(qubits) != arity):
             raise ValidationError(f"{self.name} expects {arity or 'one or more'} qubits.")
         if len(set(qubits)) != len(qubits):
             raise ValidationError("An operation cannot use the same qubit twice.")
@@ -187,8 +191,18 @@ class Operation:
                 or any(not isinstance(b, Circuit) for b in self.blocks)
             ):
                 raise ValidationError("if_else needs a ClassicalCondition and two Circuit blocks.")
+        elif self.name == "while_loop":
+            if (
+                len(self.blocks) != 1
+                or not isinstance(self.blocks[0], Circuit)
+                or (
+                    self.condition is not None
+                    and not isinstance(self.condition, ClassicalCondition)
+                )
+            ):
+                raise ValidationError("while_loop requires a Circuit body and a condition or None.")
         elif self.condition is not None or self.blocks:
-            raise ValidationError("Only if_else operations have conditions or blocks.")
+            raise ValidationError("Only if_else and while_loop have conditions or blocks.")
         if self.name in CHANNEL_GATES - {"kraus"} and not self.params[0].parameters:
             probability = self.params[0].evaluate({})
             if not 0 <= probability <= 1:
@@ -197,6 +211,18 @@ class Operation:
 
 class _CircuitGates:
     """Gate spelling shared by immutable circuits and bulk builders."""
+
+    def while_loop(self, condition, body):
+        """Repeat while an equality holds. None denotes an unconditional loop."""
+        op = Operation("while_loop", (), condition=condition, blocks=(body,))
+        width = max(self.num_clbits, body.num_clbits, max(condition.bits) + 1 if condition else 0)
+        return self._append_with_bits(op, width)
+
+    def break_loop(self):
+        return self.append(Operation("break_loop", ()))
+
+    def continue_loop(self):
+        return self.append(Operation("continue_loop", ()))
 
     def gate(self, name: str, *qubits: int, params=()):
         return self.append(Operation(name, tuple(qubits), tuple(params)))
@@ -420,6 +446,10 @@ class Circuit(_CircuitGates):
     def has_effects(self):
         return any(op.name != "barrier" and op.name not in UNITARY_GATES for op in self.operations)
 
+    @property
+    def has_runtime_control(self):
+        return any(op.name in LOOP_OPERATIONS for _, op in self.walk_operations())
+
     def walk_operations(self, prefix=()):
         for index, op in enumerate(self.operations):
             path = prefix + (index,)
@@ -453,6 +483,9 @@ class Circuit(_CircuitGates):
         for operation in operations:
             _validate_operation(operation, self.num_qubits, self.num_clbits)
         return self._spawn(self._buffer.extend(operations))
+
+    def _append_with_bits(self, op, width):
+        return self._spawn(self._buffer, num_clbits=width).append(op)
 
     def if_else(self, condition, when_true, when_false=None):
         if not isinstance(condition, ClassicalCondition):
@@ -648,7 +681,7 @@ class Circuit(_CircuitGates):
 
         return {
             "schema": "openqml.ir",
-            "version": IR_VERSION,
+            "version": IR_VERSION if self.has_runtime_control else 5,
             "bit_order": "q0-msb",
             "num_qubits": self.num_qubits,
             "num_clbits": self.num_clbits,
@@ -719,7 +752,7 @@ class Circuit(_CircuitGates):
             if (
                 payload["schema"] != "openqml.ir"
                 or type(payload["version"]) is not int
-                or payload["version"] not in {1, 2, 3, 4, IR_VERSION}
+                or payload["version"] not in {1, 2, 3, 4, 5, IR_VERSION}
                 or payload["bit_order"] != "q0-msb"
             ):
                 raise ValidationError("Unsupported IR schema, version, or bit order.")
@@ -747,6 +780,13 @@ class Circuit(_CircuitGates):
                     raise ValidationError(
                         "This IR schema does not support quantum effects and control blocks."
                     )
+                if payload["version"] < 6 and (
+                    op["name"] in LOOP_OPERATIONS
+                    or any(
+                        isinstance(b, dict) and b.get("version") == 6 for b in op.get("blocks", ())
+                    )
+                ):
+                    raise ValidationError("Runtime control requires IR v6.")
                 if payload["version"] < 5 and op["name"] not in GATES_V4:
                     raise ValidationError("This IR schema does not support classical assignment.")
                 if payload["version"] < 3 and op["name"] == "unitary":

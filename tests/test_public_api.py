@@ -145,7 +145,7 @@ def test_readme_quickstart_completes_an_optimizer_step():
     namespace = {}
     for block in re.findall(r"```python\n(.*?)```", readme, re.S):
         exec(compile(block, "README.md", "exec"), namespace)
-    assert namespace["oq"] is oq and namespace["correlation"] == pytest.approx(1)
+    assert namespace["oq"] is oq and oq.expectation(namespace["bell"], "ZZ") == pytest.approx(1)
     model = namespace["model"]
     assert tuple(model.predict_proba(namespace["x"]).shape) == (32, 2)
     assert model.trainer.updates == sum(row["updates"] for row in model.history) >= 1

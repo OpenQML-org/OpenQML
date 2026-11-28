@@ -113,7 +113,7 @@ def from_qiskit(
         raise conversion_error("NO_QUBITS", "A top-level IR circuit needs at least one qubit.")
     from ._qiskit_flow import has_jumps, lower_jumps
 
-    if has_jumps(native):
+    if has_jumps(native, max_operations):
         return lower_jumps(
             native,
             expand=expand,
@@ -520,11 +520,13 @@ def to_qiskit(circuit: Circuit, bindings=None, *, _symbols=None):
 
     native.global_phase = angle(circuit.global_phase)
     for op in circuit.operations:
-        if op.name == "if_else":
+        if op.name in {"while_loop", "if_else"}:
             from qiskit.circuit.classical import expr
 
-            bits = op.condition.bits
-            if len(bits) == 1:
+            bits = op.condition.bits if op.condition is not None else ()
+            if not bits:
+                condition = expr.lift(True)
+            elif len(bits) == 1:
                 condition = (native.clbits[bits[0]], op.condition.value)
             elif len(bits) == native.num_clbits and all(
                 bit == index for index, bit in enumerate(bits)
@@ -545,7 +547,15 @@ def to_qiskit(circuit: Circuit, bindings=None, *, _symbols=None):
                 bodies.append(
                     to_qiskit(replace(block, num_clbits=circuit.num_clbits), _symbols=symbols)
                 )
-            native.if_else(condition, bodies[0], bodies[1], native.qubits, native.clbits)
+            if op.name == "while_loop":
+                native.while_loop(condition, bodies[0], native.qubits, native.clbits)
+            else:
+                native.if_else(condition, bodies[0], bodies[1], native.qubits, native.clbits)
+        elif op.name in {"break_loop", "continue_loop"}:
+            from qiskit.circuit import BreakLoopOp, ContinueLoopOp
+
+            jump = BreakLoopOp if op.name == "break_loop" else ContinueLoopOp
+            native.append(jump(native.num_qubits, native.num_clbits), native.qubits, native.clbits)
         elif op.name in CHANNEL_GATES:
             if any(p.parameters for p in op.params):
                 raise conversion_error(

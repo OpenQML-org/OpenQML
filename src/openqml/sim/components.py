@@ -38,6 +38,8 @@ class ComponentPlan:
 
     def __post_init__(self):
         _check_circuit_limits(self.circuit, max_operations=self.max_operations)
+        if self.circuit.has_runtime_control:
+            raise ResourceError("Runtime loops require joint density execution or sampling.")
         for name in ("max_work", "max_branches"):
             integer(getattr(self, name), name, 1)
         if self.max_qubits is not None:

@@ -8,6 +8,7 @@ class _BDD:
     def __init__(self, work, depth, location):
         self.limit, self.depth, self.location = work, depth, location
         self.work = 0
+        self.reachable = 1
         self.nodes = [None, None]
         self.heights = [0, 0]
         self.unique, self.cache = {}, {}
@@ -150,18 +151,21 @@ class _BitVectors:
             result = self.add(result, row)
         return result
 
-    def shift(self, bits, amount, *, left=False, index=False):
-        size = len(bits)
+    def check_range(self, size, amount, *, index=True):
         width = max(len(amount), size.bit_length())
         extended = amount + (0,) * (width - len(amount))
         bound = tuple((size >> i) & 1 for i in range(width))
         _, greater_equal = self.add(extended, bound, subtract=True, with_carry=True)
-        if greater_equal != 0:
+        if self.bdd.apply("and", self.bdd.reachable, greater_equal):
             raise conversion_error(
                 "CLASSICAL_INDEX_RANGE" if index else "CLASSICAL_SHIFT_RANGE",
                 "Every possible index/shift must be symbolically proven inside its operand width.",
                 self.bdd.location,
             )
+
+    def shift(self, bits, amount, *, left=False, index=False):
+        size = len(bits)
+        self.check_range(size, amount, index=index)
         self.bdd.charge(size * len(amount))
         for i, control in enumerate(amount):
             if control == 0:
@@ -320,6 +324,19 @@ def lower_predicate(value, native, blocks, *, max_operations, max_depth, locatio
     """Produce a shared, immutable equality-decision DAG with bounded expanded cost."""
     bdd = _BDD(max_operations, max_depth, location)
     root = _compile(value, native, bdd)
+    return decision_circuit(
+        bdd,
+        root,
+        blocks,
+        native.num_qubits or 1,
+        native.num_clbits,
+        max_operations,
+        max_depth,
+        location,
+    )
+
+
+def decision_circuit(bdd, root, blocks, nq, nc, max_operations, max_depth, location):
     # Match the adapter's outer recursive expansion-accounting boundary.
     payload_cost = tuple(sum(1 for _ in c.walk_operations()) for c in blocks)
     table = {0: blocks[1], 1: blocks[0]}
@@ -340,7 +357,7 @@ def lower_predicate(value, native, blocks, *, max_operations, max_depth, locatio
             raise conversion_error(
                 "EXPANSION_LIMIT", "Expanded predicate and payload exceed max_operations.", location
             )
-        result = Circuit(native.num_qubits or 1, num_clbits=native.num_clbits).if_else(
+        result = Circuit(nq, num_clbits=nc).if_else(
             ClassicalCondition((bit,), 1), table[high], table[low]
         )
         table[current], costs[current] = result, cost

@@ -1,5 +1,17 @@
 # Changes
 
+## 0.39.0
+
+- Preserve runtime while loops and nested break/continue in Qiskit, OpenQASM 3
+  and IR v6. Existing circuits without runtime control still serialize as v5.
+- Lower range-checked runtime indices on OpenQASM gates, measurements and
+  classical stores. Qiskit indexed writes resolve the address before mutation.
+  Grouped switch cases support unsigned selectors and a default arm.
+- Sample measurement-dependent loops locally and check finitely resolved
+  conversion round trips over a complete operator basis. Recurrent paths and
+  exhausted budgets produce explicit errors.
+- Correct the README quickstart check that blocked the previous release.
+
 ## 0.38.0
 
 - Simulate named Clifford circuits with a packed CPU stabilizer engine in the core installation. Sample terminal measurements directly, including projected and overwritten classical bits, and evaluate weighted Pauli readouts.

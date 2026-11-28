@@ -36,7 +36,9 @@ def _native_scope(circuit, target, source_options):
         raise ValidationError("source_options apply to roundtrip verification only.")
     if target not in {"qiskit", "cirq", "pennylane", "openqasm2", "openqasm3"}:
         raise _unsupported("Native verification requires a supported SDK or OpenQASM target.")
-    if any(op.name in {"measure", "if_else"} for _, op in circuit.walk_operations()):
+    if circuit.has_runtime_control or any(
+        op.name in {"measure", "if_else"} for _, op in circuit.walk_operations()
+    ):
         raise _unsupported(
             "Native complete-input checks do not support recorded measurement or feedback."
         )

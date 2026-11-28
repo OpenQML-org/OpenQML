@@ -8,8 +8,10 @@ from ...ir.core import Circuit, ClassicalCondition, Operation
 from ...ir.parameters import Expression
 
 
-def has_jumps(native):
-    from qiskit.circuit import BreakLoopOp, ContinueLoopOp, Store
+def has_jumps(native, limit):
+    from qiskit.circuit import BreakLoopOp, ContinueLoopOp
+
+    from ._qiskit_storage import needs_mutable
 
     pending, seen = [native], {}
     while pending:
@@ -20,7 +22,9 @@ def has_jumps(native):
         if body.num_vars:
             return True
         for item in body.data:
-            if isinstance(item.operation, (BreakLoopOp, ContinueLoopOp, Store)):
+            if isinstance(item.operation, (BreakLoopOp, ContinueLoopOp)) or needs_mutable(
+                item.operation, limit
+            ):
                 return True
             pending.extend(getattr(item.operation, "blocks", ()))
     return False
@@ -98,14 +102,27 @@ class _Lowering:
             )
         )
 
-    def guard(self, value, native, cmap, high, low, location):
-        from ._classical_predicate import _BDD, _compile
+    def bounds_bdd(self, bounds, location):
+        from ._classical_predicate import _BDD
+
+        bdd = _BDD(self.limit, self.max_depth, location)
+        for bits, upper in bounds:
+            if upper.bit_length() > len(bits):
+                continue
+            less = 0
+            for i, bit in enumerate(bits):
+                less = bdd.apply("or" if (upper >> i) & 1 else "and", bdd.node(bit, 1, 0), less)
+            bdd.reachable = bdd.apply("and", bdd.reachable, less)
+        return bdd
+
+    def guard(self, value, native, cmap, high, low, location, bounds=()):
+        from ._classical_predicate import _compile
         from .qiskit import _condition
 
         try:
             condition = _condition(value, native, location)
         except ConversionError:
-            bdd = _BDD(self.limit, self.max_depth, location)
+            bdd = self.bounds_bdd(bounds, location)
             root = _compile(
                 value, native, bdd, classical_map=cmap, variable_bits=self.storage.variables
             )
@@ -129,10 +146,12 @@ class _Lowering:
             low,
         )
 
-    def store(self, operation, native, cmap, location):
-        from ._classical_predicate import _BDD, _compile
+    def store(self, operation, native, cmap, location, bounds=()):
+        from qiskit.circuit.classical import expr
 
-        bdd = _BDD(self.limit, self.max_depth, location)
+        from ._classical_predicate import _BitVectors, _compile, decision_circuit
+
+        bdd = self.bounds_bdd(bounds, location)
         roots = _compile(
             operation.rvalue,
             native,
@@ -141,6 +160,54 @@ class _Lowering:
             variable_bits=self.storage.variables,
             return_bits=True,
         )
+        lvalue = operation.lvalue
+        if isinstance(lvalue, getattr(expr, "Index", ())) and not isinstance(
+            lvalue.index, expr.Value
+        ):
+            target = self.storage.targets(lvalue.target, native, cmap)
+            address = _compile(
+                lvalue.index,
+                native,
+                bdd,
+                classical_map=cmap,
+                variable_bits=self.storage.variables,
+                return_bits=True,
+            )
+            _BitVectors(bdd).check_range(len(target), address)
+            if len(roots) != 1:
+                self.fail("Indexed stores require one bit.", location, "CLASSICAL_STORE_WIDTH")
+            empty = Circuit(self.width, num_clbits=self.bits)
+
+            def select(root, yes, no):
+                return decision_circuit(
+                    bdd,
+                    root,
+                    (yes, no),
+                    self.width,
+                    self.bits,
+                    self.limit,
+                    self.max_depth,
+                    location,
+                )
+
+            def route(level, offset):
+                self.charge()
+                if offset >= len(target):
+                    return empty
+                if level < 0:
+                    bit = target[offset]
+                    return select(
+                        roots[0], empty.classical_set(bit, 1), empty.classical_set(bit, 0)
+                    )
+                return select(
+                    address[level],
+                    route(level - 1, offset + (1 << level)),
+                    route(level - 1, offset),
+                )
+
+            result = route(min(len(address), (len(target) - 1).bit_length()) - 1, 0)
+            self.charge(bdd.work)
+            return result
         targets = self.storage.targets(operation.lvalue, native, cmap)
         if len(roots) != len(targets):
             self.fail("Store widths differ.", location, "CLASSICAL_STORE_WIDTH")
@@ -192,7 +259,6 @@ class _Lowering:
             IfElseOp,
             Parameter,
             SwitchCaseOp,
-            WhileLoopOp,
         )
         from qiskit.circuit.classical import expr
 
@@ -309,12 +375,6 @@ class _Lowering:
                         location,
                     )
                 current = fallback
-            elif isinstance(op, WhileLoopOp):
-                self.fail(
-                    "Runtime while loops require a native program route.",
-                    location,
-                    "CLASSICAL_CONTROL",
-                )
             else:
                 from qiskit import QuantumCircuit
 

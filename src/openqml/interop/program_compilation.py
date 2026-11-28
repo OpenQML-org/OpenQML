@@ -372,18 +372,24 @@ def compile_program(
     native = (
         source in {"qiskit", "openqasm3"} and target in {"qiskit", "openqasm3"} and strategy != "ir"
     )
-    if not native:
-        if strategy == "native":
-            raise conversion_error(
-                "NATIVE_ROUTE_UNAVAILABLE", "This format pair requires the portable IR path."
-            )
+
+    def portable(*, builtin=False):
+        options = {}
+        if source in {"openqasm2", "openqasm3"}:
+            options.update(max_source_bytes=max_source_bytes, max_matrix_qubits=max_matrix_qubits)
+            if builtin:
+                options["parser"] = "builtin"
+        elif source == "qiskit":
+            options["max_matrix_qubits"] = max_matrix_qubits
         result = convert(
             captured if captured is not None else value,
             source=source,
             target=target,
             bindings=bindings,
+            source_options=options,
             max_operations=max_operations,
             max_depth=max_depth,
+            max_output_bytes=max_output_bytes,
         )
         return ProgramConversion(
             result.value,
@@ -392,6 +398,13 @@ def compile_program(
             "circuit_ir",
             sum(1 for _ in result.circuit.walk_operations()),
         )
+
+    if not native:
+        if strategy == "native":
+            raise conversion_error(
+                "NATIVE_ROUTE_UNAVAILABLE", "This format pair requires the portable IR path."
+            )
+        return portable()
     if set(import_options) - {"max_operations", "max_depth", "max_matrix_qubits"}:
         raise conversion_error(
             "NATIVE_SOURCE_OPTIONS", "Native compilation cannot preserve these source options."
@@ -399,13 +412,22 @@ def compile_program(
     try:
         lifted = False
         if source == "openqasm3":
-            program, lifted = _import_structured_qasm(
-                value,
-                max_source_bytes=max_source_bytes,
-                max_operations=max_operations,
-                max_depth=max_depth,
-                max_matrix_qubits=max_matrix_qubits,
-            )
+            try:
+                program, lifted = _import_structured_qasm(
+                    value,
+                    max_source_bytes=max_source_bytes,
+                    max_operations=max_operations,
+                    max_depth=max_depth,
+                    max_matrix_qubits=max_matrix_qubits,
+                )
+            except (MissingDependencyError, ImportError):
+                if strategy == "auto":
+                    return portable(builtin=True)
+                raise
+            except ConversionError as exc:
+                if strategy == "auto" and all(d.code == "SDK_QASM_PARSE" for d in exc.diagnostics):
+                    return portable(builtin=True)
+                raise
         else:
             from qiskit import QuantumCircuit
 

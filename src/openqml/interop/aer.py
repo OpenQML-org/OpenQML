@@ -37,6 +37,7 @@ class AerBackend:
             channels=True,
             reset=True,
             classical_control=True,
+            runtime_loops=True,
         )
     )
 
@@ -393,12 +394,29 @@ class AerBackend:
         from .adapters.qiskit import to_qiskit
 
         jobs = []
+        widths = []
         for circuit in circuits:
+            widths.append(
+                circuit.num_clbits if circuit.has_classical_outputs else circuit.num_qubits
+            )
+            if not circuit.has_classical_outputs:
+                circuit = circuit.measure_all()
+            native = to_qiskit(circuit)
             if not circuit.has_measurements:
-                circuit = replace(circuit, num_clbits=0).measure_all()
-            jobs.append(to_qiskit(circuit))
+                from qiskit.circuit import ClassicalRegister
+
+                # Aer omits its counts field for stores alone. A terminal
+                # read on a fresh bit makes it materialize classical memory.
+                probe = ClassicalRegister(1, "openqml_readout")
+                native.add_register(probe)
+                native.measure(native.qubits[0], probe[0])
+            jobs.append(native)
         result = self._run(jobs, options, shots=shots)
-        return [
-            {key.replace(" ", "")[::-1]: int(value) for key, value in result.get_counts(i).items()}
-            for i in range(len(jobs))
-        ]
+        counts = []
+        for i, width in enumerate(widths):
+            row = {}
+            for key, value in result.get_counts(i).items():
+                label = key.replace(" ", "")[::-1][:width]
+                row[label] = row.get(label, 0) + int(value)
+            counts.append(row)
+        return counts

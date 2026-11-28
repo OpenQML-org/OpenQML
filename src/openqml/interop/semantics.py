@@ -442,7 +442,8 @@ def prove_equivalence(
     original_source, original_target = source, target
     dimensions = source.num_qubits == target.num_qubits and source.num_clbits == target.num_clbits
     structural = source == target
-    if dimensions and not structural:
+    runtime = source.has_runtime_control or target.has_runtime_control
+    if dimensions and not structural and not runtime:
         from ..ir._structure import compact_pair
 
         def charge(amount):
@@ -464,6 +465,13 @@ def prove_equivalence(
         )
     elif source == target:
         method, normal = "structural_identity", (source.num_qubits, _fingerprint(source))
+    elif runtime:
+        notes.append(
+            Diagnostic(
+                "SEMANTIC_RUNTIME_LOOP",
+                "Nonidentical runtime programs require a termination-aware proof.",
+            )
+        )
     elif source.has_effects or target.has_effects:
         from ..sim._instrument import instrument_form
 

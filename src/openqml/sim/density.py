@@ -383,6 +383,7 @@ def _simulate(
     max_memory_mb=256,
     batch_shape=None,
     max_branches=256,
+    max_loop_steps=100_000,
     retain_classical=False,
     classical_bits=None,
 ):
@@ -408,6 +409,22 @@ def _simulate(
         )
     except ValueError as exc:
         raise ValidationError("Parameter batch shapes cannot be broadcast together.") from exc
+    if circuit.has_runtime_control:
+        from ._runtime_control import run_control
+
+        states = run_control(
+            circuit,
+            bindings,
+            ops,
+            shape,
+            max_qubits=max_qubits,
+            max_memory_mb=max_memory_mb,
+            max_branches=max_branches,
+            max_loop_steps=max_loop_steps,
+            retain_classical=retain_classical,
+            classical_bits=classical_bits,
+        )
+        return states, ops, shape
     branch_limit = _planning_limit(
         circuit, max_qubits, max_memory_mb, math.prod(shape), max_branches
     )
@@ -445,6 +462,7 @@ def density_matrix(
     max_memory_mb=256,
     batch_shape=None,
     max_branches=256,
+    max_loop_steps=100_000,
 ):
     """Final unconditional density, including measurements/reset/atomic classical branches.
 
@@ -457,6 +475,7 @@ def density_matrix(
     if bindings is not None:
         _require_mapping(bindings)
     integer(max_branches, "max_branches", 1)
+    integer(max_loop_steps, "max_loop_steps", 1)
     if not isinstance(backend, str):
         from ..runtime.backends import get_backend
 
@@ -494,6 +513,7 @@ def density_matrix(
                         max_memory_mb=max_memory_mb,
                         max_branches=max_branches,
                         batch_shape=batch_shape,
+                        max_loop_steps=max_loop_steps,
                     )
 
                 result = (
@@ -502,6 +522,8 @@ def density_matrix(
                     else native_execute()
                 )
                 return result if target == "numpy" else result.detach().cpu().numpy()
+        if max_loop_steps != 100_000 and circuit.has_runtime_control:
+            raise ValidationError("max_loop_steps applies to local NumPy execution.")
         if like is not None or batch_shape is not None:
             raise ValidationError(
                 "External density backends require scalar bindings without tensor context."
@@ -558,6 +580,7 @@ def density_matrix(
         max_memory_mb=max_memory_mb,
         batch_shape=batch_shape,
         max_branches=max_branches,
+        max_loop_steps=max_loop_steps,
     )
     return _finish_density(states, ops, shape, bindings, circuit.num_qubits)
 
@@ -626,6 +649,7 @@ def execute_density(
     max_qubits=None,
     max_memory_mb=256,
     max_branches=256,
+    max_loop_steps=100_000,
     classical_bits=None,
 ):
     from ..runtime._validation import validate_classical_bits
@@ -641,6 +665,7 @@ def execute_density(
         max_branches=max_branches,
         retain_classical=shots is not None and circuit.has_classical_outputs,
         classical_bits=classical_bits,
+        max_loop_steps=max_loop_steps,
     )
     dimension = 2**circuit.num_qubits
     rho = sum(states.values()).reshape(dimension, dimension)

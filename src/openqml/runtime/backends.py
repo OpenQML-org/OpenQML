@@ -37,6 +37,7 @@ class BackendCapabilities:
     device_type: str = "CPU"
     exact_expectations: bool = False
     bounded_expectations: bool = True
+    runtime_loops: bool = False
 
     def __post_init__(self):
         if any(
@@ -53,6 +54,7 @@ class BackendCapabilities:
                 self.deterministic_expectations,
                 self.exact_expectations,
                 self.bounded_expectations,
+                self.runtime_loops,
             )
         ):
             raise ValidationError("Backend capability flags must be booleans.")
@@ -159,7 +161,7 @@ def check_effects(circuit, device, *, expectation=False):
         and not (
             device.capabilities.density_matrix
             and device.capabilities.channels
-            and all(op.name != "if_else" for _, op in circuit.walk_operations())
+            and all(op.name not in {"if_else", "while_loop"} for _, op in circuit.walk_operations())
         )
     ):
         raise ValidationError(
@@ -170,6 +172,11 @@ def check_effects(circuit, device, *, expectation=False):
             raise ValidationError(f"Backend {device.name!r} does not support quantum channels.")
         if op.name == "reset" and not device.capabilities.reset:
             raise ValidationError(f"Backend {device.name!r} does not support reset.")
+        if (
+            op.name in {"while_loop", "break_loop", "continue_loop"}
+            and not device.capabilities.runtime_loops
+        ):
+            raise ValidationError(f"Backend {device.name!r} has no runtime-loop contract.")
         if op.name == "if_else" and not device.capabilities.classical_control:
             raise ValidationError(f"Backend {device.name!r} does not support classical control.")
 
@@ -229,6 +236,7 @@ _REGISTRY["numpy"] = _LocalBackend(
         channels=True,
         reset=True,
         classical_control=True,
+        runtime_loops=True,
         mid_circuit_measurements=True,
         measurement_expectations=True,
         deterministic_expectations=True,

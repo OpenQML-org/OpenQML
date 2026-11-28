@@ -236,3 +236,9 @@ def test_nested_mutable_loops_keep_break_and_continue_targets_separate():
     circuit = oq.convert(native, target="ir").value
     assert oq.execute(circuit, shots=13, classical_bits=(0, 1)).counts == {"10": 13}
     assert len(list(circuit.walk_operations())) < 2000
+
+
+def test_aer_reports_stored_classical_memory_without_a_source_measurement():
+    pytest.importorskip("qiskit_aer")
+    circuit = oq.Circuit(1).h(0).classical_set(1, 1)
+    assert oq.sample(circuit, backend=oq.AerBackend(), shots=31) == {"01": 31}

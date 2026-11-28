@@ -6,15 +6,15 @@ from numbers import Integral
 from ...errors import conversion_error
 
 
-def _variables(value, limit=100_000):
+def _nodes(value, limit):
     from qiskit.circuit import ClassicalRegister, Clbit
     from qiskit.circuit.classical import expr
 
     if isinstance(value, tuple):
         value = value[0]
     if isinstance(value, (Clbit, ClassicalRegister)):
-        return set()
-    pending, seen, result = [value], {}, set()
+        return
+    pending, seen = [value], {}
     while pending:
         node = pending.pop()
         if id(node) in seen:
@@ -24,16 +24,46 @@ def _variables(value, limit=100_000):
             raise conversion_error(
                 "CLASSICAL_EXPRESSION_LIMIT", "Storage expression analysis exceeds its budget."
             )
-        if isinstance(node, expr.Var):
-            if not isinstance(node.var, (Clbit, ClassicalRegister)):
-                result.add(node.var)
-        elif isinstance(node, expr.Binary):
+        yield node
+        if isinstance(node, expr.Binary):
             pending.extend((node.left, node.right))
         elif isinstance(node, (expr.Cast, expr.Unary)):
             pending.append(node.operand)
         elif isinstance(node, getattr(expr, "Index", ())):
             pending.extend((node.target, node.index))
-    return result
+
+
+def _variables(value, limit=100_000):
+    from qiskit.circuit import ClassicalRegister, Clbit
+    from qiskit.circuit.classical import expr
+
+    return {
+        n.var
+        for n in _nodes(value, limit)
+        if isinstance(n, expr.Var) and not isinstance(n.var, (Clbit, ClassicalRegister))
+    }
+
+
+def needs_mutable(op, limit):
+    from qiskit.circuit import IfElseOp, Store, SwitchCaseOp, WhileLoopOp
+    from qiskit.circuit.classical import expr
+
+    if isinstance(op, (Store, WhileLoopOp)):
+        return True
+    if (
+        isinstance(op, SwitchCaseOp)
+        and isinstance(op.target, expr.Expr)
+        and not isinstance(op.target, expr.Var)
+    ):
+        return True
+    return (
+        isinstance(op, IfElseOp)
+        and isinstance(op.condition, expr.Expr)
+        and any(
+            isinstance(n, getattr(expr, "Index", ())) and not isinstance(n.index, expr.Value)
+            for n in _nodes(op.condition, limit)
+        )
+    )
 
 
 class _Storage:
@@ -70,7 +100,7 @@ class _Storage:
                 self.names[variable.var] = variable.name
                 self.bits += width
             for item in body.data:
-                self.mutable |= isinstance(item.operation, Store)
+                self.mutable |= needs_mutable(item.operation, limit)
                 if isinstance(item.operation, Store) and not isinstance(
                     item.operation.rvalue, expr.Value
                 ):
@@ -136,6 +166,7 @@ class _Storage:
             IfElseOp,
             Store,
             SwitchCaseOp,
+            WhileLoopOp,
         )
 
         if depth > 128:
@@ -175,6 +206,9 @@ class _Storage:
                 if not any(CASE_DEFAULT in labels for labels, _ in op.cases_specifier()):
                     branches.append(initialized)
                 initialized = set.intersection(*branches)
+            elif isinstance(op, WhileLoopOp):
+                read(op.condition)
+                self._check(op.blocks[0], initialized, limit, depth + 1)
             elif isinstance(op, ForLoopOp):
                 if len(op.params[0]):
                     self._check(op.blocks[0], initialized, limit, depth + 1)
@@ -198,7 +232,7 @@ class _Storage:
                 value.index.value, Integral
             ):
                 self.fail(
-                    "Assignment targets require a statically addressed bit.",
+                    "A nested writable view must resolve to a bit register.",
                     "CLASSICAL_STORE_ADDRESS",
                 )
             bits, index = self.targets(value.target, native, cmap), int(value.index.value)

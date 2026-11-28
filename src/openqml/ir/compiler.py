@@ -390,14 +390,15 @@ def circuit_stats(circuit: Circuit) -> CircuitStats:
     def walk(body, quantum, classical, floor=0):
         end = floor
         for op in body.operations:
-            if op.name == "if_else":
-                entry = max([floor] + [classical.get(c, 0) for c in op.condition.bits]) + 1
+            if op.blocks:
+                guard_bits = op.condition.bits if op.condition is not None else ()
+                entry = max([floor] + [classical.get(c, 0) for c in guard_bits]) + 1
                 counts["conditionals"] += 1
                 branches = [walk(b, dict(quantum), dict(classical), entry) for b in op.blocks]
                 for mapping, position in ((quantum, 0), (classical, 1)):
                     keys = set().union(*(b[position] for b in branches))
                     mapping.update({k: max(b[position].get(k, 0) for b in branches) for k in keys})
-                for c in op.condition.bits:
+                for c in guard_bits:
                     classical[c] = max(classical.get(c, 0), entry)
                 end = max(end, *(b[2] for b in branches))
                 continue

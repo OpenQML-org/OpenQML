@@ -87,7 +87,7 @@ def test_switch_symbolic_phases_bit_targets_and_empty_cases():
     assert plan.circuit.has_effects
 
 
-def test_switch_rejects_depth_expansion_and_expression_targets():
+def test_switch_respects_depth_and_accepts_typed_expression_targets():
     qiskit = pytest.importorskip("qiskit")
     from qiskit.circuit.classical import expr
 
@@ -103,9 +103,8 @@ def test_switch_rejects_depth_expansion_and_expression_targets():
     with other.switch(expr.bit_and(other.cregs[0], 1)) as case:
         with case(0):
             other.x(0)
-    with pytest.raises(oq.ConversionError) as exc:
-        oq.convert(other, source="qiskit", target="ir")
-    assert exc.value.diagnostics[0].code == "CLASSICAL_SWITCH_TARGET"
+    circuit = oq.convert(other, target="ir").value
+    np.testing.assert_allclose(oq.density_matrix(circuit), np.diag([0, 1]))
 
 
 def test_repeated_definition_is_imported_once_with_wire_mapping_and_fresh_calls(monkeypatch):

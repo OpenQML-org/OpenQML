@@ -92,6 +92,8 @@ def _cached_records(topology, retain_classical, classical_bits, max_branches):
 
 
 def _record_plan(circuit, retain_classical=False, classical_bits=None, max_branches=256):
+    if circuit.has_runtime_control:
+        raise ResourceError("Runtime loop liveness is determined during execution.")
     topology = _topology(circuit)
     remaining, pending = 4096, [topology]
     while pending and remaining >= 0:

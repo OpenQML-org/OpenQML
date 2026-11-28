@@ -38,14 +38,12 @@ means physical measurement; `has_classical_outputs` also includes assignments.
 NumPy counts, native density execution and conversion verification retain
 overwritten final storage and merge branches after dead writes.
 
-Qiskit Bool/Uint variables, bit/register assignments, statically addressed
-indexed targets and finite loops lower to classical bits and bounded decision
-graphs. Every RHS is resolved into a shared snapshot before any destination
-bit changes, including overlapping arithmetic assignments. Runtime variables
-are checked for definite assignment. A conservative check can reject a variable
-initialized only in a loop; initialize it before entering that loop.
-Runtime while loops and dynamically addressed assignment targets require
-native execution and receive explicit diagnostics.
+Qiskit Bool/Uint variables, bit and register assignments, and indexed writes
+lower to classical bits and bounded decisions. An indexed store selects its
+destination and reads its value from the same pre-write state. Whole-register
+stores snapshot overlapping operands before changing any destination bit.
+A variable read must have a definite assignment. Initialize it before entering
+a loop if the first iteration might read it.
 
 Original SDK classical bits retain their indices. Standalone variables,
 snapshots and finite-loop control flags use additional classical bits, with
@@ -56,8 +54,8 @@ require `source_options={"classical_inputs": {name: integer}}`; unbound inputs,
 out-of-range values and undeclared input names are rejected.
 
 Qiskit, JSON, IR and OpenQASM 3 preserve lowered stores. The built-in QASM 3
-reader accepts constant assignments to bit/register targets. Rich expressions
-enter through the typed Qiskit frontend and export as portable guards/stores.
+reader accepts constant stores, bit copies and fixed-width unsigned counter
+updates. The Qiskit frontend also lowers typed arithmetic into guards and stores.
 Cirq, operation-only PennyLane tapes and QASM 2 reject unsupported assignments.
 The target hardware must independently support the exported operations.
 
@@ -108,9 +106,10 @@ OpenQML applies it within straight-line regions of each lowered block.
 | Source feature | Lowering and semantic contract |
 | --- | --- |
 | Qiskit `if_else` | Atomic equality selection over explicit classical bits |
-| Qiskit `switch` | Bit/register selectors, grouped integer labels and a default branch |
+| Qiskit `switch` | Bit/register and typed Bool/Uint expression selectors, grouped labels and a default branch |
 | Qiskit finite `for` | Bounded static expansion with explicit parameter binding |
-| Qiskit `break_loop` / `continue_loop` | Continuations preserve the nearest finite loop's exit or next iteration |
+| Qiskit and OpenQASM 3 `while` | A loop header reevaluates its condition on each iteration |
+| `break` / `continue` | Exit or restart the nearest enclosing loop, including inside a switch |
 | Repeated Qiskit definitions | One imported body per source object and option set, with fresh wire remapping |
 | Qiskit symbolic angles | Per-import expression reuse and iterative DAG export |
 | OpenQASM 3 guards | Bit/register/index-set equality and conjunctions, preserving arbitrary bit order |
@@ -119,8 +118,8 @@ Switch lowering uses a nested equality decision chain. After a case is selected,
 its body runs once; writes to the selector cannot enter another case. Grouped
 labels share the imported body. The default body is reached only after every
 label fails. Source operation, loop-expansion and control-depth budgets apply
-to the resulting decision structure. Switch expression selectors receive a
-structured diagnostic unless they directly wrap a bit or register.
+to the resulting decision structure. OpenQASM 3.1 source can use grouped cases
+and a default arm. Its portable OpenQASM 3 output uses ordinary conditionals.
 
 OpenQASM 3 emission uses one register equality or ordered index-set equality,
 such as `if (c[{2, 0}] == 2)`, with one copy of each branch body. These compact
@@ -196,9 +195,8 @@ correlations between bits. A selector whose only possible values are 1 and 2
 can therefore index a three-bit word even when independent bit bounds would
 allow 3. Predicate decisions still complete before either selected payload.
 
-Standalone mutable variables, signed/float arithmetic, stores, timing
-and other unsupported expression operations retain
-explicit diagnostics or require the existing native program route.
+The portable predicate language uses Bool and Uint. Signed and floating-point
+classical arithmetic and hardware timing need additional frontend support.
 
 A bit-vector compiler lowers these predicates into reduced ordered binary
 decision diagrams, reusing canonical nodes and cached Boolean operations.
@@ -219,9 +217,48 @@ Python or general classical-program translation.
 
 The supported source nodes follow [Qiskit's typed classical-expression API](https://quantum.cloud.ibm.com/docs/en/api/qiskit/circuit_classical).
 Recent work on [structured quantum programs (September 2026)](https://arxiv.org/abs/2609.16171)
-motivates retaining classical structure. The existing native program route
-continues to retain supported dynamic loops instead of flattening their runtime
-iterations; this addition handles bounded pure predicates in the portable IR.
+motivates retaining classical structure. Native and portable compilation both
+preserve runtime iteration for supported loop conditions.
+
+## Runtime loops and addressed wires
+
+Qiskit and OpenQASM 3 can exchange runtime loops through OpenQML IR and JSON.
+Older IR versions remain readable. Cirq, PennyLane tape and OpenQASM 2 exports
+report an unsupported runtime loop before export.
+
+```python
+import openqml as oq
+
+source = """OPENQASM 3.0;
+include "stdgates.inc";
+qubit[2] q;
+bit[2] out;
+uint[2] i = 0;
+while (i < 2) {
+    x q[i];
+    i += 1;
+}
+out = measure q;
+"""
+plan = oq.plan_conversion(source, target="openqasm3")
+print(oq.sample(plan.circuit, shots=32, classical_bits=(0, 1)))  # {'11': 32}
+print(plan.verify().matched)  # True
+```
+
+A dynamic quantum wire lowers to conditional operations on concrete wires.
+The core frontend accepts unsigned register and bit selectors, unsigned casts,
+and literal masks. A comparison with a literal can prove a smaller range.
+A write to the index invalidates the bound. The same dispatch handles classical
+reads, writes and measurement destinations. Unproved bounds, aliased gate
+operands, and excessive expansion produce a conversion diagnostic.
+
+NumPy samples measurement-controlled loops until every shot exits.
+`max_loop_steps` bounds executed instructions across trajectory groups.
+Exhausting the budget raises an error. For finitely resolved paths,
+`density_matrix` sums branch contributions and `plan.verify()` compares a
+complete operator basis. A recurrent branch can exceed the scope of exact
+verification, even when termination has probability one. Sampling remains
+available for these programs.
 
 ## Finite loops with early exits
 
@@ -234,8 +271,8 @@ wire maps, global phases and operations following the whole loop are preserved.
 The portable output uses existing atomic IR branches, with no mutable scratch
 bits. `max_operations` counts expanded branch payloads, including repeated
 continuations; `max_depth` bounds the resulting control nesting. Oversized
-programs fail before constructing their expanded output. Runtime while loops
-continue to require native program execution.
+programs fail before constructing their expanded output. A runtime while loop
+retains a back edge in portable IR v6.
 
 Qiskit and OpenQASM 3 retain nested measurements and feedback. Cirq export is
 available when the resulting atomic payload is representable in Cirq; blocks

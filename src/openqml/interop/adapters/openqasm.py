@@ -150,24 +150,46 @@ def from_openqasm(
     statements = _statements(text)
     if not statements:
         raise conversion_error("QASM_VERSION", "Missing OPENQASM header.")
-    header = re.fullmatch(r"OPENQASM\s+(2|3)(?:\.0)?", statements[0][1])
+    header = re.fullmatch(r"OPENQASM\s+(2(?:\.0)?|3(?:\.[01])?)", statements[0][1])
     if not header:
-        raise conversion_error("QASM_VERSION", "Only OPENQASM 2.0 and 3.0 are supported.")
-    version = int(header.group(1))
+        raise conversion_error("QASM_VERSION", "Expected an OpenQASM 2.0, 3.0 or 3.1 header.")
+    version = int(header.group(1)[0])
     if expected_version is not None and version != expected_version:
         raise conversion_error(
             "QASM_VERSION", "Source header differs from requested source format."
         )
-    qregs, cregs, symbols = {}, {}, set()
+    from ._qasm_runtime import (
+        Predicate,
+        Switch,
+        addressed,
+        comparison,
+        counter,
+        runtime_address,
+        split_operands,
+        unsigned_word,
+    )
+
+    qregs, cregs, symbols, unsigned = {}, {}, set(), set()
+    bit_decl = re.compile(r"bit(?:\[\s*(\d+)\s*\])?\s+[A-Za-z_]\w*", re.ASCII)
+    user_bits = sum(
+        int(m[1] or 1)
+        for k, text, _ in statements
+        if version == 3 and k == "statement" and (m := bit_decl.fullmatch(text))
+    )
+    next_bit = 0
+    bounds, saved = {}, []
+
     nq, nc, operations, phase = 0, 0, [], []
     stack, work, skip_else = [], 0, False
 
-    def reference(token, registers, location):
+    def reference(token, registers, location, *, dynamic=False):
         match = re.fullmatch(
             r"([A-Za-z_]\w*)(?:\[\s*(\d+|\{\s*\d+(?:\s*,\s*\d+)*\s*\})\s*\])?",
             token.strip(),
             re.ASCII,
         )
+        if not match and dynamic and version == 3:
+            return runtime_address(token, registers, cregs, bounds, max_operations - work, location)
         if not match or match.group(1) not in registers:
             raise conversion_error(
                 "REGISTER_REFERENCE", f"Unknown register reference {token!r}.", location
@@ -203,6 +225,54 @@ def from_openqasm(
                 "OPERATION_LIMIT", "Expanded gate count exceeds limit.", location
             )
         operations.append(op)
+
+    def add_bound(condition, truth):
+        if isinstance(condition, Predicate):
+            digits, upper = condition.digits, condition.high if truth else condition.low
+        elif isinstance(condition, ClassicalCondition) and truth:
+            digits, upper = tuple((b, i) for i, b in enumerate(condition.bits)), condition.value + 1
+        else:
+            return
+        if upper is not None:
+            bounds[digits] = min(upper, bounds.get(digits, upper))
+
+    def extend(new_ops, location):
+        nonlocal work
+        for op in new_ops:
+            writes = set(op.clbits)
+            for child in op.blocks:
+                for _, sub in child.walk_operations():
+                    work += 1
+                    writes.update(sub.clbits)
+            if writes:
+                for scope in (*saved, bounds):
+                    for digits in tuple(scope):
+                        if any(b in writes for b, _ in digits):
+                            del scope[digits]
+            append(op, location)
+
+    def emit(groups, factory, location):
+        extend(
+            addressed(
+                groups,
+                factory,
+                nq or 1,
+                nc,
+                max_operations - work,
+                min(max_depth, 128) - len(stack),
+                location,
+            ),
+            location,
+        )
+
+    def copy_bit(source, target):
+        empty = Circuit(nq or 1, num_clbits=nc)
+        return Operation(
+            "if_else",
+            (),
+            condition=ClassicalCondition((source,), 1),
+            blocks=(empty.classical_set(target, 1), empty.classical_set(target, 0)),
+        )
 
     def classical_guard(source, location):
         """Parse equality conjunctions without expanding their branch bodies."""
@@ -281,51 +351,141 @@ def from_openqasm(
         if kind == "close":
             if not stack:
                 raise conversion_error("SYNTAX", "Unmatched closing brace.", location)
-            parent_ops, parent_phase, condition, true_body = stack.pop()
+            control, parent_ops, parent_phase, condition, true_body = stack.pop()
             child = Circuit(nq, tuple(operations), nc, _phase_sum(phase))
             if (
-                true_body is None
+                control == "if"
+                and true_body is None
                 and index + 1 < len(statements)
                 and statements[index + 1][:2] == ("open", "else")
             ):
-                stack.append((parent_ops, parent_phase, condition, child))
+                stack.append((control, parent_ops, parent_phase, condition, child))
+                bounds = saved[-1].copy()
+                add_bound(condition, False)
                 operations, phase, skip_else = [], [], True
                 continue
-            when_true, when_false = (
-                (child, Circuit(nq)) if true_body is None else (true_body, child)
-            )
             operations, phase = parent_ops, parent_phase
-            operations.append(
-                Operation("if_else", (), condition=condition, blocks=(when_true, when_false))
-            )
+            bounds = saved.pop()
+            if control == "case":
+                stack[-1][3].add(condition, child, location)
+                continue
+            empty = Circuit(nq, num_clbits=nc)
+            if control == "switch":
+                part = condition.lower(
+                    nq, nc, max_operations - true_body, max_depth - len(stack), location
+                )
+                work = max(work, true_body + sum(1 for _ in part.walk_operations()))
+                operations.extend(part.operations)
+                phase.append(part.global_phase)
+            elif control == "while":
+                if isinstance(condition, Predicate):
+                    if condition.equality is not None and not condition.inverted:
+                        condition = condition.equality
+                    else:
+                        test = condition.select(
+                            empty,
+                            empty.break_loop(),
+                            nq,
+                            nc,
+                            max_operations - work,
+                            max_depth - len(stack) - 1,
+                            location,
+                        )
+                        work += sum(1 for _ in test.walk_operations())
+                        child = test.compose(child)
+                        condition = None
+                if condition is not False:
+                    operations.append(
+                        Operation("while_loop", (), condition=condition, blocks=(child,))
+                    )
+            else:
+                high, low = (child, empty) if true_body is None else (true_body, child)
+                if isinstance(condition, Predicate):
+                    charged = sum(1 for body in (high, low) for _ in body.walk_operations())
+                    part = condition.select(
+                        high,
+                        low,
+                        nq,
+                        nc,
+                        max_operations - work + charged + 1,
+                        max_depth - len(stack),
+                        location,
+                    )
+                    work += max(0, sum(1 for _ in part.walk_operations()) - charged - 1)
+                elif isinstance(condition, bool):
+                    part = high if condition else low
+                else:
+                    part = empty.if_else(condition, high, low)
+                operations.extend(part.operations)
+                phase.append(part.global_phase)
+            if work > max_operations:
+                raise conversion_error(
+                    "OPERATION_LIMIT", "Control expansion exceeds max_operations.", location
+                )
             continue
+        in_switch = bool(stack and stack[-1][0] == "switch")
+        if in_switch and kind != "open":
+            raise conversion_error(
+                "SYNTAX", "A switch must contain case or default arms.", location
+            )
         if kind == "open":
-            guard = re.fullmatch(r"if\s*\(\s*(.*?)\s*\)", statement, re.S)
-            if version != 3 or guard is None:
+            guard = re.fullmatch(r"(if|while|switch)\s*\(\s*(.*?)\s*\)", statement, re.S)
+            case = re.fullmatch(r"case\s+(\d+(?:\s*,\s*\d+)*)|default", statement)
+            if version != 3 or not (case or guard) or bool(case) != in_switch:
                 raise conversion_error(
                     "UNSUPPORTED_STATEMENT",
-                    "Only braced QASM 3 if/else blocks are supported here.",
+                    "Expected a braced if, while, switch or case.",
                     location,
                 )
-            if len(stack) >= min(max_depth, 128):
-                raise conversion_error(
-                    "CONTROL_DEPTH_LIMIT",
-                    "Conditional nesting exceeds max_depth or the 128-level traversal ceiling.",
-                    location,
-                )
-            condition = classical_guard(guard.group(1), location)
             if not nq:
                 raise conversion_error(
                     "NO_QUBITS", "Declare qubits before control blocks.", location
                 )
-            # Empty blocks still consume work and cannot evade the source budget.
+            if len(stack) >= min(max_depth, 128):
+                raise conversion_error(
+                    "CONTROL_DEPTH_LIMIT", "Control nesting exceeds max_depth.", location
+                )
+            checkpoint = work
+            if case:
+                control = "case"
+                condition = None if not case[1] else tuple(int(v) for v in case[1].split(","))
+                work += len(condition) if condition else 1
+            else:
+                control, test = guard.groups()
+                if control == "switch":
+                    condition = Switch(unsigned_word(test, cregs, max_operations - work, location))
+                elif test.strip() in {"true", "false"}:
+                    condition = test.strip() == "true"
+                    if condition and control == "while":
+                        condition = None
+                else:
+                    try:
+                        condition = classical_guard(test, location)
+                    except ConversionError:
+                        if not re.search(r"!=|<=|>=|<|>|^uint", test.strip()):
+                            raise
+                        condition = comparison(
+                            test, cregs, max_operations - work, max_depth - len(stack), location
+                        )
             work += 1
             if work > max_operations:
                 raise conversion_error(
-                    "OPERATION_LIMIT", "Conditional operations exceed limit.", location
+                    "OPERATION_LIMIT", "Control exceeds the operation limit.", location
                 )
-            stack.append((operations, phase, condition, None))
+            stack.append(
+                (control, operations, phase, condition, checkpoint if control == "switch" else None)
+            )
+            saved.append(bounds)
+            bounds = {} if control == "while" else bounds.copy()
+            add_bound(condition, True)
             operations, phase = [], []
+            continue
+        if version == 3 and statement in {"break", "continue"}:
+            if not any(f[0] == "while" for f in stack):
+                raise conversion_error(
+                    "CLASSICAL_CONTROL", f"{statement} needs an enclosing loop.", location
+                )
+            append(Operation(statement + "_loop", ()), location)
             continue
         include = re.fullmatch(r'include\s+"([^"\n]+)"', statement)
         if include:
@@ -339,6 +499,57 @@ def from_openqasm(
                     location,
                     "External includes are never read from disk.",
                 )
+            continue
+        uint = re.fullmatch(
+            r"uint\[\s*(\d+)\s*\]\s+([A-Za-z_]\w*)\s*=\s*(.+)", statement, re.ASCII | re.S
+        )
+        if version == 3 and uint:
+            from ..conversion import _QASM_RESERVED
+
+            width, name, initial = int(uint[1]), uint[2], uint[3]
+            if (
+                stack
+                or width < 1
+                or name in (_QASM_RESERVED | symbols | qregs.keys() | cregs.keys())
+            ):
+                raise conversion_error(
+                    "REGISTER_DECLARATION", "Expected a new top-level unsigned register.", location
+                )
+            start = max(nc, user_bits)
+            if width > max_operations - work or (
+                max_register_bits is not None and nq + start + width > max_register_bits
+            ):
+                raise conversion_error(
+                    "REGISTER_LIMIT", "Unsigned storage exceeds the import budget.", location
+                )
+            literal = int(initial) if initial.isdecimal() else None
+            digits = (
+                {}
+                if literal is not None
+                else {
+                    i: b for b, i in unsigned_word(initial, cregs, max_operations - work, location)
+                }
+            )
+            if literal is not None and literal.bit_length() > width:
+                raise conversion_error(
+                    "CLASSICAL_STORE_WIDTH", "Initializer exceeds its width.", location
+                )
+            nc = start + width
+            cregs[name] = (start, width)
+            unsigned.add(name)
+            for i in range(width):
+                if i in digits:
+                    extend((copy_bit(digits[i], start + i),), location)
+                else:
+                    append(
+                        Operation(
+                            "classical_set",
+                            (),
+                            (expression(((literal or 0) >> i) & 1),),
+                            (start + i,),
+                        ),
+                        location,
+                    )
             continue
         declaration2 = re.fullmatch(r"(qreg|creg)\s+([A-Za-z_]\w*)\s*\[\s*(\d+)\s*\]", statement)
         declaration3 = re.fullmatch(r"(qubit|bit)(?:\[\s*(\d+)\s*\])?\s+([A-Za-z_]\w*)", statement)
@@ -357,7 +568,8 @@ def from_openqasm(
                 raise conversion_error(
                     "REGISTER_DECLARATION", "Invalid or duplicate register.", location
                 )
-            if max_register_bits is not None and nq + nc + width > max_register_bits:
+            total = nq + nc + width if kind in {"qreg", "qubit"} else nq + max(nc, next_bit + width)
+            if max_register_bits is not None and total > max_register_bits:
                 raise conversion_error(
                     "REGISTER_LIMIT", "Register size exceeds the configured limit.", location
                 )
@@ -365,8 +577,9 @@ def from_openqasm(
                 qregs[name] = (nq, width)
                 nq += width
             else:
-                cregs[name] = (nc, width)
-                nc += width
+                cregs[name] = (next_bit, width)
+                next_bit += width
+                nc = max(nc, next_bit)
             continue
         symbol = re.fullmatch(r"input\s+float(?:\[64\])?\s+([A-Za-z_]\w*)", statement)
         if symbol and version == 3:
@@ -388,28 +601,84 @@ def from_openqasm(
         measurement3 = re.fullmatch(r"(.+?)\s*=\s*measure\s+(.+)", statement)
         if (measurement2 and version == 2) or (measurement3 and version == 3):
             qref, cref = measurement2.groups() if measurement2 else reversed(measurement3.groups())
-            qs, cs = reference(qref, qregs, location), reference(cref, cregs, location)
-            if len(qs) != len(cs):
-                raise conversion_error(
-                    "MEASUREMENT_WIDTH", "Measurement register widths differ.", location
+
+            def measure(groups, location=location):
+                qs, cs = groups
+                if len(qs) != len(cs):
+                    raise conversion_error(
+                        "MEASUREMENT_WIDTH", "Measurement register widths differ.", location
+                    )
+                return (
+                    Operation("measure", (q,), clbits=(c,)) for q, c in zip(qs, cs, strict=True)
                 )
-            for q, c in zip(qs, cs, strict=True):
-                append(Operation("measure", (q,), clbits=(c,)), location)
+
+            emit(
+                (
+                    reference(qref, qregs, location, dynamic=True),
+                    reference(cref, cregs, location, dynamic=True),
+                ),
+                measure,
+                location,
+            )
+            continue
+        update = re.fullmatch(r"([A-Za-z_]\w*)\s*([+-])=\s*(\d+)", statement) or re.fullmatch(
+            r"([A-Za-z_]\w*)\s*=\s*\1\s*([+-])\s*(\d+)", statement
+        )
+        if version == 3 and update and update[1] in unsigned:
+            start, width = cregs[update[1]]
+            extend(
+                counter(
+                    start,
+                    width,
+                    int(update[3]),
+                    update[2] == "-",
+                    nq or 1,
+                    nc,
+                    max_operations - work,
+                    max_depth - len(stack),
+                    location,
+                ),
+                location,
+            )
             continue
         assignment = re.fullmatch(r"(.+?)\s*=\s*(true|false|\d+)", statement)
-        if assignment and version == 3:
-            targets = reference(assignment.group(1), cregs, location)
-            literal = assignment.group(2)
-            value = int(literal == "true") if literal in {"true", "false"} else int(literal)
-            if value.bit_length() > len(targets):
-                raise conversion_error(
-                    "CLASSICAL_STORE_WIDTH", "Assigned value exceeds its width.", location
+        if version == 3 and assignment:
+            value = (
+                int(assignment[2] == "true")
+                if assignment[2] in {"true", "false"}
+                else int(assignment[2])
+            )
+
+            def assign(groups, value=value, location=location):
+                bits = groups[0]
+                if value.bit_length() > len(bits):
+                    raise conversion_error(
+                        "CLASSICAL_STORE_WIDTH", "Assigned value exceeds its width.", location
+                    )
+                return (
+                    Operation("classical_set", (), (expression((value >> i) & 1),), (bit,))
+                    for i, bit in enumerate(bits)
                 )
-            for i, bit in enumerate(targets):
-                append(
-                    Operation("classical_set", (), (expression((value >> i) & 1),), (bit,)),
-                    location,
-                )
+
+            emit((reference(assignment[1], cregs, location, dynamic=True),), assign, location)
+            continue
+        bit_ref = r"([A-Za-z_]\w*(?:\s*\[.+\])?)"
+        copy = re.fullmatch(bit_ref + r"\s*=\s*" + bit_ref, statement)
+        if version == 3 and copy:
+
+            def copy_one(groups, location=location):
+                dest, src = groups
+                if len(dest) != 1 or len(src) != 1:
+                    raise conversion_error(
+                        "UNSUPPORTED_STATEMENT", "Expected a bit-to-bit assignment.", location
+                    )
+                return (copy_bit(src[0], dest[0]),)
+
+            emit(
+                tuple(reference(v, cregs, location, dynamic=True) for v in copy.groups()),
+                copy_one,
+                location,
+            )
             continue
         global_phase = re.fullmatch(r"gphase\s*\((.*)\)", statement, flags=re.S)
         if version == 3 and global_phase:
@@ -452,28 +721,24 @@ def from_openqasm(
                 location,
                 "Use standard gates/reset; definitions and control flow need the SDK frontend.",
             )
-        groups = [reference(token, qregs, location) for token in rest.split(",")]
-        try:
+        groups = [reference(token, qregs, location, dynamic=True) for token in split_operands(rest)]
+
+        def gates(groups, name=name, parameters=parameters, location=location):
             if name == "barrier":
-                append(
-                    Operation(name, tuple(q for group in groups for q in group), parameters),
-                    location,
+                yield Operation(name, tuple(b for group in groups for b in group), parameters)
+                return
+            width = max(map(len, groups))
+            if any(len(group) not in {1, width} for group in groups):
+                raise conversion_error("BROADCAST_WIDTH", "Gate register widths differ.", location)
+            for row in range(width):
+                yield Operation(
+                    name,
+                    tuple(group[0 if len(group) == 1 else row] for group in groups),
+                    parameters,
                 )
-            else:
-                width = max(map(len, groups))
-                if any(len(group) not in {1, width} for group in groups):
-                    raise conversion_error(
-                        "BROADCAST_WIDTH", "Gate register widths differ.", location
-                    )
-                for row in range(width):
-                    append(
-                        Operation(
-                            name,
-                            tuple(group[0 if len(group) == 1 else row] for group in groups),
-                            parameters,
-                        ),
-                        location,
-                    )
+
+        try:
+            emit(groups, gates, location)
         except ValidationError as exc:
             raise conversion_error("INVALID_OPERATION", str(exc), location) from exc
     if stack:
@@ -497,6 +762,9 @@ def from_openqasm(
         nc,
         _phase_sum(phase),
     )
+    from ...ir.compiler import _check_circuit_limits
+
+    _check_circuit_limits(circuit, max_operations=max_operations, max_depth=max_depth)
     unused = symbols - set(circuit.parameters)
     if unused:
         raise conversion_error(
@@ -581,13 +849,21 @@ def _emit_qasm(circuit, version, *, max_output_statements, max_output_bytes, col
         if version == 3 and (body.global_phase.parameters or body.global_phase.constant):
             write(indent + f"gphase({_format_angle(body.global_phase, cache)});")
         for op in body.operations:
-            if op.name == "if_else":
-                if len(op.condition.bits) > 64:
+            if op.name in {"while_loop", "if_else"}:
+                if version != 3:
+                    raise conversion_error(
+                        "CONTROL_FLOW_UNSUPPORTED", "Conditional control requires OpenQASM 3."
+                    )
+                if op.condition is not None and len(op.condition.bits) > 64:
                     raise conversion_error(
                         "QASM_EXPORT_LIMIT", "A conditional QASM guard is limited to 64 bits."
                     )
-                bits, value = op.condition.bits, op.condition.value
-                if len(bits) == 1:
+                bits, value = (
+                    ((), 0) if op.condition is None else (op.condition.bits, op.condition.value)
+                )
+                if not bits:
+                    guard = "true"
+                elif len(bits) == 1:
                     guard = f"c[{bits[0]}] == {'true' if value else 'false'}"
                 elif len(bits) == circuit.num_clbits and all(
                     bit == index for index, bit in enumerate(bits)
@@ -597,11 +873,15 @@ def _emit_qasm(circuit, version, *, max_output_statements, max_output_bytes, col
                     selector = "c[{" + ", ".join(str(bit) for bit in bits) + "}]"
                     guard = f"{selector} == {value}"
                 # Each selector is evaluated once even if its body rewrites it.
-                write(indent + f"if ({guard}) {{")
+                keyword = "while" if op.name == "while_loop" else "if"
+                write(indent + f"{keyword} ({guard}) {{")
                 emit_body(op.blocks[0], indent + "  ")
-                write(indent + "} else {")
-                emit_body(op.blocks[1], indent + "  ")
+                if op.name == "if_else":
+                    write(indent + "} else {")
+                    emit_body(op.blocks[1], indent + "  ")
                 write(indent + "}")
+            elif op.name in {"break_loop", "continue_loop"}:
+                write(indent + op.name.split("_")[0] + ";")
             elif op.name == "classical_set":
                 if version != 3:
                     raise conversion_error("CLASSICAL_STORE_UNSUPPORTED", "Stores require QASM 3.")

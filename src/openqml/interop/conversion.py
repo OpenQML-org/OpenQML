@@ -79,6 +79,11 @@ def diagnose(
     integer(max_output_bytes, "max_output_bytes", 1)
     try:
         _check_circuit_limits(circuit, max_operations=max_operations, max_depth=max_depth)
+        if circuit.has_runtime_control:
+            from ..ir._control import validate_loop_scope
+
+            validate_loop_scope(circuit)
+
     except ConversionError as exc:
         return exc.diagnostics
     from .adapters._common import bound_for_export
@@ -176,6 +181,16 @@ def diagnose(
                         location,
                     )
                 )
+        if op.name in {"while_loop", "break_loop", "continue_loop"} and target in {
+            "cirq",
+            "openqasm2",
+            "pennylane",
+        }:
+            diagnostics.append(
+                Diagnostic(
+                    "CONTROL_FLOW_UNSUPPORTED", f"{target} cannot encode runtime loops.", location
+                )
+            )
         if op.name == "if_else" and (
             target in {"openqasm2", "pennylane"}
             or (target == "cirq" and any(b.has_measurements for b in op.blocks))
@@ -188,7 +203,12 @@ def diagnose(
                     location,
                 )
             )
-        if target == "openqasm3" and op.name == "if_else" and len(op.condition.bits) > 64:
+        if (
+            target == "openqasm3"
+            and op.name in {"if_else", "while_loop"}
+            and op.condition is not None
+            and len(op.condition.bits) > 64
+        ):
             diagnostics.append(
                 Diagnostic(
                     "QASM_EXPORT_LIMIT",
@@ -702,6 +722,11 @@ def plan_conversion(
     else:
         circuit = import_native(value, source, **source_options)
     _check_circuit_limits(circuit, max_operations=max_operations, max_depth=max_depth)
+    if circuit.has_runtime_control:
+        from ..ir._control import validate_loop_scope
+
+        validate_loop_scope(circuit)
+
     if source == "qiskit" or (program is not None and program.framework == "qiskit"):
         from .adapters.qiskit import classical_storage_notes, static_loop_notes
 

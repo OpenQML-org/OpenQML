@@ -180,7 +180,7 @@ def test_bounded_exit_program_survives_external_round_trip(target):
     )
 
 
-def test_loop_exit_expansion_rejects_unbounded_or_excessive_work():
+def test_loop_scope_finite_expansion_limits_and_runtime_exit():
     sdk = pytest.importorskip("qiskit")
     from qiskit.circuit import BreakLoopOp
 
@@ -199,5 +199,66 @@ def test_loop_exit_expansion_rejects_unbounded_or_excessive_work():
     runtime = sdk.QuantumCircuit(1, 1)
     with runtime.while_loop((runtime.clbits[0], 0)):
         runtime.break_loop()
+    circuit = oq.convert(runtime, target="ir").value
+    assert circuit.operations[0].name == "while_loop"
+    np.testing.assert_allclose(oq.density_matrix(circuit), np.diag([1, 0]))
+
+
+def test_repeat_until_measurement_preserves_parity_and_termination():
+    guard = oq.ClassicalCondition((0,), 1)
+    body = oq.Circuit(2).reset(0).h(0).measure(0, 0).x(1).if_else(guard, oq.Circuit(2).break_loop())
+    circuit = oq.Circuit(2).while_loop(None, body).measure(1, 1)
+    counts = oq.sample(circuit, shots=12_000, seed=7)
+    assert counts == oq.sample(circuit, shots=12_000, seed=7)
+    assert set(counts) == {"10", "11"} and sum(counts.values()) == 12_000
+    # The parity qubit is one after an odd number of fair trials.
+    assert abs(counts["11"] / 12_000 - 2 / 3) < 0.02
+    with pytest.raises(oq.ResourceError, match="recurrent"):
+        oq.density_matrix(circuit)
+    with pytest.raises(oq.ResourceError, match="max_loop_steps"):
+        oq.sample(oq.Circuit(1).while_loop(None, oq.Circuit(1)), shots=3, max_loop_steps=9)
+
+
+def test_runtime_schema_and_unsupported_targets():
+    inner = oq.Circuit(1).x(0).break_loop()
+    outer = oq.Circuit(1).while_loop(None, inner).x(0).break_loop()
+    circuit = oq.CircuitBuilder(1).while_loop(None, outer).build()
+    assert oq.sample(circuit, shots=7) == {"0": 7}
+    assert oq.Circuit.from_json(circuit.to_json()) == circuit
+    old = circuit.to_dict()
+    assert old["version"] == 6 and oq.Circuit(1).x(0).to_dict()["version"] == 5
+    old["version"] = 5
+    with pytest.raises(oq.ValidationError):
+        oq.Circuit.from_dict(old)
+    for target in ("cirq", "pennylane", "openqasm2"):
+        assert "CONTROL_FLOW_UNSUPPORTED" in {
+            d.code for d in oq.plan_conversion(circuit, target=target).diagnostics
+        }
     with pytest.raises(oq.ConversionError, match="CLASSICAL_CONTROL"):
-        oq.convert(runtime, target="ir")
+        oq.convert(oq.Circuit(1).break_loop(), target="ir")
+    with pytest.raises(oq.ResourceError, match="max_work"):
+        oq.plan_conversion(circuit, target="openqasm3").verify(max_work=8)
+
+
+def test_qiskit_mixed_loop_exits_match_aer():
+    sdk = pytest.importorskip("qiskit")
+    pytest.importorskip("qiskit_aer")
+    native = sdk.QuantumCircuit(2, 2)
+    with native.for_loop(range(2)):
+        with native.while_loop((native.clbits[0], 0)):
+            with native.for_loop(range(3)):
+                native.x(1)
+                native.break_loop()
+            native.x(0)
+            native.measure(0, 0)
+            native.continue_loop()
+            native.x(1)
+        native.continue_loop()
+        native.x(1)
+    native.measure(1, 1)
+    plan = oq.plan_conversion(native, target="qiskit")
+    assert plan.verify().matched
+    for backend in ("numpy", oq.AerBackend()):
+        assert oq.sample(plan.circuit, backend=backend, shots=31, classical_bits=(0, 1)) == {
+            "11": 31
+        }

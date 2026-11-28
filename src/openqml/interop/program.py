@@ -13,6 +13,12 @@ from ..ir.core import Circuit
 def detect_framework(value):
     if isinstance(value, Circuit):
         return "ir"
+    if isinstance(value, str):
+        import re
+
+        header = re.match(r"\s*OPENQASM\s+([23])(?:\.\d+)?\s*;", value)
+        if header:
+            return "openqasm" + header[1]
     modules = tuple(base.__module__ for base in type(value).__mro__)
     if any(module.startswith("qiskit") for module in modules):
         return "qiskit"

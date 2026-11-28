@@ -469,7 +469,7 @@ def plan_execution(
             chosen = "density" if density else "statevector"
             fits = _fits((2 if density else 1) * circuit.num_qubits + 6, budget)
             reason = "Four-buffer dense working model fits the memory budget."
-            if fits and density:
+            if fits and density and not circuit.has_runtime_control:
                 try:
                     records = plan_density(circuit, max_branches=max_branches)
                     from .density import _resource_check
@@ -550,6 +550,7 @@ class AdaptiveBackend:
         channels=True,
         reset=True,
         classical_control=True,
+        runtime_loops=True,
         mid_circuit_measurements=True,
         measurement_expectations=True,
         deterministic_expectations=True,

@@ -26,6 +26,9 @@ and `qml.interfaces.flax`. See [controlled open-system layers](models.md#control
 allocation; see [the objective and solver contract](finance.md#joint-path-tail-allocation).
 `Circuit.classical_set` and `CircuitBuilder.classical_set` assign a constant bit
 and extend classical storage as needed. IR v5 serializes this operation.
+`Circuit.while_loop(condition, body)` and its builder counterpart preserve
+runtime control in IR v6. Its body can call `break_loop()` and `continue_loop()`.
+[Runtime loops and addressed wires](interoperability.md#runtime-loops-and-addressed-wires)
 
 ## Input and failure contracts
 

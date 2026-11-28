@@ -111,7 +111,10 @@ class PauliTransferPlan:
             raise ValidationError("max_memory_mb must be positive.")
         object.__setattr__(self, "max_memory_mb", budget)
         _check_circuit_limits(self.circuit, max_operations=self.max_operations)
-        if any(op.name in {"if_else", "classical_set", "kraus"} for op in self.circuit.operations):
+        if any(
+            op.blocks or op.name in {"break_loop", "continue_loop", "classical_set", "kraus"}
+            for op in self.circuit.operations
+        ):
             raise ValidationError(
                 "Pauli transfers support unconditional standard channels and discarded "
                 "measurement outcomes. Use density execution for classical programs or Kraus data."

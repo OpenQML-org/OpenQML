@@ -50,10 +50,10 @@ def clean_source(text, max_source_bytes=2_000_000):
 
 
 def validate_header(text, version=None):
-    header = re.match(r"\s*OPENQASM\s+([23])(?:\.0)?\s*;", text)
+    header = re.match(r"\s*OPENQASM\s+(2(?:\.0)?|3(?:\.[01])?)\s*;", text)
     if not header:
         raise conversion_error("QASM_VERSION", "Expected an OpenQASM 2.0 or 3.0 header.")
-    actual = int(header.group(1))
+    actual = int(header.group(1)[0])
     if version is not None and (type(version) is not int or version != actual):
         raise conversion_error(
             "QASM_VERSION", "Source header differs from requested source format."

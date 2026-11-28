@@ -141,3 +141,37 @@ def test_lowered_arithmetic_runs_as_native_aer_equality_feedforward():
     expected = {"000", "100", "010", "111"}
     assert set(oq.sample(ir, shots=128, seed=17)) == expected
     assert set(oq.sample(ir, shots=128, seed=17, backend="aer")) == expected
+
+
+def test_indexed_store_reads_address_and_rhs_before_mutation():
+    qiskit, expr, _ = _sdk()
+    for initial in range(16):
+        data = qiskit.ClassicalRegister(4, "data")
+        native = qiskit.QuantumCircuit(qiskit.QuantumRegister(1), data)
+        native.store(data, initial)
+        dest = expr.index(data, expr.bit_and(data, 3))
+        native.store(dest, expr.logic_not(dest))
+        expected = initial ^ (1 << (initial & 3))
+        circuit = oq.convert(native, target="ir").value
+        assert oq.sample(circuit, shots=3, classical_bits=tuple(range(4))) == {
+            format(expected, "04b")[::-1]: 3
+        }
+
+
+def test_guarded_dynamic_read_invalidated_by_write():
+    qiskit, expr, _ = _sdk()
+    addr, data = qiskit.ClassicalRegister(2, "addr"), qiskit.ClassicalRegister(3, "data")
+    native = qiskit.QuantumCircuit(qiskit.QuantumRegister(3), addr, data)
+    native.x(0)
+    native.measure(0, addr[1])
+    native.measure(0, data[2])
+    with native.if_test(expr.less(addr, 3)):
+        with native.if_test(expr.index(data, addr)):
+            native.x(2)
+    assert np.argmax(oq.density_matrix(oq.convert(native, target="ir").value).diagonal().real) == 5
+    with native.if_test(expr.less(addr, 3)):
+        native.measure(0, addr[0])
+        with native.if_test(expr.index(data, addr)):
+            native.x(1)
+    with pytest.raises(oq.ConversionError, match="CLASSICAL_INDEX_RANGE"):
+        oq.convert(native, target="ir")

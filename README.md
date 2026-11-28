@@ -29,7 +29,9 @@ OpenQML selects an available backend automatically.
 
 Export the same circuit with `oq.convert(bell, target="openqasm3").value`.
 OpenQASM export and local simulation are included in the core package.
-[Circuit formats and supported operations](https://github.com/OpenQML-org/OpenQML/blob/main/docs/interoperability.md)
+Qiskit and OpenQASM 3 can exchange measurement-controlled loops and bounded
+dynamic indices through the shared circuit representation.
+[Runtime loops and addressed wires](https://github.com/OpenQML-org/OpenQML/blob/main/docs/interoperability.md#runtime-loops-and-addressed-wires) · [Circuit formats and supported operations](https://github.com/OpenQML-org/OpenQML/blob/main/docs/interoperability.md)
 
 Install `openqml[torch]`, `openqml[jax]` or `openqml[flax]` for training.
 SDK integrations can also be combined, for example `openqml[qiskit,cirq]`.

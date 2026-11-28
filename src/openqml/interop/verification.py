@@ -243,6 +243,47 @@ def _bounded_records(circuit, max_branches, remaining_work, unit_work, size, bud
         raise
 
 
+def _runtime_roundtrip(plan, circuit, restored, size, budget, remaining, max_branches, atol, rtol):
+    from ..sim._runtime_control import run_control
+    from ..sim.dense import _TensorOps
+
+    _basis_capacity((circuit, restored), (1, 1), size, budget)
+    # Source output, target output and comparison buffers can coexist.
+    local_mb = _available_bytes((circuit, restored), budget) / (3 * 2**20)
+    comparison = _Comparison()
+
+    def charge(amount):
+        nonlocal remaining
+        remaining -= amount
+        if remaining < 0:
+            raise ResourceError("Runtime conversion verification exceeds max_work.")
+
+    for start in range(size):
+        basis = np.zeros((1, size), dtype=complex)
+        basis[0, start] = 1
+        results = []
+        for program in (circuit, restored):
+            charge(size)
+            results.append(
+                run_control(
+                    program,
+                    {},
+                    _TensorOps(),
+                    (1,),
+                    input_operator=basis,
+                    max_memory_mb=local_mb,
+                    max_branches=max_branches,
+                    retain_classical=True,
+                    max_loop_steps=max(1, remaining),
+                    charge=charge,
+                )
+            )
+        if not any(results):
+            results = [{frozenset(): np.zeros_like(basis)} for _ in results]
+        comparison.add(*results, start, atol, rtol)
+    return comparison.result(circuit, plan.target_format, "quantum_instrument", size, atol, rtol)
+
+
 def _verify_conversion(
     plan,
     bindings,
@@ -305,6 +346,25 @@ def _verify_conversion(
     if exponent >= max_work.bit_length():
         raise ResourceError("Conversion verification exceeds max_work.")
     size = 1 << ((2 if instrument else 1) * circuit.num_qubits)
+    if circuit.has_runtime_control:
+        _basis_capacity((circuit,), (1, 1), size, budget)
+        restored = plan_conversion(
+            plan.export().value,
+            source=plan.target_format,
+            target="ir",
+            source_options=source_options,
+            max_operations=plan.max_operations,
+            max_depth=plan.max_depth,
+        ).circuit
+        if (restored.num_qubits, restored.num_clbits) != (
+            circuit.num_qubits,
+            circuit.num_clbits,
+        ) or restored.parameters:
+            raise ValidationError("Runtime round trip changed register widths or bindings.")
+        work += _expression_work(restored, max_work - work)
+        return _runtime_roundtrip(
+            plan, circuit, restored, size, budget, max_work - work, max_branches, atol, rtol
+        )
     source_work = (1 << exponent) * _operation_work(circuit, instrument)
     source_records = (
         _bounded_records(circuit, max_branches, max_work - work, source_work, size, budget, 1)

@@ -166,3 +166,17 @@ local(theta+1) q;
     expected = qiskit.QuantumCircuit(1)
     expected.ry(2 * 1.2, 0)
     np.testing.assert_allclose(Operator(native).data, Operator(expected).data, atol=1e-12)
+
+
+def test_auto_compiler_handles_runtime_addresses_with_io_limits():
+    text = (
+        'OPENQASM 3.0; include "stdgates.inc"; qubit[2] q; bit[2] c; '
+        "uint[2] i=0; while(i<2){x q[i]; i+=1;} c=measure q;"
+    )
+    result = oq.compile_program(text, target="openqasm3")
+    circuit = oq.convert(result.value, target="ir").value
+    assert oq.sample(circuit, shots=5, classical_bits=(0, 1)) == {"11": 5}
+    for strategy in ("ir", "auto"):
+        for limits in ({"max_source_bytes": 16}, {"max_output_bytes": 24}):
+            with pytest.raises(oq.ConversionError, match="LIMIT"):
+                oq.compile_program(text, target="openqasm3", strategy=strategy, **limits)

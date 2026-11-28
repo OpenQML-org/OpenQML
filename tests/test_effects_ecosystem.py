@@ -259,14 +259,17 @@ def test_qasm_noise_and_control_diagnostics_have_recursive_locations():
         convert("OPENQASM 3.0; qubit q; amplitude_damping(0.2) q;", source="openqasm3", target="ir")
 
 
-def test_qasm3_feedback_still_retains_unsupported_loop_diagnostic():
+def test_sdk_qasm3_feedback_retests_measurement_after_each_iteration():
     pytest.importorskip("qiskit_qasm3_import")
     source = (
         'OPENQASM 3.0; include "stdgates.inc"; qubit q; bit c; '
         "c = measure q; while(c) { x q; c = measure q; }"
     )
-    with pytest.raises(ConversionError, match="CLASSICAL_CONTROL"):
-        QuantumProgram.from_qasm(source).to_ir()
+    for prepare in ("", "x q;"):
+        program = source.replace("c = measure q;", prepare + " c = measure q;", 1)
+        circuit = QuantumProgram.from_qasm(program).to_ir()
+        assert circuit.has_runtime_control
+        assert sample(circuit, shots=17) == {"0": 17}
 
 
 @pytest.mark.parametrize("framework", ["qiskit", "cirq"])

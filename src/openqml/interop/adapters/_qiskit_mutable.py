@@ -5,12 +5,11 @@ from numbers import Integral
 from ...ir.core import Circuit, ClassicalCondition
 
 
-def lower_mutable(lowering, native, qmap, cmap, *, depth=0, loop=None, loop_level=0):
+def lower_mutable(lowering, native, qmap, cmap, *, depth=0, loop=None, loop_level=0, bounds=()):
     from qiskit import QuantumCircuit
     from qiskit.circuit import (
         CASE_DEFAULT,
         BreakLoopOp,
-        ClassicalRegister,
         Clbit,
         ContinueLoopOp,
         ForLoopOp,
@@ -20,10 +19,11 @@ def lower_mutable(lowering, native, qmap, cmap, *, depth=0, loop=None, loop_leve
         SwitchCaseOp,
         WhileLoopOp,
     )
-    from qiskit.circuit.classical import expr
+    from qiskit.circuit.classical import expr, types
 
+    from ...errors import ConversionError
     from ._qiskit_flow import _Node
-    from .qiskit import _angle, from_qiskit
+    from .qiskit import _angle, _condition, from_qiskit
 
     if depth > lowering.max_depth:
         lowering.fail("Mutable control exceeds max_depth.", "control_flow")
@@ -31,7 +31,7 @@ def lower_mutable(lowering, native, qmap, cmap, *, depth=0, loop=None, loop_leve
     empty = Circuit(width, num_clbits=bits)
     operations, phase, cost, height = [], _angle(native.global_phase, "global_phase"), 0, 0
 
-    def child(body, quantum, classical, *, child_loop=loop, child_level=loop_level):
+    def child(body, quantum, classical, *, child_loop=loop, child_level=loop_level, facts=None):
         return lower_mutable(
             lowering,
             body,
@@ -40,9 +40,10 @@ def lower_mutable(lowering, native, qmap, cmap, *, depth=0, loop=None, loop_leve
             depth=depth + 1,
             loop=child_loop,
             loop_level=child_level,
+            bounds=bounds if facts is None else facts,
         )
 
-    def guarded(condition, true, false, location):
+    def guarded(condition, true, false, location, facts=None):
         node = lowering.guard(
             condition,
             native,
@@ -50,8 +51,33 @@ def lower_mutable(lowering, native, qmap, cmap, *, depth=0, loop=None, loop_leve
             lowering.prefix(true, lowering.empty),
             lowering.prefix(false, lowering.empty),
             location,
+            bounds if facts is None else facts,
         )
         return lowering.materialize(node)
+
+    def arm(condition, truth, facts):
+        if isinstance(condition, tuple):
+            bit, value = condition
+            bound = int(value) + 1 if truth else None
+            left = expr.lift(bit)
+        elif (
+            isinstance(condition, expr.Binary)
+            and isinstance(condition.left, expr.Var)
+            and isinstance(condition.right, expr.Value)
+        ):
+            left, value = condition.left, int(condition.right.value)
+            bound = (
+                {"LESS": value, "LESS_EQUAL": value + 1, "EQUAL": value + 1}
+                if truth
+                else {"GREATER_EQUAL": value, "GREATER": value + 1, "NOT_EQUAL": value + 1}
+            ).get(condition.op.name)
+        else:
+            return facts
+        return (
+            facts
+            if bound is None
+            else facts + ((lowering.storage.targets(left, native, cmap), bound),)
+        )
 
     for index, item in enumerate(native.data):
         lowering.charge()
@@ -59,16 +85,19 @@ def lower_mutable(lowering, native, qmap, cmap, *, depth=0, loop=None, loop_leve
         quantum = tuple(qmap[native.find_bit(q).index] for q in item.qubits)
         classical = tuple(cmap[native.find_bit(c).index] for c in item.clbits)
         if isinstance(op, Store):
-            part = lowering.store(op, native, cmap, location)
+            part = lowering.store(op, native, cmap, location, bounds)
         elif isinstance(op, (BreakLoopOp, ContinueLoopOp)):
             if loop is None:
                 lowering.fail(
                     "Loop exits need an enclosing finite loop.", location, "CLASSICAL_CONTROL"
                 )
-            alive, running = loop
-            part = empty.classical_set(running, 0)
-            if isinstance(op, BreakLoopOp):
-                part = part.classical_set(alive, 0)
+            if loop == "while":
+                part = empty.break_loop() if isinstance(op, BreakLoopOp) else empty.continue_loop()
+            else:
+                alive, running = loop
+                part = empty.classical_set(running, 0)
+                if isinstance(op, BreakLoopOp):
+                    part = part.classical_set(alive, 0)
         elif isinstance(op, ForLoopOp):
             indexset, variable, body = op.params
             if not lowering.expand or not isinstance(indexset, (range, tuple, list)):
@@ -102,6 +131,7 @@ def lower_mutable(lowering, native, qmap, cmap, *, depth=0, loop=None, loop_leve
                     classical,
                     child_loop=(alive, running),
                     child_level=loop_level + 1,
+                    facts=(),
                 )
                 payload = empty.classical_set(running, 1).compose(payload)
                 iteration = empty.if_else(ClassicalCondition((alive,), 1), payload)
@@ -110,22 +140,23 @@ def lower_mutable(lowering, native, qmap, cmap, *, depth=0, loop=None, loop_leve
                 lowering.checked(_Node(cost=loop_cost, depth=node.depth))
                 part = part.compose(iteration)
         elif isinstance(op, IfElseOp):
-            true = child(op.blocks[0], quantum, classical)
-            false = child(op.blocks[1], quantum, classical) if len(op.blocks) > 1 else empty
+            true = child(op.blocks[0], quantum, classical, facts=arm(op.condition, True, bounds))
+            false = (
+                child(op.blocks[1], quantum, classical, facts=arm(op.condition, False, bounds))
+                if len(op.blocks) > 1
+                else empty
+            )
             part = guarded(op.condition, true, false, location)
         elif isinstance(op, SwitchCaseOp):
             target = op.target
-            if not isinstance(target, (Clbit, ClassicalRegister, expr.Var)):
-                lowering.fail(
-                    "Unsupported mutable switch selector.", location, "CLASSICAL_SWITCH_TARGET"
-                )
-            target_width = (
-                len(lowering.storage.targets(target, native, cmap))
-                if isinstance(target, expr.Var)
-                else 1
-                if isinstance(target, Clbit)
-                else len(target)
-            )
+            if isinstance(target, expr.Expr):
+                if not isinstance(target.type, (types.Bool, types.Uint)):
+                    lowering.fail(
+                        "Switch selector needs Bool or Uint.", location, "CLASSICAL_SWITCH_TARGET"
+                    )
+                target_width = getattr(target.type, "width", 1)
+            else:
+                target_width = 1 if isinstance(target, Clbit) else len(target)
             fallback, cases, seen = empty, [], set()
             for labels, body in op.cases_specifier():
                 payload = child(body, quantum, classical)
@@ -136,7 +167,8 @@ def lower_mutable(lowering, native, qmap, cmap, *, depth=0, loop=None, loop_leve
                         if (
                             not isinstance(value, Integral)
                             or value in seen
-                            or not 0 <= value < 1 << target_width
+                            or value < 0
+                            or int(value).bit_length() > target_width
                         ):
                             lowering.fail(
                                 "Invalid mutable switch label.", location, "CLASSICAL_SWITCH_LABEL"
@@ -145,14 +177,32 @@ def lower_mutable(lowering, native, qmap, cmap, *, depth=0, loop=None, loop_leve
                         cases.append((int(value), payload))
             for value, payload in reversed(cases):
                 condition = (
-                    expr.equal(target, value) if isinstance(target, expr.Var) else (target, value)
+                    expr.equal(
+                        target, bool(value) if isinstance(target.type, types.Bool) else value
+                    )
+                    if isinstance(target, expr.Expr)
+                    else (target, value)
                 )
                 fallback = guarded(condition, payload, fallback, location)
             part = fallback
         elif isinstance(op, WhileLoopOp):
-            lowering.fail(
-                "Runtime while loops require a native program route.", location, "CLASSICAL_CONTROL"
+            body = child(
+                op.blocks[0],
+                quantum,
+                classical,
+                child_loop="while",
+                facts=arm(op.condition, True, ()),
             )
+            try:
+                cond = _condition(op.condition, native, location)
+            except ConversionError:
+                part = empty.while_loop(
+                    None, guarded(op.condition, body, empty.break_loop(), location, facts=())
+                )
+            else:
+                part = empty.while_loop(
+                    ClassicalCondition(tuple(cmap[c] for c in cond.bits), cond.value), body
+                )
         else:
             single = QuantumCircuit()
             single.add_bits(native.qubits)
@@ -168,7 +218,10 @@ def lower_mutable(lowering, native, qmap, cmap, *, depth=0, loop=None, loop_leve
                 _context=lowering.context,
             )
             part = empty.compose(local, qubits=qmap if native.num_qubits else (0,), clbits=cmap)
-        if loop is not None:
+        if bounds:
+            writes = {c for _, sub in part.walk_operations() for c in sub.clbits}
+            bounds = tuple(f for f in bounds if writes.isdisjoint(f[0]))
+        if isinstance(loop, tuple):
             part = empty.if_else(ClassicalCondition((loop[1],), 1), part)
         node = lowering.prefix(part, lowering.empty)
         cost, height = cost + node.cost, max(height, node.depth)
