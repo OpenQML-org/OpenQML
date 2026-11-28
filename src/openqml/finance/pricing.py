@@ -111,7 +111,8 @@ class PayoffOraclePlan:
         )
         if 2 * len(values) + len(source.operations) > self.max_operations:
             raise ResourceError("Payoff table exceeds the circuit operation budget.")
-        angles = 2 * np.arcsin(np.sqrt((residual - self.bounds[0]) / self.scale))
+        marked = np.clip((residual - self.bounds[0]) / self.scale, 0, 1)
+        angles = 2 * np.arcsin(np.sqrt(marked))
         coefficients = angles.copy()
         stride = 1
         while stride < len(values):

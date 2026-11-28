@@ -299,6 +299,12 @@ maximizing optimizer steps are outside this integration.
 
 ## Validation and early stopping
 
+For a classifier with a Born readout, `predict_proba` returns the circuit's
+distribution and training uses the likelihood of the observed class.
+Probabilities at zero use a finite log floor. For inference, convolution accepts
+a single channels-last image or sequence. Attention and quantum memory also
+accept a single `[time, features]` sequence. `iter_predict` retains its batch axis.
+
 The high-level `Model` interface provides a held-out loss monitor for Torch,
 JAX and Flax:
 

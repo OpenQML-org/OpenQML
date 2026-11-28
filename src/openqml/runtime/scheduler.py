@@ -113,15 +113,15 @@ class QPUBackend:
         ):
 
             def invoke(*args, **kwargs):
-                self._breaker.acquire()
+                probe = self._breaker.acquire()
                 try:
                     with recovery_context(self.recovery):
                         result = implementation(*args, **kwargs)
                 except Exception as exc:
                     if self.recovery.transient(exc) or isinstance(exc, BackendError):
                         self._breaker.failure()
-                    else:
-                        self._breaker.success()
+                    elif probe:
+                        self._breaker.abandon_probe()
                     raise
                 self._breaker.success()
                 return result
@@ -672,14 +672,32 @@ class _ObservedBackend:
         # Refresh queue/calibration quotes at each actual submission, including
         # a ShiftPlan pinned for training. Never migrate its noise model mid-VJP.
         profile, cost, key = self.scheduler._quote(self.backend, request)
-        if self.scheduler.ledger is not None:
-            self.scheduler.ledger.reserve(cost.upper_cost)
+        ledger = self.scheduler.ledger
+        if ledger is not None:
+            ledger.reserve(cost.upper_cost)
         start = time.perf_counter()
+        try:
+            result = self._dispatch(method, args, request, profile, options, callback)
+        except Exception as exc:
+            if ledger is not None and getattr(exc, "submitted", None) is False:
+                ledger._release_unsubmitted(cost.upper_cost)
+            raise
+        raw = estimate_cost(
+            profile,
+            request,
+            self.scheduler.policy,
+            exact=self.task in {"statevector", "density"}
+            or (self.task == "expectations" and self.backend.capabilities.exact_expectations),
+        )
+        self.scheduler.feedback.observe(key, raw.seconds, time.perf_counter() - start)
+        return result
+
+    def _dispatch(self, method, args, request, profile, options, callback):
         if callback is not None:
-            result = callback()
-        elif (
+            return callback()
+        if (
             method in {"expectations_batch", "sample_batch"}
-            and len(circuits) > profile.max_batch_size
+            and len(request.circuits) > profile.max_batch_size
         ):
             chunks = [
                 request.circuits[i : i + profile.max_batch_size]
@@ -738,18 +756,8 @@ class _ObservedBackend:
                         future.result()
                 finally:
                     pool.shutdown(wait=True, cancel_futures=True)
-            result = pending.assemble()
-        else:
-            result = getattr(self.backend, method)(*args, options=options)
-        raw = estimate_cost(
-            profile,
-            request,
-            self.scheduler.policy,
-            exact=self.task in {"statevector", "density"}
-            or (self.task == "expectations" and self.backend.capabilities.exact_expectations),
-        )
-        self.scheduler.feedback.observe(key, raw.seconds, time.perf_counter() - start)
-        return result
+            return pending.assemble()
+        return getattr(self.backend, method)(*args, options=options)
 
     def expectations_batch(self, circuits, observables, *, options):
         return self._invoke("expectations_batch", circuits, circuits, observables, options=options)

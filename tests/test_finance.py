@@ -317,6 +317,7 @@ def test_bankruptcy_is_absorbing_and_trading_masks_do_not_advance_lag():
     result = book.rollout(r, np.ones_like(r))
     np.testing.assert_array_equal(result.wealth, [1, 0, 0, 0])
     np.testing.assert_array_equal(result.returns, [0, -1, 0, 0])
+    np.testing.assert_array_equal(result.turnover, [0, 1, 0, 0])
     r = np.array([[np.nan], [0.1], [0.2]])
     w = np.array([[np.nan], [1.0], [1.0]])
     result = book.rollout(r, w, mask=np.array([False, True, True]))
@@ -581,6 +582,44 @@ def test_path_scenarios_and_proper_score_reference():
     assert plan.expected_payoff(p, np.array([1, 2, 3, 4]), discount=0.98) == pytest.approx(
         0.98 * p @ np.array([1, 2, 3, 4])
     )
+
+
+def test_close_atoms_rare_masses_and_single_asset_score_budget():
+    for dims in (1, 2):
+        points = np.broadcast_to((0.5 + np.arange(4) * 1e-9)[:, None], (4, dims))
+        p = np.array([0.1, 0.2, 0.4, 0.3])
+        distance = np.linalg.norm(points[:, None] - points, axis=-1)
+        expected = p @ distance[:, 1] - 0.5 * p @ distance @ p
+        np.testing.assert_allclose(
+            f.ScenarioPlan(points).energy_score(p, points[1]), expected, atol=0
+        )
+    plan = f.ScenarioPlan([[1], [0]])
+    np.testing.assert_allclose(plan.energy_score([1e-20, 1.0], [0]), 1e-40, atol=0)
+    n = 4096
+    plan = f.ScenarioPlan((np.arange(n) / n)[:, None], max_memory_mb=2)
+    assert plan.energy_score(np.ones(n), [0.5]) == pytest.approx((1 + 2 / n**2) / 12, abs=1e-14)
+    paths = np.array([[[1e-18], [2e-18]], [[-1.0], [1e300]]])
+    np.testing.assert_allclose(f.ScenarioPlan(paths).returns()[:, 0], [3e-18, -1.0], atol=0)
+
+
+def test_scalar_energy_score_batched_gradients_at_duplicate_atoms(native_x64):
+    torch, jax, jnp = native_x64
+    atoms = np.array([3.0, 1.0, 1.0, 2.0])
+    plan = f.ScenarioPlan(atoms[:, None])
+    p = np.array([[0.05, 0.3, 0, 0.65], [0.55, 0.15, 0.3, 0]])
+    y = np.array([[1.0], [2.41]])
+    distances = abs(atoms[:, None] - atoms)
+    expected = abs(y - atoms) - p @ distances
+    expected -= (expected * p).sum(axis=-1, keepdims=True)
+    target_gradient = (p * np.sign(y - atoms)).sum(axis=-1, keepdims=True)
+    tp, ty = (torch.tensor(v, requires_grad=True) for v in (p, y))
+    tg = torch.autograd.grad(plan.energy_score(tp, ty).sum(), (tp, ty))
+    jg = jax.jit(jax.grad(lambda a, b: plan.energy_score(a, b).sum(), argnums=(0, 1)))(
+        jnp.asarray(p), jnp.asarray(y)
+    )
+    for grad, target in (tg, jg):
+        np.testing.assert_allclose(grad, expected, atol=2e-14)
+        np.testing.assert_allclose(target, target_gradient, atol=2e-14)
 
 
 def test_financial_domain_failures_and_budget_admission():

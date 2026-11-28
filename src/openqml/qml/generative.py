@@ -105,6 +105,8 @@ def born_nll(probabilities, targets, *, backend="numpy", mask=None, reduction="m
     ops = _TensorOps(backend, probabilities)
     p = _real_tensor(probabilities, ops)
     xp = ops.xp
+    if not p.ndim or p.shape[-1] == 0:
+        raise ValidationError("Born NLL requires a nonempty class axis.")
     y = xp.as_tensor(targets, device=p.device) if backend == "torch" else xp.asarray(targets)
     if y.shape != p.shape[:-1] or "int" not in str(y.dtype) or "uint" in str(y.dtype):
         raise ValidationError("Targets must be signed integers with the probability batch shape.")
@@ -130,7 +132,8 @@ def born_nll(probabilities, targets, *, backend="numpy", mask=None, reduction="m
         if backend == "torch"
         else xp.take_along_axis(p, safe[..., None], axis=-1)[..., 0]
     )
-    loss = -xp.log(xp.where(valid, gathered, 1))
+    floor = ops.array(xp.finfo(p.dtype).tiny, real_value=True)
+    loss = -xp.log(xp.maximum(xp.where(valid, gathered, 1), floor))
     loss = loss + marker
     if reduction == "none":
         return loss

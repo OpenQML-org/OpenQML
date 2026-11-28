@@ -179,10 +179,10 @@ def schedule_network(
         # time/cost order before preference selection at the final stage.
         if len(states) > max_states:
             states.sort(key=lambda row: (row[1].upper_seconds, row[1].upper_cost))
-            indices = [
+            keep_indices = [
                 round(i * (len(states) - 1) / max(1, max_states - 1)) for i in range(max_states)
             ]
-            states = [states[i] for i in indices]
+            states = [states[i] for i in keep_indices]
     selected, _ = select_cost([c for _, c in states], scheduler.policy)
     path, cost = states[selected]
     check_cost(cost, scheduler.policy)

@@ -217,6 +217,32 @@ def test_qpu_breaker_rejects_new_work_before_submission_and_recovers():
     assert breaker.available()
 
 
+def test_qpu_validation_failure_preserves_the_breaker_and_releases_a_probe():
+    class Device:
+        name = "validation-test-qpu"
+        capabilities = oq.BackendCapabilities()
+
+        def run(self, circuit, *, options):
+            if circuit.num_qubits == 1:
+                raise ConnectionError("provider unavailable")
+            raise oq.ValidationError("invalid local arguments")
+
+    device = oq.QPUBackend(Device(), recovery=oq.RecoveryPolicy(failure_threshold=2))
+    options = oq.ExecutionOptions()
+    for width, error in ((1, ConnectionError), (2, oq.ValidationError), (1, ConnectionError)):
+        with pytest.raises(error):
+            device.run(oq.Circuit(width), options=options)
+    assert not device.is_available()
+    probe = oq.QPUBackend(
+        Device(), recovery=oq.RecoveryPolicy(failure_threshold=1, cooldown_seconds=0)
+    )
+    with pytest.raises(ConnectionError):
+        probe.run(oq.Circuit(1), options=options)
+    with pytest.raises(oq.ValidationError):
+        probe.run(oq.Circuit(2), options=options)
+    assert probe.is_available()
+
+
 def test_chunk_recovery_retains_completed_work_and_unknown_submissions_are_not_replayed():
     submissions = [0, 0]
 

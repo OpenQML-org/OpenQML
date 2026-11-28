@@ -58,7 +58,12 @@ def global_norm(values, xp, backend):
         # Float64 accumulation spans every feasible float32 sum of squares.
         # Use native CPU reductions to avoid a sequence of eager scaling kernels.
         norms = tuple(
-            xp.linalg.vector_norm(value, dtype=xp.complex128 if value.is_complex() else xp.float64)
+            xp.linalg.vector_norm(
+                xp.view_as_real(value.resolve_conj().resolve_neg())
+                if value.is_complex()
+                else value,
+                dtype=xp.float64,
+            )
             for value in values
         )
         return xp.linalg.vector_norm(xp.stack(norms))

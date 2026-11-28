@@ -176,7 +176,7 @@ def _dense_densities(circuits, device, options):
                     max_branches=options.max_branches,
                 ),
             ).peak_branches
-            if device is get_backend("numpy")
+            if device is get_backend("numpy") and not c.has_runtime_control
             else 1
         )
         _resource_check(c, options.max_qubits, options.max_memory_mb, branches=branches)
@@ -185,9 +185,11 @@ def _dense_densities(circuits, device, options):
     chunk = max(
         1, min(128, int(memory_budget(options.max_memory_mb) * 2**20 / (64 * 4**width * peak)))
     )
+    if any(c.has_runtime_control for c in circuits):
+        chunk = 1
     for start in range(0, len(circuits), chunk):
         group = circuits[start : start + chunk]
-        if device is get_backend("numpy"):
+        if device is get_backend("numpy") and not group[0].has_runtime_control:
             states = _vectorized_densities(group, options)
         else:
             states = [

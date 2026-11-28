@@ -60,13 +60,17 @@ def check_expression_payload(value, location="expression"):
         pending.extend((arg, depth + 1) for arg in args)
 
 
-def check_ir_payload(payload, *, max_operations, max_depth, max_matrix_qubits, max_matrix_entries):
+def check_ir_payload(
+    payload, *, max_operations, max_depth, max_matrix_qubits, max_matrix_entries, max_register_bits
+):
     from .core import integer
 
     max_operations = integer(max_operations, "max_operations")
     max_depth = integer(max_depth, "max_depth")
     max_matrix_qubits = integer(max_matrix_qubits, "max_matrix_qubits")
     max_matrix_entries = integer(max_matrix_entries, "max_matrix_entries")
+    if max_register_bits is not None:
+        max_register_bits = integer(max_register_bits, "max_register_bits", 1)
 
     def fail(limit, location):
         raise ValidationError(f"IR exceeds {limit} at {location}.")
@@ -78,6 +82,12 @@ def check_ir_payload(payload, *, max_operations, max_depth, max_matrix_qubits, m
             fail("max_depth", prefix or "circuit")
         if not isinstance(body, dict) or not isinstance(body.get("operations"), list):
             raise ValidationError("Operations must be a JSON array.")
+        if max_register_bits is not None:
+            width = integer(body.get("num_qubits"), "num_qubits", 1) + integer(
+                body.get("num_clbits"), "num_clbits"
+            )
+            if width > max_register_bits:
+                fail("max_register_bits", prefix or "circuit")
         check_expression_payload(body.get("global_phase"), prefix + "global_phase")
         for index, op in enumerate(body["operations"]):
             location = f"{prefix}operations[{index}]"

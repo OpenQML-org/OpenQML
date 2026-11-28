@@ -204,6 +204,26 @@ def test_phase_only_parameter_retains_native_second_derivative():
     torch.testing.assert_close(second, -x.sin() / math.sqrt(2))
 
 
+def test_reversible_torch_propagates_a_tangent_on_the_input_state():
+    torch = pytest.importorskip("torch")
+    from openqml.sim._reversible import evolve_reversible
+    from openqml.sim.dense import _TensorOps
+
+    circuit = oq.Circuit(1).ry(oq.Parameter("p"), 0)
+    angle = torch.tensor(0.5, dtype=torch.float64, requires_grad=True)
+    state = torch.tensor([1, 0], dtype=torch.complex128)
+    tangent = torch.tensor([0, 1], dtype=torch.complex128)
+    ops = _TensorOps("torch", angle)
+    with torch.autograd.forward_ad.dual_level():
+        initial = torch.autograd.forward_ad.make_dual(state, tangent)
+        result = evolve_reversible(initial, circuit.operations, {"p": angle}, 1, ops, True, 64)
+        derivative = torch.autograd.forward_ad.unpack_dual(result).tangent
+    assert derivative is not None
+    torch.testing.assert_close(
+        derivative, torch.stack((-angle.div(2).sin(), angle.div(2).cos())).to(state)
+    )
+
+
 def test_mps_interaction_order_and_bidirectional_readout_sweeps():
     n = 24
     c = oq.Circuit(n)

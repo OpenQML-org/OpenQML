@@ -113,8 +113,9 @@ class Operation:
     blocks: tuple[Circuit, ...] = ()
 
     def __post_init__(self):
-        if self.name not in GATES:
+        if not isinstance(self.name, str) or self.name not in GATES:
             raise ValidationError(f"Unknown gate {self.name!r}.")
+        object.__setattr__(self, "name", str.__str__(self.name))
         qubits = tuple(integer(q, "qubit") for q in self.qubits)
         clbits = tuple(integer(c, "classical bit") for c in self.clbits)
         arity, nparams = GATES[self.name]
@@ -734,6 +735,7 @@ class Circuit(_CircuitGates):
         max_depth=64,
         max_matrix_qubits=10,
         max_matrix_entries=1_048_576,
+        max_register_bits=None,
     ) -> Circuit:
         from ._serialization import check_ir_payload
 
@@ -743,6 +745,7 @@ class Circuit(_CircuitGates):
             max_depth=max_depth,
             max_matrix_qubits=max_matrix_qubits,
             max_matrix_entries=max_matrix_entries,
+            max_register_bits=max_register_bits,
         )
         return cls._from_dict(payload)
 
@@ -862,6 +865,7 @@ class Circuit(_CircuitGates):
         max_depth=64,
         max_matrix_qubits=10,
         max_matrix_entries=1_048_576,
+        max_register_bits=None,
     ) -> Circuit:
         from ._serialization import load_json
 
@@ -871,6 +875,7 @@ class Circuit(_CircuitGates):
             max_depth=max_depth,
             max_matrix_qubits=max_matrix_qubits,
             max_matrix_entries=max_matrix_entries,
+            max_register_bits=max_register_bits,
         )
 
 

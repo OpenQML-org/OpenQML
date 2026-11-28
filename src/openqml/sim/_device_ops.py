@@ -18,7 +18,8 @@ def _has_triton():
 
 def supports_device_kernel(state, matrix, torch):
     return (
-        torch.version.cuda is not None
+        state.is_cuda
+        and torch.version.cuda is not None
         and not torch._C._are_functorch_transforms_active()
         and torch.autograd.forward_ad.unpack_dual(state).tangent is None
         and (matrix is None or torch.autograd.forward_ad.unpack_dual(matrix).tangent is None)

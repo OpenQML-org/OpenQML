@@ -8,7 +8,7 @@ import numpy as np
 from ..compute.kernel import get_compute_kernel
 from ..errors import NumericalError, ResourceError, ValidationError
 from ..ir.compiler import _check_circuit_limits
-from ..ir.core import _require_circuit, integer
+from ..ir.core import GATES, UNITARY_GATES, _require_circuit, integer
 from ..ir.observables import Hamiltonian
 from ..ir.parameters import real
 from ..runtime.backends import BackendCapabilities, ExecutionOptions
@@ -229,7 +229,10 @@ class MPSBackend:
     max_operations: int = 100_000
     max_work: int = 1_000_000
     capabilities: BackendCapabilities = BackendCapabilities(
-        native_expectations=True, deterministic_expectations=True, exact_expectations=True
+        gates=frozenset(g for g in UNITARY_GATES if GATES[g][0] in {1, 2, None}),
+        native_expectations=True,
+        deterministic_expectations=True,
+        exact_expectations=True,
     )
     max_discarded_weight: float | None = None
     layout: str = "source"
@@ -357,7 +360,7 @@ class MPSBackend:
                 angle += math.asin(math.sqrt(weight))
                 peak = max(peak, size)
         distance = math.sin(min(angle, math.pi / 2))
-        from ._mps_readout import read_words
+        from ._mps_readout import projector_word, read_words
 
         targets = achieved = None
         if controller is not None:
@@ -366,15 +369,24 @@ class MPSBackend:
         terms_by_output = tuple(
             o.terms if isinstance(o, Hamiltonian) else (o,) for o in observables
         )
-        words = dict.fromkeys(
-            t.paulis
-            for row in terms_by_output
-            for t in row
-            if t.coefficient and t.paulis.count("I") < len(order)
-        )
+        projectors = tuple(projector_word(row) for row in terms_by_output)
+        words = {}
+        for row, projector in zip(terms_by_output, projectors, strict=True):
+            if projector is not None:
+                words[projector] = None
+            else:
+                words.update(
+                    (t.paulis, None)
+                    for t in row
+                    if t.coefficient and t.paulis.count("I") < len(order)
+                )
         cache, transfers = read_words(sites, order, words, budget - profile["workspace_bytes"])
         values, bounds = [], []
-        for terms in terms_by_output:
+        for terms, projector in zip(terms_by_output, projectors, strict=True):
+            if projector is not None:
+                values.append(cache[projector])
+                bounds.append(distance)
+                continue
             value, norm = 0.0, 0.0
             for term in terms:
                 if not term.coefficient:

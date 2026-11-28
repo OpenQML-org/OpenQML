@@ -195,6 +195,11 @@ factor risk and the allocation layer into the Born model. The factor solver
 retains the probability masses separately, including zero-probability atoms.
 It does not differentiate `sqrt(p)` at zero.
 
+For a scalar return, the energy score is the continuous ranked probability
+score (CRPS). The plan sorts the atoms once and integrates their cumulative
+mass over the intervals between atoms. Each score takes linear work and
+storage per observation. Joint returns and paths use a cached distance matrix.
+
 For JAX, use `architecture.build("jax")`, `model.init(key)` and
 `model(parameters, features)`; use native JAX reductions in the same loss. Flax
 uses Linen `init`/`apply`. Existing optimizer groups, microbatching, distributed
@@ -454,7 +459,8 @@ leverage, borrowing, shorts, taxes, order-book fills or exchange latency.
 The result exposes wealth, period returns, costs, turnover and an explicit
 `TradingState`. Pass that state to the next chunk to preserve funding, the lag
 queue and gradients. A false padding mask holds state without advancing time;
-bankruptcy is absorbing. PyTorch/JAX retain piecewise derivatives through the
+bankruptcy is absorbing and subsequent turnover is zero. PyTorch/JAX retain
+piecewise derivatives through the
 analytic financing root. This ledger sends no orders.
 
 `PurgedWalkForward(train_size,test_size,gap=...)` accepts increasing numeric or

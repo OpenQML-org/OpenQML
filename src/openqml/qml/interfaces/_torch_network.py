@@ -77,11 +77,12 @@ class _QuantumExecution:
             # execution view receives explicit weights and owns no duplicate
             # quantum Parameter or optimizer state. Preserve caller RNG state.
             execution_device = target if target is not None else device
-            devices = (
-                []
-                if execution_device is None or torch.device(execution_device).type != "cuda"
-                else [torch.device(execution_device).index]
-            )
+            placement = None if execution_device is None else torch.device(execution_device)
+            devices = []
+            if placement is not None and placement.type == "cuda":
+                devices = [
+                    torch.cuda.current_device() if placement.index is None else placement.index
+                ]
             with torch.random.fork_rng(devices=devices):
                 self.layer = QuantumLayer.from_spec(
                     self.spec,

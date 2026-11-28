@@ -227,7 +227,12 @@ class Model:
                 raise ValidationError(
                     "Classification targets must match the non-class output axes."
                 )
-            if self.framework == "torch":
+            if self.architecture.has_terminal:
+                from .generative import born_nll
+
+                backend = "torch" if self.framework == "torch" else "jax"
+                value = born_nll(prediction, target, backend=backend, reduction="none")
+            elif self.framework == "torch":
                 logp = prediction.log_softmax(dim=-1)
                 value = -logp.gather(-1, target[..., None])[..., 0]
             else:
@@ -454,18 +459,27 @@ class Model:
             self._restore(snapshot)
         return self
 
-    def _iter_predict_raw(self, inputs, batch_size, *, output=None):
+    def _prediction_inputs(self, inputs, *, check_finite):
         if self.trainer is None:
             raise ValidationError("Call fit before predict.")
-        x = _data(inputs, "inputs", check_finite=False)
+        x = _data(inputs, "inputs", check_finite=check_finite)
         if self.task == "forecast" and x.ndim not in {2, 3}:
             raise ValidationError(
                 "Forecast inputs need [time, features] or [batch, time, features]."
             )
-        if x.ndim == (2 if self.task == "forecast" else 1):
-            x = x[None, :]
         if x.shape[-1] != self.input_features:
             raise ValidationError("Input feature width differs from the fitted model.")
+        sample_rank = 1
+        for op in self.architecture.operator_specs:
+            if op.kind == "convolution":
+                sample_rank = op.config["spatial_dims"] + 1
+                break
+            if op.kind in {"attention", "state-attention", "quantum-memory", "born-memory"}:
+                sample_rank = 2
+        single = x.ndim == sample_rank
+        return (x[None, ...] if single else x), single
+
+    def _iter_predict_raw(self, x, batch_size, *, output=None):
         size = integer(batch_size, "batch_size", 1)
         kernel = get_compute_kernel()
         for start in range(0, len(x), size):
@@ -493,13 +507,14 @@ class Model:
     def _predict_raw(self, inputs, batch_size):
         # Eager calls validate all inputs before producing a result. The iterator
         # instead validates each batch as it is consumed.
-        x = _data(inputs, "inputs")
-        single = x.ndim == (2 if self.task == "forecast" else 1)
+        x, single = self._prediction_inputs(inputs, check_finite=True)
         result = np.concatenate(list(self._iter_predict_raw(x, batch_size)))
         return result[0] if single else result
 
     def _decode_prediction(self, raw, output):
         if output == "probabilities":
+            if self.architecture.has_terminal:
+                return raw
             p = np.exp(raw - np.max(raw, axis=-1, keepdims=True))
             return p / p.sum(axis=-1, keepdims=True)
         if output == "quantiles":
@@ -524,7 +539,8 @@ class Model:
             or (output == "quantiles" and self.task != "forecast")
         ):
             raise ValidationError("Select an output supported by the model task.")
-        yield from self._iter_predict_raw(inputs, batch_size, output=output)
+        x, _ = self._prediction_inputs(inputs, check_finite=False)
+        yield from self._iter_predict_raw(x, batch_size, output=output)
 
     def predict(self, inputs, *, batch_size=256):
         return self._decode_prediction(self._predict_raw(inputs, batch_size), "prediction")

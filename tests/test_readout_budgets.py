@@ -211,6 +211,20 @@ def test_price_in_payoff_units_and_causal_cone():
         oq.finance.price(oracle=oracle, bounds=(0, 100), error=0.9, backend=engine)
 
 
+@pytest.mark.parametrize("rare_bit", [0, 1])
+def test_rare_marked_payoffs_keep_representable_values_on_both_tails(rare_bit):
+    circuit = _pair(1e-20)
+    if not rare_bit:
+        circuit = circuit.x(1)
+    oracle = oq.AmplitudeOracle(circuit, 1)
+    bounds = (0, 1e20) if rare_bit else (-1e20, 0)
+    expected = 1.0 if rare_bit else -1.0
+    for backend in ("auto", "numpy", "mps", oq.sim.MPSBackend(max_discarded_weight=0)):
+        result = oq.finance.price(oracle=oracle, bounds=bounds, backend=backend)
+        np.testing.assert_allclose(result.interval, [expected, expected], atol=0, rtol=1e-12)
+        assert result.oracle_queries == 0
+
+
 def test_plan_admission_precedes_tensor_allocation_and_unbounded_bit_iterators(monkeypatch):
     from openqml.sim import _mps
 

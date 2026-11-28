@@ -104,10 +104,10 @@ def from_cirq(
     def record(operation, location):
         nonlocal num_clbits
         gate = operation.gate
-        if any(gate.invert_mask) or getattr(gate, "confusion_map", {}):
+        if getattr(gate, "confusion_map", {}):
             raise conversion_error(
                 "MEASUREMENT_TRANSFORM",
-                "Inverted or confused measurements are unsupported.",
+                "Measurement confusion maps require a classical readout-noise model.",
                 location,
             )
         key = cirq.measurement_key_name(operation)
@@ -285,15 +285,20 @@ def from_cirq(
                 operations.append(Operation(kind, qubits, (getattr(gate, attribute),)))
             elif isinstance(gate, cirq.MeasurementGate):
                 _, targets = record(operation, location)
-                work += len(targets) - 1
+                inverted = gate.full_invert_mask()
+                work += len(targets) - 1 + 2 * sum(inverted)
                 if work > max_operations:
                     raise conversion_error(
                         "EXPANSION_LIMIT", "Measurement expansion exceeds budget.", location
                     )
-                operations.extend(
-                    Operation("measure", (q,), clbits=(bit,))
-                    for q, bit in zip(qubits, targets, strict=True)
-                )
+                for q, bit, flip in zip(qubits, targets, inverted, strict=True):
+                    # Complement the record while restoring the physical
+                    # postmeasurement state for subsequent operations.
+                    if flip:
+                        operations.append(Operation("x", (q,)))
+                    operations.append(Operation("measure", (q,), clbits=(bit,)))
+                    if flip:
+                        operations.append(Operation("x", (q,)))
             else:
                 name = next((name for candidate, name in fixed if gate == candidate), None)
                 if name:

@@ -305,6 +305,46 @@ def list_backends() -> tuple[str, ...]:
         return tuple(sorted(set(_REGISTRY) | _BUILTIN_NAMES))
 
 
+def _make_builtin(backend):
+    # Imports run outside the registry lock. Modules may themselves consult
+    # the registry during initialization.
+    if backend == "mps":
+        from ..sim._mps import MPSBackend
+
+        return MPSBackend()
+    if backend == "stabilizer":
+        from ..sim._stabilizer import StabilizerBackend
+
+        return StabilizerBackend()
+    if backend == "auto":
+        from .scheduler import CostAwareBackend
+
+        return CostAwareBackend()
+    if backend == "cpu":
+        from ..sim.adaptive import AdaptiveBackend
+
+        return AdaptiveBackend(name="cpu")
+    if backend == "gpu":
+        from ..sim._cuda import CUDABackend
+
+        return CUDABackend()
+    if backend in {"aer", "aer-mps", "aer-density", "aer-stabilizer"}:
+        from ..interop.aer import AerBackend
+
+        method = {
+            "aer": "statevector",
+            "aer-mps": "matrix_product_state",
+            "aer-density": "density_matrix",
+            "aer-stabilizer": "stabilizer",
+        }[backend]
+        return AerBackend(name=backend, method=method)
+    if backend == "cirq-density":
+        from ..interop.providers import CirqDensityBackend
+
+        return CirqDensityBackend()
+    raise ValidationError(f"Unknown backend {backend!r}. Registered: {list_backends()}.")
+
+
 def get_backend(backend: str | StatevectorBackend) -> StatevectorBackend:
     if isinstance(backend, str) and backend == "auto":
         from .scheduler import _RUNTIME_CONTEXT
@@ -315,50 +355,9 @@ def get_backend(backend: str | StatevectorBackend) -> StatevectorBackend:
     if not isinstance(backend, str):
         return _validate_backend(backend)
     with _LOCK:
-        if backend not in _REGISTRY and backend == "mps":
-            from ..sim._mps import MPSBackend
-
-            _REGISTRY[backend] = MPSBackend()
-        elif backend not in _REGISTRY and backend == "stabilizer":
-            from ..sim._stabilizer import StabilizerBackend
-
-            _REGISTRY[backend] = StabilizerBackend()
-        elif backend not in _REGISTRY and backend == "auto":
-            from .scheduler import CostAwareBackend
-
-            _REGISTRY[backend] = CostAwareBackend()
-        elif backend not in _REGISTRY and backend == "cpu":
-            from ..sim.adaptive import AdaptiveBackend
-
-            _REGISTRY[backend] = AdaptiveBackend(name="cpu")
-        elif backend not in _REGISTRY and backend == "gpu":
-            from ..sim._cuda import CUDABackend
-
-            _REGISTRY[backend] = CUDABackend()
-        elif backend not in _REGISTRY and backend in {
-            "aer",
-            "aer-mps",
-            "aer-density",
-            "aer-stabilizer",
-        }:
-            from ..interop.aer import AerBackend
-
-            _REGISTRY[backend] = AerBackend(
-                name=backend,
-                method=(
-                    "matrix_product_state"
-                    if backend == "aer-mps"
-                    else "density_matrix"
-                    if backend == "aer-density"
-                    else "stabilizer"
-                    if backend == "aer-stabilizer"
-                    else "statevector"
-                ),
-            )
-        elif backend not in _REGISTRY and backend == "cirq-density":
-            from ..interop.providers import CirqDensityBackend
-
-            _REGISTRY[backend] = CirqDensityBackend()
-        if backend not in _REGISTRY:
-            raise ValidationError(f"Unknown backend {backend!r}. Registered: {list_backends()}.")
-        return _REGISTRY[backend]
+        cached = _REGISTRY.get(backend)
+    if cached is not None:
+        return cached
+    device = _make_builtin(backend)
+    with _LOCK:
+        return _REGISTRY.setdefault(backend, device)

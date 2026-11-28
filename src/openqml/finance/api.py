@@ -7,7 +7,7 @@ from ._array import Ops
 from ._results import PayoffEstimate
 
 
-def _exact_coherent(payoff, oracle, offset, scale, discount, backend, memory):
+def _exact_coherent(payoff, oracle, offset, scale, discount, backend, memory, bit):
     """Use exact simulation only after backend capability/resource admission."""
     from dataclasses import replace
 
@@ -26,10 +26,12 @@ def _exact_coherent(payoff, oracle, offset, scale, discount, backend, memory):
         if isinstance(device, PriorityBackend):
             device = replace(device, require_exact=True)
         if payoff is None and source.num_qubits <= memory * 2**20:
-            from ..ir.observables import PauliString
+            from ..ir.observables import _basis_projector
+            from ..sim._mps import MPSBackend
+            from ..sim._stabilizer import StabilizerBackend, supported
+            from ..sim.adaptive import AdaptiveBackend
 
-            word = "I" * oracle.good_qubit + "Z" + "I" * (source.num_qubits - oracle.good_qubit - 1)
-            observable = PauliString(word)
+            observable = _basis_projector(source.num_qubits, oracle.good_qubit, bit)
             try:
                 chosen = resolve_backend(
                     device, "expectations", [source], (observable,), options=options
@@ -38,9 +40,25 @@ def _exact_coherent(payoff, oracle, offset, scale, discount, backend, memory):
                     chosen.capabilities.native_expectations
                     and chosen.capabilities.exact_expectations
                 ):
-                    z = float(expectation(source, observable, backend=chosen, max_memory_mb=memory))
-                    value = discount * (offset + scale * (1 - z) / 2)
-                    return PayoffEstimate(value, ((value, value),), 1.0, None)
+                    p = float(expectation(source, observable, backend=chosen, max_memory_mb=memory))
+                    # Pauli subtraction near zero can erase a representable
+                    # event. MPS projects directly and Clifford masses are discrete.
+                    small = p < np.sqrt(np.finfo(float).eps)
+                    direct = isinstance(chosen, (MPSBackend, StabilizerBackend))
+                    if small and isinstance(chosen, AdaptiveBackend):
+                        if not supported(source):
+                            from ..sim.readout import plan_readout
+
+                            cone = plan_readout(source, (observable,))
+                            p = (
+                                MPSBackend(layout="auto")
+                                .readout(cone.circuit, cone.observables, options=options)
+                                .values[0]
+                            )
+                        direct = True
+                    if direct or not small:
+                        value = discount * (offset + scale * p)
+                        return PayoffEstimate(value, ((value, value),), 1.0, None)
             except ResourceError:
                 pass
         try:
@@ -61,7 +79,7 @@ def _exact_coherent(payoff, oracle, offset, scale, discount, backend, memory):
     value = (
         payoff.classical_value(p)
         if payoff is not None
-        else discount * (offset + scale * p.reshape((1 << oracle.good_qubit, 2, -1))[:, 1].sum())
+        else discount * (offset + scale * p.reshape((1 << oracle.good_qubit, 2, -1))[:, bit].sum())
     )
     return PayoffEstimate(value, ((value, value),), 1.0, None)
 
@@ -218,12 +236,17 @@ def price(
     if scale == 0:
         value = discount * offset
         return PayoffEstimate(value, ((value, value),), 1.0, None)
+    # Anchor at the smaller absolute payoff so a rare loss at bit zero
+    # has the same direct evaluation as a rare gain at bit one.
+    bit, anchor, slope = (
+        (0, upper, -scale) if payoff is None and abs(lower) > abs(upper) else (1, offset, scale)
+    )
     if method == "auto" and payoff is None:
         from ..sim._mps import MPSBackend
 
         if isinstance(backend, MPSBackend) and backend.max_discarded_weight is not None:
             from ..compute.kernel import get_compute_kernel
-            from ..ir.observables import PauliString
+            from ..ir.observables import _basis_projector
             from ..runtime.backends import ExecutionOptions
             from ..sim.readout import certified_readout
 
@@ -231,30 +254,30 @@ def price(
             budget = get_compute_kernel()._prepare_budget(max_memory_mb).max_bytes
             if width > min(backend.max_work, budget // 8):
                 raise ResourceError("Marked readout exceeds the configured work or memory budget.")
-            word = PauliString("I" * good + "Z" + "I" * (width - good - 1))
-
-            z_error = min(2.0, (error / scale) / discount * 2)
+            observable = _basis_projector(width, good, bit)
             result = certified_readout(
                 oracle.preparation,
-                (word,),
-                absolute_error=z_error,
+                (observable,),
+                absolute_error=min(1.0, (error / scale) / discount),
                 backend=backend,
                 options=ExecutionOptions(max_memory_mb=max_memory_mb),
                 strict=False,
             )
-            p = min(1.0, max(0.0, (1 - result.values[0]) / 2))
-            distance = result.absolute_error_bounds[0] / 2
+            p = min(1.0, max(0.0, result.values[0]))
+            distance = result.absolute_error_bounds[0]
             lo, hi = max(0.0, p - distance), min(1.0, p + distance)
             if strict and discount * scale * max(p - lo, hi - p) > error:
                 raise ResourceError("MPS pricing error exceeds the requested tolerance.")
             return PayoffEstimate(
-                discount * (offset + scale * p),
-                ((discount * (offset + scale * lo), discount * (offset + scale * hi)),),
+                discount * (anchor + slope * p),
+                (tuple(sorted(discount * (anchor + slope * v) for v in (lo, hi))),),
                 1.0,
                 None,
             )
     if method != "quantum":
-        exact = _exact_coherent(payoff, oracle, offset, scale, discount, backend, max_memory_mb)
+        exact = _exact_coherent(
+            payoff, oracle, anchor, slope, discount, backend, max_memory_mb, bit
+        )
         if exact is not None:
             return exact
         if method == "classical":

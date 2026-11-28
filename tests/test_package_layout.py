@@ -16,6 +16,9 @@ def test_namespaces_expose_the_same_public_objects():
     assert oq.autodiff.compile_compute is oq.compile_compute
     assert oq.qml.Model is oq.Model
     assert oq.interop.convert is oq.convert
+    assert oq.interop.compile_program is oq.compile_program
+    assert oq.interop.compile_verified is oq.compile_verified
+    assert oq.interop.prove_equivalence is oq.prove_equivalence
     for group in ("ir", "sim", "compute", "runtime", "autodiff", "qml", "interop", "finance"):
         assert importlib.util.find_spec("openqml." + group).submodule_search_locations is not None
 

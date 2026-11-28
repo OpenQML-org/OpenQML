@@ -5,6 +5,11 @@ from openqml import Circuit, ConversionError, Parameter, convert, diagnose, stat
 from openqml.adapters.openqasm import from_openqasm, to_openqasm
 
 
+def test_unmatched_bracket_reports_its_line_before_parsing_later_statements():
+    with pytest.raises(ConversionError, match=r"line 3.*Unmatched closing bracket"):
+        from_openqasm("OPENQASM 3.0;\nqubit q;\nx q];\nh q;")
+
+
 @pytest.mark.parametrize("version", [2, 3])
 def test_qasm_roundtrip_all_gates(version):
     circuit = (

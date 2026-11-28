@@ -39,6 +39,12 @@ class Hamiltonian:
             raise ValidationError("A Hamiltonian needs Pauli terms of the same width.")
 
 
+def _basis_projector(width, wire, bit):
+    identity = "I" * width
+    z = identity[:wire] + "Z" + identity[wire + 1 :]
+    return Hamiltonian((PauliString(identity, 0.5), PauliString(z, -0.5 if bit else 0.5)))
+
+
 @dataclass(frozen=True)
 class SparsePauliString:
     """A declared width and nonidentity sites, without width-sized strings."""

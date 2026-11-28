@@ -12,6 +12,24 @@ from ..ir.parameters import real
 from ..runtime.backends import BackendCapabilities, ExecutionOptions, get_backend
 
 
+def _allocate_shots(shots, importance):
+    """Largest remainder allocation with exact conservation of integer shots."""
+    if not np.isfinite(importance).all() or not np.any(importance > 0):
+        raise ValidationError("Measurement importance must be finite and positive in total.")
+    ratios = [float(value).as_integer_ratio() for value in importance]
+    denominator = max(d for _, d in ratios)
+    weights = [n * (denominator // d) for n, d in ratios]
+    count = len(weights)
+    total = sum(weights)
+    quotas = [divmod((shots - 2 * count) * weight, total) for weight in weights]
+    allocation = [whole + 2 for whole, _ in quotas]
+    remaining = shots - sum(allocation)
+    order = sorted(range(count), key=lambda i: -quotas[i][1])
+    for index in order[:remaining]:
+        allocation[index] += 1
+    return tuple(allocation)
+
+
 @dataclass(frozen=True)
 class MeasurementGroup:
     basis: str
@@ -36,13 +54,9 @@ class MeasurementPlan:
             return ()
         if shots < 2 * count:
             raise ValidationError(f"At least {2 * count} shots are needed for {count} groups.")
-        importance = np.asarray([np.abs(g.coefficients).sum() for g in self.groups])
-        quota = (shots - 2 * count) * importance / importance.sum()
-        allocation = np.floor(quota).astype(np.int64) + 2
-        remainder = shots - int(allocation.sum())
-        order = np.argsort(-(quota - np.floor(quota)), kind="stable")
-        allocation[order[:remainder]] += 1
-        return tuple(int(n) for n in allocation)
+        scale = max(np.abs(g.coefficients).max() for g in self.groups)
+        importance = np.asarray([np.abs(g.coefficients / scale).sum() for g in self.groups])
+        return _allocate_shots(shots, importance)
 
 
 @dataclass(frozen=True)
@@ -193,6 +207,8 @@ def estimate(
     values = np.broadcast_to(plan.constants, (len(circuits), plan.num_observables)).copy()
     covariance = np.zeros((len(circuits), plan.num_observables, plan.num_observables))
     group_variances = np.zeros((len(circuits), len(plan.groups)))
+    if not circuits:
+        return EstimateResult(values, covariance, allocation, plan, group_variances)
     streams = np.random.SeedSequence(seed).spawn(len(plan.groups))
     for group_index, (group, count, stream) in enumerate(
         zip(plan.groups, allocation, streams, strict=True)
@@ -291,7 +307,7 @@ def estimate_adaptive(
         max_memory_mb=max_memory_mb,
         max_branches=max_branches,
     )
-    if not groups:
+    if not groups or not bound:
         return AdaptiveEstimateResult(
             estimate(bound, observables, shots=shots, seed=seed, **options), (), ()
         )
@@ -313,16 +329,12 @@ def estimate_adaptive(
     variance = np.maximum(pilot.group_sample_variances.mean(axis=0), variance_floor * bounds)
     if not np.isfinite(variance).all() or not np.any(variance > 0):
         raise ValidationError("Adaptive measurement variance exceeds finite precision.")
-    importance = np.sqrt(variance)
-    quota = (production_shots - 2 * groups) * importance / importance.sum()
-    allocation = np.floor(quota).astype(np.int64) + 2
-    remaining = production_shots - int(allocation.sum())
-    allocation[np.argsort(-(quota - np.floor(quota)), kind="stable")[:remaining]] += 1
+    allocation = _allocate_shots(production_shots, np.sqrt(variance))
     production = estimate(
         bound,
         observables,
         shots=production_shots,
-        shots_per_group=tuple(int(n) for n in allocation),
+        shots_per_group=allocation,
         seed=int(streams[1].generate_state(1)[0]),
         **options,
     )

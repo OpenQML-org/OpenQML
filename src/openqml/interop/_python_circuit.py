@@ -76,7 +76,7 @@ class _Compiler:
                 and type(left) is int
                 and type(right) is int
                 and abs(left) > 1
-                and right > 1024
+                and (abs(left).bit_length() - 1) * right >= 1024
             ):
                 self.fail(node, "Python power exceeds its precision budget.")
             result = _ARITHMETIC[type(node.op)](left, right)
@@ -123,16 +123,56 @@ class _Compiler:
             return call.func.attr
         return None
 
-    def condition(self, node):
+    def checked_index(self, value, width, register, node):
+        if not isinstance(value, int) or not -width <= value < width:
+            self.fail(node, f"Index outside the declared {register}.", "PYTHON_CIRCUIT_INDEX")
+        return int(value) if value >= 0 else width + value
+
+    def wire_index(self, node, width, register):
+        if isinstance(node, ast.Subscript) and self.method_reference(node.value, register):
+            node = node.slice
+        return self.checked_index(self.value(node), width, register, node)
+
+    def method_reference(self, node, attribute):
+        return (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == self.wire_name
+            and node.attr == attribute
+        )
+
+    def wires(self, node, width, register):
+        if self.method_reference(node, register):
+            return range(width)
+        if (
+            isinstance(node, ast.Subscript)
+            and self.method_reference(node.value, register)
+            and isinstance(node.slice, ast.Slice)
+        ):
+            selector = node.slice
+            bounds = (
+                None if v is None else self.value(v)
+                for v in (selector.lower, selector.upper, selector.step)
+            )
+            return range(width)[slice(*bounds)]
+        if isinstance(node, (ast.List, ast.Tuple)):
+            return tuple(self.wire_index(item, width, register) for item in node.elts)
+        if isinstance(node, ast.Call) and self.path(node.func) == "range" and not node.keywords:
+            indices = range(*(self.value(v) for v in node.args))
+            if indices:
+                self.checked_index(indices[0], width, register, node)
+                self.checked_index(indices[-1], width, register, node)
+            return indices
+        return (self.wire_index(node, width, register),)
+
+    def condition(self, node, width):
         if not isinstance(node, ast.Tuple) or len(node.elts) != 2:
             self.fail(node, "Use a (circuit.clbits[index], value) condition.")
         bit, value = node.elts
-        if isinstance(bit, ast.Subscript) and _name(bit.value) == f"{self.wire_name}.clbits":
-            bit = bit.slice
         expected = self.value(value)
         if type(expected) not in {bool, int} or expected not in {0, 1}:
             self.fail(value, "A single-bit condition must compare with zero or one.")
-        return ClassicalCondition((self.value(bit),), int(expected))
+        return ClassicalCondition((self.wire_index(bit, width, "clbits"),), int(expected))
 
     def body(self, statements, circuit=None, *, runtime=False):
         skip_else = False
@@ -155,16 +195,17 @@ class _Compiler:
                     args = [self.value(x) for x in value.args]
                     kwargs = {p.arg: self.value(p.value) for p in value.keywords}
                     qiskit = constructor == "qiskit.QuantumCircuit"
+                    allowed = {"global_phase"} if qiskit else {"num_clbits", "global_phase"}
                     if (
                         not 1 <= len(args) <= (2 if qiskit else 1)
-                        or set(kwargs) - {"num_clbits"}
+                        or set(kwargs) - allowed
                         or len(kwargs) != len(value.keywords)
-                        or (len(args) == 2 and kwargs)
                     ):
                         self.fail(node, "Declare explicit quantum and optional classical widths.")
                     circuit = Circuit(
                         args[0],
                         num_clbits=args[1] if len(args) == 2 else kwargs.get("num_clbits", 0),
+                        global_phase=kwargs.get("global_phase", 0),
                     )
                     self.wire_name, self.constructor = name, constructor
                 elif circuit is not None and name == self.wire_name and self.method(value):
@@ -184,7 +225,7 @@ class _Compiler:
             elif isinstance(node, ast.Expr) and circuit is not None and self.method(node.value):
                 if self.constructor == "openqml.Circuit":
                     self.fail(node, "Assign the result of an immutable Circuit method.")
-                circuit = self.operation(circuit, node.value)
+                circuit = self.operation(circuit, node.value, runtime=runtime)
             elif isinstance(node, ast.For) and circuit is not None:
                 seq = node.iter
                 if (
@@ -217,7 +258,7 @@ class _Compiler:
                     or len(call.args) != 1
                 ):
                     self.fail(node, "Use an SDK if_test or while_loop circuit context.")
-                guard = self.condition(call.args[0])
+                guard = self.condition(call.args[0], circuit.num_clbits)
                 empty = Circuit(circuit.num_qubits, num_clbits=circuit.num_clbits)
                 values = self.values.copy()
                 yes = self.body(node.body, empty, runtime=True)
@@ -246,13 +287,71 @@ class _Compiler:
                 self.fail(node, "This statement needs an explicit circuit factory or SDK adapter.")
         return circuit
 
-    def operation(self, circuit, call):
+    def qiskit_operation(self, circuit, call, name, runtime):
+        width, classical = circuit.num_qubits, circuit.num_clbits
+        if name == "measure_all" and not call.args:
+            if runtime:
+                self.fail(call, "Declare measurement storage outside SDK control scopes.")
+            self.charge(call, width)
+            circuit = circuit.barrier()
+            for q in range(width):
+                circuit = circuit.measure(q, classical + q)
+            return circuit
+        if name == "barrier":
+            groups = [self.wires(arg, width, "qubits") for arg in call.args] or [range(width)]
+            self.charge(call, sum(map(len, groups)))
+            wires = dict.fromkeys(q % width for group in groups for q in group)
+            if not wires:
+                self.fail(call, "An empty barrier cannot be represented in the circuit IR.")
+            return circuit.barrier(*wires)
+        measure = name == "measure"
+        if measure or name == "reset":
+            arity, parameters = (2 if measure else 1), 0
+        elif name in UNITARY_GATES - {"unitary"}:
+            arity, parameters = GATES[name]
+        else:
+            self.fail(call, f"Unsupported Qiskit circuit operation {name!r}.")
+        if len(call.args) != arity + parameters:
+            self.fail(call, f"Wrong operand count for Qiskit {name!r}.")
+        angles = tuple(self.value(arg) for arg in call.args[:parameters])
+        groups = [
+            self.wires(arg, classical, "clbits")
+            if measure and i == 1
+            else self.wires(arg, width, "qubits")
+            for i, arg in enumerate(call.args[parameters:])
+        ]
+        sizes = list(map(len, groups))
+        count = max(sizes)
+        if not count and (measure or name == "reset"):
+            return circuit
+        if not min(sizes) or any(
+            size != count and not (arity == 2 and size == 1 and (not measure or i == 0))
+            for i, size in enumerate(sizes)
+        ):
+            self.fail(call, f"Incompatible Qiskit {name!r} operand lengths.")
+        self.charge(call, count - 1)
+        for i in range(count):
+            wires = tuple(group[0 if len(group) == 1 else i] for group in groups)
+            if measure:
+                circuit = circuit.measure(wires[0] % width, wires[1] % classical)
+            elif name == "reset":
+                circuit = circuit.reset(wires[0] % width)
+            else:
+                circuit = circuit.gate(name, *(q % width for q in wires), params=angles)
+        return circuit
+
+    def operation(self, circuit, call, *, runtime=False):
         name = self.method(call)
         if call.keywords:
             self.fail(call, "Circuit operations require positional operands.")
-        args = [self.value(arg) for arg in call.args]
-        if name in {"break_loop", "continue_loop"} and not args:
+        if name in {"break_loop", "continue_loop"} and not call.args:
             return getattr(circuit, name)()
+        if self.constructor == "qiskit.QuantumCircuit":
+            return self.qiskit_operation(circuit, call, name, runtime)
+        args = [self.value(arg) for arg in call.args]
+        if name == "measure_all" and not args:
+            self.charge(call, circuit.num_qubits - 1)
+            return circuit.measure_all()
         if name in {"measure", "reset", "barrier", "classical_set"}:
             return getattr(circuit, name)(*args)
         if name in UNITARY_GATES - {"unitary"}:
@@ -322,7 +421,10 @@ def from_python(source, *, entrypoint=None, arguments=None, max_operations=100_0
             )
             values.update(arguments or {})
             if set(values) != set(names) or any(
-                type(value) not in {bool, float, int} for value in values.values()
+                type(value) not in {bool, float, int}
+                or (type(value) is int and value.bit_length() > 1024)
+                or (type(value) is float and not math.isfinite(value))
+                for value in values.values()
             ):
                 compiler.fail(fn, "Supply concrete scalar values for the entry arguments.")
             compiler.values.update(values)

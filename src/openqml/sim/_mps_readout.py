@@ -10,7 +10,26 @@ _ELEMENTS = {
     "X": ((0, 1, 1), (1, 0, 1)),
     "Y": ((0, 1, -1j), (1, 0, 1j)),
     "Z": ((0, 0, 1), (1, 1, -1)),
+    "0": ((0, 0, 1),),
+    "1": ((1, 1, 1),),
 }
+
+
+def projector_word(terms):
+    """Recognize a one-wire projector before subtracting Pauli expectations."""
+    if len(terms) == 2:
+        a, b = terms
+        if a.paulis.count("I") != len(a.paulis):
+            a, b = b, a
+        if (
+            a.coefficient == 0.5
+            and a.paulis.count("I") == len(a.paulis)
+            and abs(b.coefficient) == 0.5
+            and b.paulis.count("I") == len(b.paulis) - 1
+            and "Z" in b.paulis
+        ):
+            return b.paulis.replace("Z", "1" if b.coefficient < 0 else "0")
+    return None
 
 
 def _left(env, site, pauli, kernel):

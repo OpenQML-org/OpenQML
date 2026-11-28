@@ -36,6 +36,20 @@ def _native_parameters(bindings, start, stop, like):
     return {name: packed[:, i] for i, name in enumerate(bindings)}
 
 
+def _draw_born_indices(probabilities, shots, generator):
+    import torch
+
+    if probabilities.shape[-1] <= 1 << 24:
+        return torch.multinomial(probabilities, shots, replacement=True, generator=generator)
+    cdf = probabilities.cumsum(dim=-1, dtype=torch.float64)
+    total = cdf[..., -1:]
+    draws = torch.rand(
+        (*cdf.shape[:-1], shots), dtype=cdf.dtype, device=cdf.device, generator=generator
+    )
+    draws = torch.minimum(draws * total, torch.nextafter(total, torch.zeros_like(total)))
+    return torch.searchsorted(cdf, draws, right=True)
+
+
 @dataclass(frozen=True)
 class CUDABackend:
     name: str = "gpu"
@@ -353,9 +367,7 @@ class CUDABackend:
                         max_memory_mb=options.max_memory_mb,
                         batch_shape=(len(selected),),
                     )
-                    indices = torch.multinomial(
-                        state.abs().square(), shots, replacement=True, generator=generator
-                    )
+                    indices = _draw_born_indices(state.abs().square(), shots, generator)
                     encoded = (
                         indices + states * torch.arange(len(selected), device=like.device)[:, None]
                     )

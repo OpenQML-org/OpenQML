@@ -8,7 +8,7 @@ from ._lazy import resolve as _resolve
 
 _install_aliases()
 
-__version__ = "0.40.0"
+__version__ = "0.41.0"
 __all__ = _PUBLIC
 
 

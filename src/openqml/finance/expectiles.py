@@ -44,7 +44,7 @@ def _expectile_root(losses, level, probabilities, margin, max_memory_mb):
     # The increasing piecewise-affine root lies above min(loss) for level>=1/2.
     # The first interval whose upper endpoint admits its candidate is the root.
     eligible = ops.cat(
-        (candidates[..., :-1] <= ordered[..., 1:], ops.xp.ones_like(ordered[..., :1], dtype=bool)),
+        (candidates[..., :-1] <= ordered[..., 1:], ops.xp.ones_like(ordered[..., :1]) > 0),
         axis=-1,
     )
     index = (

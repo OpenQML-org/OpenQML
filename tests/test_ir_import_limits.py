@@ -5,6 +5,7 @@ import json
 import numpy as np
 import pytest
 
+import openqml as oq
 from openqml import (
     Circuit,
     ClassicalCondition,
@@ -13,6 +14,16 @@ from openqml import (
     ValidationError,
     plan_conversion,
 )
+
+
+def test_json_register_limit_is_an_optional_import_budget():
+    body = oq.Circuit(2, num_clbits=4).x(1).break_loop()
+    circuit = oq.Circuit(2).while_loop(None, body)
+    assert oq.Circuit.from_json(circuit.to_json(), max_register_bits=6) == circuit
+    with pytest.raises(ValidationError, match="max_register_bits"):
+        oq.convert(
+            circuit.to_json(), source="json", target="ir", source_options={"max_register_bits": 5}
+        )
 
 
 def no_construction(monkeypatch):

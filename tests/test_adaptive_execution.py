@@ -10,6 +10,19 @@ import openqml as oq
 from openqml._mps import MPSBackend
 
 
+def test_auto_dense_execution_can_plan_in_a_core_only_install(monkeypatch):
+    from openqml.interop.adapters import _common
+
+    def unavailable(*args, **kwargs):
+        raise oq.MissingDependencyError("torch")
+
+    monkeypatch.setattr(_common, "dependency", unavailable)
+    circuit = oq.Circuit(1).ry(0.25, 0)
+    plan = oq.plan_execution(circuit, [oq.PauliString("Z")], method="statevector", device="auto")
+    assert plan.selected_method == "statevector"
+    np.testing.assert_allclose(plan.evaluate(), [np.cos(0.25)])
+
+
 def nonclifford_chain(width, depth=4, seed=7):
     rng = random.Random(seed)
     builder = oq.CircuitBuilder(width)

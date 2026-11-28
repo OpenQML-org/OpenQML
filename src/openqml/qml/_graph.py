@@ -195,13 +195,15 @@ def quantum_messages(ctx):
         positions is None or positions.ndim != 3 or tuple(positions.shape[:2]) != (batch, nodes)
     ):
         raise ValidationError("Geometric graph messages require positions[B,N,D].")
+    if c["geometric"]:
+        positions = xp.where(node_mask[..., None], ctx.array(positions), 0)
     messages, destinations, degrees = [], [], []
     for start in range(0, count, c["chunk_size"]):
         stop = min(count, start + c["chunk_size"])
         source, destination = safe[:, start:stop, 0], safe[:, start:stop, 1]
         values = [x[row, destination], x[row, source]]
         if c["edge_features"]:
-            values.append(features[:, start:stop])
+            values.append(ctx.array(features[:, start:stop]))
         if c["geometric"]:
             relative = positions[row, source] - positions[row, destination]
             relative = xp.where(enabled[:, start:stop, None], relative, 0)

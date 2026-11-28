@@ -32,6 +32,8 @@ def _statements(text):
             brackets += 1
         elif char == "]":
             brackets -= 1
+            if brackets < 0:
+                raise conversion_error("SYNTAX", "Unmatched closing bracket.", f"line {line}")
         elif char in ";{}" and brackets == 0:
             piece = text[start:i]
             leading = piece[: len(piece) - len(piece.lstrip())]
@@ -49,6 +51,8 @@ def _statements(text):
             start, start_line = i + 1, line
         if char == "\n":
             line += 1
+    if brackets:
+        raise conversion_error("SYNTAX", "Unclosed square bracket.", f"line {line}")
     if text[start:].strip():
         raise conversion_error(
             "SYNTAX", "Every statement must end with a semicolon.", f"line {start_line}"

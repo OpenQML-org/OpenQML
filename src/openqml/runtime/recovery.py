@@ -240,6 +240,11 @@ class CircuitBreaker:
                 raise BackendUnavailableError("QPU circuit breaker is open; no job was submitted.")
             if self.open_until:
                 self.probing = True
+            return self.probing
+
+    def abandon_probe(self):
+        with self.lock:
+            self.probing = False
 
     def success(self):
         with self.lock:

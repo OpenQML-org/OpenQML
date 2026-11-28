@@ -41,7 +41,7 @@ def quantum_attention(ctx):
     result = (
         result.permute(0, 2, 1, 3) if ctx.backend == "torch" else xp.transpose(result, (0, 2, 1, 3))
     )
-    return result.reshape(x.shape)
+    return (result.to(x.dtype) if ctx.backend == "torch" else result).reshape(x.shape)
 
 
 def _linear(ctx, q, k, v, mask):
@@ -139,9 +139,9 @@ def state_attention(ctx):
         [ctx.kernel(source[:, i : i + c["chunk_size"]]) for i in range(0, tokens, c["chunk_size"])],
         axis=1,
     )
-    if ctx.backend == "torch" and features.dtype in (xp.float16, xp.bfloat16):
-        features = features.float()
     r = features[..., ctx.array(groups, integer=True)]
+    if ctx.backend == "torch" and r.dtype in (xp.float16, xp.bfloat16):
+        r = r.float()
     norm2 = ctx.sum(r * r, -1, True)
     norm2 = norm2.clamp_min(1) if ctx.backend == "torch" else xp.maximum(norm2, 1)
     r = r / xp.sqrt(norm2)
@@ -172,7 +172,7 @@ def state_attention(ctx):
     result = (
         result.permute(0, 2, 1, 3) if ctx.backend == "torch" else xp.transpose(result, (0, 2, 1, 3))
     )
-    return result.reshape(x.shape)
+    return (result.to(x.dtype) if ctx.backend == "torch" else result).reshape(x.shape)
 
 
 def _gaussian(ctx, q, k, v, mask):
@@ -224,9 +224,10 @@ def _gaussian(ctx, q, k, v, mask):
             scores = (
                 2 * ctx.einsum("bhid,bhjd->bhij", qc, k) - xp.swapaxes(key_norm, -1, -2)
             ) / temperature
-            masked = xp.where(allowed, scores, -xp.inf)
-            maximum = xp.where(live, xp.max(masked, axis=-1, keepdims=True), 0)
-            weights = xp.exp(xp.where(allowed, scores - maximum, -xp.inf))
-            weights = weights / xp.maximum(xp.sum(weights, axis=-1, keepdims=True), 1e-30)
+            masked = xp.where(live, xp.where(allowed, scores, -xp.inf), 0)
+            maximum = xp.max(masked, axis=-1, keepdims=True)
+            weights = xp.exp(xp.where(allowed, masked - maximum, -xp.inf))
+            mass = xp.sum(weights, axis=-1, keepdims=True)
+            weights = weights / xp.where(live, mass, 1)
             outputs.append(ctx.einsum("bhij,bhjv->bhiv", weights, v))
     return ctx.cat(outputs, axis=2)

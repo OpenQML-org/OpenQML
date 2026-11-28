@@ -123,10 +123,11 @@ class SelfFinancingPlan:
             )
             initial = ops.check(
                 initial,
-                (initial >= 0) & (ops.sum(initial) <= 1)[..., None],
+                (initial >= 0) & (ops.sum(initial) <= 1 + 8 * n * eps)[..., None],
                 "Initial weights must be long-only and cash-financed.",
             )
-            positions, cash = initial * equity, (1 - ops.sum(initial)) * equity
+            initial = initial / ops.maximum(ops.sum(initial, keepdims=True), 1)
+            positions, cash = initial * equity, ops.maximum(1 - ops.sum(initial), 0) * equity
             pending = ops.broadcast(initial[..., None, :], prefix + (self.execution_lag, n))
             ready = xp.zeros_like(pending[..., 0]) > 0
             state = TradingState(positions, cash, pending, ready)
@@ -184,7 +185,9 @@ class SelfFinancingPlan:
             invested = xp.where(ready[..., 0, None], invested, positions)
             remaining_cash = xp.where(ready[..., 0], remaining_cash, cash)
             cost = xp.where(ready[..., 0], cost, 0)
-            traded_fraction = xp.where(ready[..., 0, None], traded_fraction, 0)
+            traded_fraction = xp.where(
+                (ready[..., 0] & (before > 0))[..., None], traded_fraction, 0
+            )
             ending = invested * (1 + asset_return)
             ending_cash = remaining_cash * (1 + money_return)
             wealth = ops.sum(ending) + ending_cash

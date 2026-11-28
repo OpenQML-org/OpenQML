@@ -152,6 +152,21 @@ def test_causal_prefix_and_padding_semantics(mode):
     np.testing.assert_allclose(p.evaluate(values, changed), before, atol=1e-12)
 
 
+def test_all_masked_gaussian_attention_has_zero_jax_gradient(release_compilations):
+    jax = pytest.importorskip("jax")
+    jnp = jax.numpy
+    architecture = plan(q.OperatorSpec.attention(causal=True))
+    values = jax.tree_util.tree_map(jnp.asarray, opened(architecture))
+    model = architecture.build("jax", backend="jax")
+    x = jnp.ones((1, 3, 2))
+    mask = jnp.zeros((1, 3), dtype=bool)
+    result, gradients = jax.jit(
+        jax.value_and_grad(lambda p: model(p, {"x": x, "mask": mask}).sum())
+    )(values)
+    assert float(result) == 0
+    assert all(np.array_equal(g, np.zeros(g.shape)) for g in gradients.values())
+
+
 @pytest.mark.parametrize("order", [1, 2])
 def test_graph_permutation_and_euclidean_invariance_and_padding(order):
     p = (

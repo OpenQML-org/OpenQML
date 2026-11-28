@@ -152,7 +152,7 @@ class ComponentPlan:
         if capacity <= 0:
             raise ResourceError("Component batched readouts exceed max_memory_mb.")
         local_budget = capacity / 2**20
-        zero = ops.array(0, real_value=True)
+        zero = ops.xp.broadcast_to(ops.array(0, real_value=True), shape)
         for value in values.values():
             zero = zero + (ops.array(value, real_value=True) * 0) ** 2
         outputs = {}

@@ -20,6 +20,27 @@ def native(value, backend):
     return value
 
 
+def test_torch_complex_global_norm_and_zero_gradient():
+    torch = pytest.importorskip("torch")
+    from openqml.compute._norms import global_norm
+
+    value = torch.tensor([3e25 + 4e25j], dtype=torch.complex64, requires_grad=True)
+    zero = torch.zeros(2, dtype=torch.complex64, requires_grad=True)
+    norm = global_norm((value.conj(), zero), torch, "torch")
+    gradients = torch.autograd.grad(norm, (value, zero))
+    assert norm.dtype == torch.float64 and norm.item() == pytest.approx(5e25)
+    torch.testing.assert_close(gradients[0], value.new_tensor([0.6 + 0.8j]))
+    torch.testing.assert_close(gradients[1], zero)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
+def test_projection_keeps_funded_assets_across_far_apart_knots(backend):
+    result = oq.finance.cost_aware_projection(
+        native([0, 0], backend), previous=[0.25, 0], caps=[0.5, 0.8], penalty=[1e6, 0], budget=0.3
+    )
+    np.testing.assert_allclose(result, [0.25, 0.05], atol=2e-7, rtol=0)
+
+
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
 @pytest.mark.parametrize("scale", [1e20, 1e-25, 0])
 @pytest.mark.parametrize("axis", [-1, 0, (0, 1)])

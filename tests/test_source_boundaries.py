@@ -143,6 +143,59 @@ def test_source_inspection_options_are_validated(kwargs):
         oq.inspect_python("x=1", **kwargs)
 
 
+def test_python_qiskit_register_broadcast_matches_native_operations():
+    qiskit = pytest.importorskip("qiskit")
+    source = """from qiskit import QuantumCircuit
+def build():
+    qc = QuantumCircuit(4, 2, global_phase=0.125)
+    qc.h(qc.qubits[:2])
+    qc.cx([qc.qubits[0], -3], range(2, 4))
+    qc.cz(2, [0, 1])
+    qc.measure(0, qc.clbits)
+    with qc.if_test((qc.clbits[-1], True)):
+        qc.x(-1)
+    qc.measure_all()
+    return qc
+"""
+    native = qiskit.QuantumCircuit(4, 2, global_phase=0.125)
+    native.h(native.qubits[:2])
+    native.cx([native.qubits[0], -3], range(2, 4))
+    native.cz(2, [0, 1])
+    native.measure(0, native.clbits)
+    with native.if_test((native.clbits[-1], True)):
+        native.x(-1)
+    native.measure_all()
+    ir = oq.convert(source, source="python", target="ir").value
+    reference = oq.convert(native, target="ir").value
+    assert oq.prove_equivalence(ir, reference).proven
+    assert ir.num_clbits == 6 and ir.global_phase == reference.global_phase
+
+
+@pytest.mark.parametrize(
+    ("statement", "code"),
+    [
+        ("qc.measure(0, 4)", "PYTHON_CIRCUIT_INDEX"),
+        ("qc.x(-3)", "PYTHON_CIRCUIT_INDEX"),
+        ("with qc.if_test((qc.clbits[2], True)):\n        qc.x(0)", "PYTHON_CIRCUIT_INDEX"),
+        ("qc.measure(qc.qubits, 0)", "operand lengths"),
+        ("qc.h([0, 1])", "OPERATION_LIMIT"),
+    ],
+)
+def test_python_qiskit_rejects_invalid_addresses_and_broadcasts(statement, code):
+    source = (
+        "from qiskit import QuantumCircuit\ndef build():\n    qc = QuantumCircuit(2, 2)\n    "
+        + statement
+        + "\n    return qc"
+    )
+    with pytest.raises(oq.ConversionError, match=code):
+        oq.convert(
+            source,
+            source="python",
+            target="ir",
+            max_operations=2 if code == "OPERATION_LIMIT" else 100,
+        )
+
+
 @pytest.mark.parametrize(
     "option", ["noise_model", "backend", "calibrations", "execution_context", "hardware_options"]
 )

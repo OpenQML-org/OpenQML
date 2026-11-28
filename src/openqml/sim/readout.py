@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, replace
 from ..errors import Diagnostic, ResourceError, ValidationError, _as_tuple, conversion_error
 from ..ir.compiler import CircuitStats, _check_circuit_limits, circuit_stats
 from ..ir.core import Circuit
-from ..ir.observables import Hamiltonian, PauliString
+from ..ir.observables import Hamiltonian, PauliString, _basis_projector
 
 
 @dataclass(frozen=True, eq=False)
@@ -303,9 +303,7 @@ def certified_readout(
                     PauliString(identity, 0.0 if write is None else write.params[0].constant)
                 )
             else:
-                q = write.qubits[0]
-                z = identity[:q] + "Z" + identity[q + 1 :]
-                obs.append(Hamiltonian((PauliString(identity, 0.5), PauliString(z, -0.5))))
+                obs.append(_basis_projector(width, write.qubits[0], 1))
     else:
         if isinstance(observables, Set):
             raise ValidationError("Readout observables require an ordered iterable.")

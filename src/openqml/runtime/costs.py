@@ -443,6 +443,10 @@ class BudgetLedger:
                 raise ResourceError("Session spending budget would be exceeded.")
             self._reserved += value
 
+    def _release_unsubmitted(self, cost):
+        with self._lock:
+            self._reserved = max(0.0, self._reserved - cost)
+
 
 class ExecutionFeedback:
     """Bounded recent residual calibration; never submits calibration jobs.

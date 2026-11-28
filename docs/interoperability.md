@@ -30,6 +30,10 @@ importers accept their usual source options, including explicit wire order.
 Sampled tape returns, mid-circuit measurements followed by quantum operations,
 feedback and noise require other execution paths.
 
+Cirq's `invert_mask` preserves both the reported bit and the physical state
+seen by subsequent operations. Import of a stochastic `confusion_map` raises a
+diagnostic.
+
 ## Classical variables and assignments
 
 IR v5 adds `Circuit.classical_set(bit, 0|1)`, a classical write with no quantum
@@ -286,6 +290,14 @@ arithmetic, finite `range` loops, gates, measurements and supported Qiskit
 control contexts. Use `source_options={"entrypoint": "build", "arguments": {...}}`
 to select a function and its concrete arguments. Source text is compiled
 without executing imports or arbitrary statements.
+
+Qiskit gate and measurement operands accept scalar indices, lists, tuples,
+finite ranges, and slices of `qc.qubits` and `qc.clbits`. Negative indices count
+from the end of their declared register. The frontend validates broadcast
+lengths and checks every address. `qc.measure_all()` appends a bit per qubit.
+JSON IR and OpenQASM imports accept `source_options={"max_register_bits": n}`
+to bound the declared registers. JSON deserialization also accepts the limit
+directly through `Circuit.from_json` or `PortableProgram.from_json`.
 
 Pass a trusted callable with `source="python"` and explicit `args` or `kwargs`
 to capture the circuit it returns. This entry point covers the returned

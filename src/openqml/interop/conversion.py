@@ -690,6 +690,7 @@ def plan_conversion(
             "max_depth",
             "max_matrix_qubits",
             "max_matrix_entries",
+            "max_register_bits",
         }
         if set(source_options) - allowed:
             raise conversion_error("IR_FRONTEND", "Unknown JSON IR import option.")

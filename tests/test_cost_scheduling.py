@@ -52,6 +52,29 @@ def profile(seconds, **kwargs):
     return q.ExecutionProfile(seconds, relative_uncertainty=0, shots=100, **options)
 
 
+def test_unsubmitted_work_releases_its_quote_but_unknown_submission_keeps_it(monkeypatch, devices):
+    qpu = devices[0]
+    ledger = q.BudgetLedger(2)
+    backend = q.CostAwareBackend(profiles={qpu.name: profile(1, cost_per_second=1)}, ledger=ledger)
+    circuit = q.Circuit(1)
+
+    def fail(*args, **kwargs):
+        raise q.BackendUnavailableError("No submission")
+
+    monkeypatch.setattr(qpu, "sample_batch", fail)
+    with pytest.raises(q.BackendUnavailableError):
+        q.sample(circuit, 100, backend=backend)
+    assert ledger.reserved == 0
+
+    def unknown(*args, **kwargs):
+        raise q.BackendJobError("Unknown submission state", stage="submission")
+
+    monkeypatch.setattr(qpu, "sample_batch", unknown)
+    with pytest.raises(q.BackendJobError):
+        q.sample(circuit, 100, backend=backend)
+    assert ledger.reserved == 1
+
+
 def test_whole_training_queue_cost_noise_and_gradient_counts_change_the_route(devices):
     circuit, obs = q.Circuit(1).ry(0.4, 0), (q.PauliString("Z"),)
     work = q.TrainingWorkload(batch_size=8, steps=10, gradient_evaluations=6)

@@ -127,6 +127,25 @@ def test_qiskit_v2_sampler_bit_order_idle_bits_and_measurement_estimator():
     np.testing.assert_allclose(result.standard_errors, 0, atol=1e-12)
 
 
+def test_qiskit_sampler_keeps_store_only_program_outputs():
+    pytest.importorskip("qiskit")
+
+    class Sampler:
+        def run(self, pubs, *, shots):
+            native, bindings = pubs[0]
+            assert native.num_clbits == 3
+            assert [item.operation.name for item in native.data] == ["store"]
+            result = SimpleNamespace(
+                data=SimpleNamespace(
+                    c=SimpleNamespace(shape=(len(bindings),), get_counts=lambda _: {"100": shots})
+                )
+            )
+            return SimpleNamespace(result=lambda: [result])
+
+    circuit = Circuit(1, num_clbits=3).classical_set(2, 1)
+    assert sample(circuit, 5, backend=QiskitSamplerBackend(Sampler())) == {"001": 5}
+
+
 def test_cirq_density_noise_and_exact_gradients_match_channel_formula():
     cirq = pytest.importorskip("cirq")
     gamma = 0.17

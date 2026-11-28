@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from ..compute.kernel import memory_budget
-from ..errors import ConversionError, ResourceError, ValidationError
+from ..errors import ConversionError, MissingDependencyError, ResourceError, ValidationError
 from ..ir.compiler import _check_circuit_limits
 from ..ir.core import integer
 from ..ir.parameters import real
@@ -65,7 +65,10 @@ def _gpu_status():
     """Check the installed native tensor runtime; a CPU wheel needs no GPU extra."""
     from ..interop.adapters._common import dependency
 
-    torch = dependency("torch", "torch")
+    try:
+        torch = dependency("torch", "torch")
+    except MissingDependencyError:
+        return False, 0
     if not torch.cuda.is_available():
         return False, 0
     try:
@@ -234,7 +237,7 @@ class AdaptivePlan:
             )
         from .batch import expectations_batch
 
-        return expectations_batch(
+        value = expectations_batch(
             self.circuit,
             self.observables,
             [bindings or {}],
@@ -243,6 +246,9 @@ class AdaptivePlan:
             max_memory_mb=self.max_memory_mb,
             max_branches=self.max_branches,
         )[0]
+        if batch_shape is not None:
+            value = np.broadcast_to(value, tuple(batch_shape) + value.shape)
+        return value
 
 
 def plan_execution(

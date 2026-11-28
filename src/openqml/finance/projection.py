@@ -41,14 +41,13 @@ def _prox(values, center, caps, penalty, budget, ops):
     changes = ops.cat((-xp.ones_like(starts), xp.ones_like(ends)), axis=-1)
     order = ops.argsort(knots)
     knots, changes = ops.gather(knots, order), ops.gather(changes, order)
-    slope = ops.cumsum(changes)
-    intercept = ops.sum(caps, keepdims=True) - ops.cumsum(changes * knots)
-    at_knot = intercept + slope * knots
-    # Floating-point cancellation at the last knot cannot leave gather out of
-    # range; the candidate's mass is checked by the caller/optimizer as well.
-    eps = machine_epsilon(values, ops)
-    roundoff = 8 * eps * knots.shape[-1] * (1 + ops.max(xp.abs(knots)))
-    reached = at_knot <= (budget + roundoff)[..., None]
+    active = -ops.cumsum(changes)[..., :-1]
+    steps = xp.where(active > 0, knots[..., 1:], 0) - xp.where(active > 0, knots[..., :-1], 0)
+    # Integrate backwards from zero funded mass. The run across a flat
+    # interval contributes zero even when its endpoints are far apart.
+    remaining = xp.flip(ops.cumsum(xp.flip(active * steps, (-1,))), (-1,))
+    at_knot = ops.cat((remaining, xp.zeros_like(knots[..., :1])), axis=-1)
+    reached = at_knot <= budget[..., None]
     count = (
         xp.argmax(reached.to(xp.int64), dim=-1)
         if ops.name == "torch"
@@ -56,13 +55,12 @@ def _prox(values, center, caps, penalty, budget, ops):
     )
     previous = ops.clip(count - 1, 0, knots.shape[-1] - 1)
     previous = previous.to(xp.int64) if ops.name == "torch" else previous.astype("int32")
-    m = ops.gather(slope, previous[..., None])[..., 0]
-    b = ops.gather(intercept, previous[..., None])[..., 0]
+    rate = ops.gather(active, previous[..., None])[..., 0]
+    mass = ops.gather(at_knot, count[..., None])[..., 0]
     endpoint = ops.gather(knots, count[..., None])[..., 0]
-    multiplier = xp.where(m < 0, (budget - b) / xp.where(m < 0, m, -1), endpoint)
-    difference = values - multiplier[..., None] - center
-    soft = xp.sign(difference) * xp.maximum(xp.abs(difference) - penalty, ops.array(0))
-    result = ops.clip(center + soft, 0, caps)
+    delta = xp.where((count > 0) & (rate > 0), (budget - mass) / xp.where(rate > 0, rate, 1), 0)
+    ramps = ops.clip((ends - endpoint[..., None]) + delta[..., None], 0, heights)
+    result = ramps[..., : values.shape[-1]] + ramps[..., values.shape[-1] :]
     result = xp.where((budget <= 0)[..., None], 0, result)
     return xp.where((budget >= ops.sum(caps))[..., None], caps, result)
 

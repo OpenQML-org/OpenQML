@@ -6,6 +6,17 @@ import pytest
 import openqml as oq
 
 
+def test_unconditional_loop_keeps_its_resources_and_batches_density_readouts():
+    from openqml.ir._structure import connected_components
+
+    body = oq.Circuit(2).x(1).measure(1, 0).break_loop()
+    source = oq.Circuit(2).while_loop(None, body)
+    assert connected_components([source]) == (((0, 1), (1, 0)),)
+    expected = [[-1], [1]]
+    circuits = [source, source.x(1)]
+    np.testing.assert_allclose(oq.expectations_batch(circuits, ["IZ"], backend="numpy"), expected)
+
+
 @pytest.mark.parametrize("attempts", [1, 3, 6])
 @pytest.mark.parametrize("angle", [0, 0.4, 1.1, np.pi])
 def test_bounded_measurement_loop_break_has_exact_terminal_success_probability(attempts, angle):

@@ -5,7 +5,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from ..compute.kernel import get_compute_kernel, memory_budget
+from ..compute.kernel import memory_budget
 from ..errors import ValidationError
 from ..ir.core import integer
 from ..ir.parameters import real
@@ -152,6 +152,7 @@ class ScenarioPlan:
     max_work: int = 1_000_000_000
     _flat: object = field(init=False, repr=False)
     _distances: object = field(init=False, repr=False)
+    _order: object = field(init=False, repr=False)
 
     def __post_init__(self):
         x = np.asarray(self.scenarios, dtype=float)
@@ -170,26 +171,30 @@ class ScenarioPlan:
         object.__setattr__(self, "max_memory_mb", memory_budget(self.max_memory_mb))
         object.__setattr__(self, "max_work", integer(self.max_work, "max_work", 1))
         s, dimension = x.shape[0], rows(x.shape[1:])
-        admission(
-            4 * (s * dimension + s * s),
-            self.max_memory_mb,
-            work=4 * s * s * dimension,
-            max_work=self.max_work,
-        )
+        elements = 6 * s if dimension == 1 else 4 * (s * dimension + s * s)
+        work = s * s.bit_length() if dimension == 1 else 4 * s * s * dimension
+        admission(elements, self.max_memory_mb, work=work, max_work=self.max_work)
         x = x.copy()
         flat = x.reshape((s, dimension))
-        square = np.sum(flat * flat, axis=-1)
-        distance = np.sqrt(
-            np.maximum(
-                square[:, None] + square[None, :] - 2 * get_compute_kernel().matmul(flat, flat.T), 0
-            )
-        )
-        np.fill_diagonal(distance, 0)
-        for value in (x, flat, distance):
-            value.setflags(write=False)
+        order = distance = None
+        if dimension == 1:
+            order = np.argsort(flat[:, 0], kind="stable")
+            flat = flat[order]
+            order.setflags(write=False)
+        else:
+            # Keep the small separation of nearly coincident atoms. Each
+            # triangular row avoids an [S,S,D] subtraction workspace.
+            distance = np.zeros((s, s))
+            for i in range(s - 1):
+                row = np.hypot.reduce(flat[i + 1 :] - flat[i], axis=-1)
+                distance[i + 1 :, i] = distance[i, i + 1 :] = row
+            distance.setflags(write=False)
+        x.setflags(write=False)
+        flat.setflags(write=False)
         object.__setattr__(self, "scenarios", x)
         object.__setattr__(self, "_flat", flat)
         object.__setattr__(self, "_distances", distance)
+        object.__setattr__(self, "_order", order)
 
     @property
     def num_assets(self):
@@ -241,6 +246,23 @@ class ScenarioPlan:
             target.shape[: -(self.scenarios.ndim - 1)] + (self._flat.shape[-1],)
         )
         prefix = ops.broadcast_shape(p.shape[:-1], target.shape[:-1])
+        if self._order is not None:
+            # Integrate the empirical CDF against the observation step.
+            # Accumulate each tail directly to preserve rare scenario mass.
+            elements = rows(prefix) * self.num_scenarios
+            admission(14 * elements, self.max_memory_mb, work=16 * elements, max_work=self.max_work)
+            order = ops.kernel.asarray(self._order, xp=ops.xp, backend=ops.name, like=ops.like)
+            mass = p[..., order]
+            cdf = ops.cumsum(mass)[..., :-1]
+            survival = ops.xp.flip(ops.cumsum(ops.xp.flip(mass, (-1,))), (-1,))[..., 1:]
+            atoms = ops.array(self._flat[:, 0])
+            left, right = atoms[:-1], atoms[1:]
+            split = ops.xp.minimum(ops.xp.maximum(target, left), right)
+            intervals = (split - left) * cdf * cdf + (right - split) * survival * survival
+            outside = ops.maximum(atoms[0] - target[..., 0], 0) + ops.maximum(
+                target[..., 0] - atoms[-1], 0
+            )
+            return outside + ops.sum(ops.xp.where(left < right, intervals, 0))
         admission(6 * rows(prefix) * self._flat.size + 2 * self._distances.size, self.max_memory_mb)
         distances = ops.norm(ops.array(self._flat) - target[..., None, :])
         first = ops.sum(p * distances)
@@ -257,7 +279,9 @@ class ScenarioPlan:
             if index >= self.scenarios.shape[1]:
                 raise ValidationError("Scenario step exceeds the path horizon.")
             return self.scenarios[:, index]
-        return np.prod(1 + self.scenarios, axis=1) - 1
+        total_loss = self.scenarios == -1
+        log_growth = np.log1p(np.where(total_loss, 0, self.scenarios)).sum(axis=1)
+        return np.expm1(np.where(total_loss.any(axis=1), -np.inf, log_growth))
 
     def risk(self, probabilities, *, step=None, shrinkage=0.1, variance_floor=1e-8):
         return factor_risk(

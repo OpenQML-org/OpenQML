@@ -1,5 +1,24 @@
 # Changes
 
+## 0.41.0
+
+- Train Born classifiers with the likelihood of the measured class and return
+  their native probabilities from eager and streamed prediction. Accept single
+  images and sequences for convolution, attention and quantum-memory inference.
+- Keep masked attention and zero-probability losses finite in native training.
+  Preserve mixed-precision tensor placement, initial-state tangents and
+  scheduling indices after Pareto pruning.
+- Compute the exact scalar scenario score from cumulative masses in linear
+  space. Preserve close joint atoms, rare marked payoffs, and capped portfolio
+  budgets without cancellation. Fix Torch expectiles and turnover at zero equity.
+- Restore interoperability exports and loop dependencies. Preserve inverted
+  Cirq records and Qiskit sampler classical stores. Check register addresses and
+  nested import budgets, and compile Qiskit register broadcasts from Python source.
+- Keep unsupported CUDA probes on the CPU route and sample large statevectors
+  with a cumulative distribution. Retain empty-batch shapes and conserve
+  measurement shot budgets. Preserve provider failure counts and release a
+  reservation when the backend confirms that it submitted no job.
+
 ## 0.40.0
 
 - Check dynamic OpenQASM 3 addresses and Qiskit indexed reads and stores at

@@ -146,6 +146,35 @@ def test_validation_respects_spatial_readout_pooling(task):
     y = [0, 1, 0] if task == "classification" else [0.1, 0.2, 0.1]
     model.fit(x, y, validation_data=(x, y))
     assert np.isfinite(model.evaluate(x, y))
+    np.testing.assert_allclose(model.predict(x[0]), model.predict(x[:1])[0])
+    np.testing.assert_allclose(next(model.iter_predict(x[0])), model.predict(x[:1]))
+
+
+@pytest.mark.parametrize("framework", ["torch", "jax", "flax"])
+def test_born_classifier_fits_and_reports_native_probabilities(framework):
+    arch = oq.HybridArchitecture.generative(2, 1, depth=0, hidden_features=4)
+    model = make_model(framework, task="classification", architecture=arch)
+    x = np.array([[[0.2, -0.3], [0.4, 0.5]], [[0.1, 0.7], [-0.2, 0.4]]], np.float32)
+    labels = np.array([[0, 1], [1, 0]])
+
+    def nll(p):
+        return -np.log(np.take_along_axis(p, labels[..., None], axis=-1)).mean()
+
+    initial = arch.evaluate(arch.initial_parameters(model.seed, dtype="float32"), x)
+    model.fit(x, labels, batch_size=2, microbatch_size=1)
+    assert model.history[0]["loss"] == pytest.approx(nll(initial), rel=2e-5)
+    if framework == "torch":
+        import torch
+
+        native = model.module(torch.as_tensor(x)).detach().numpy()
+    else:
+        import jax.numpy as jnp
+
+        native = np.asarray(model.trainer.model(model.trainer.parameters, jnp.asarray(x)))
+    np.testing.assert_allclose(model.predict_proba(x), native, atol=2e-6)
+    streamed = np.concatenate(list(model.iter_predict(x, output="probabilities", batch_size=1)))
+    np.testing.assert_allclose(streamed, native, atol=2e-6)
+    assert model.evaluate(x, labels) == pytest.approx(nll(native), rel=2e-5)
 
 
 def test_empty_target_axes_raise_validation_error_before_label_reduction():

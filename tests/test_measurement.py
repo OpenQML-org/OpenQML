@@ -10,11 +10,23 @@ from openqml import (
     ShotBackend,
     ValidationError,
     estimate,
+    estimate_adaptive,
     expectations_batch,
     measurement_plan,
     parameter_shift_jacobian,
     parameter_shift_vjp,
 )
+
+
+def test_empty_estimate_batches_and_large_shot_quotas():
+    observables = (PauliString("X"), PauliString("Z", 3))
+    shots = (1 << 63) - 1
+    allocation = measurement_plan(observables).allocate(shots)
+    assert sum(allocation) == shots and min(allocation) >= 2
+    result = estimate([], observables)
+    assert result.values.shape == (0, 2) and result.covariance.shape == (0, 2, 2)
+    adaptive = estimate_adaptive([], observables, shots=100)
+    assert adaptive.values.shape == (0, 2) and adaptive.pilot_shots_per_group == ()
 
 
 def test_shared_shots_capture_cross_output_covariance_and_identity():

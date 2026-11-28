@@ -150,11 +150,33 @@ def test_qiskit_custom_gate_cannot_impersonate_standard_name():
     np.testing.assert_allclose(statevector(restored), statevector(Circuit(1).h(0)))
 
 
+def test_cirq_inverted_measurements_preserve_physical_state_feedback_and_budgets():
+    cirq = pytest.importorskip("cirq")
+    sympy = pytest.importorskip("sympy")
+    a, b = cirq.LineQubit.range(2)
+    native = cirq.Circuit(
+        cirq.X(b),
+        cirq.measure(a, b, key="pair", invert_mask=(True,)),
+        cirq.X(b).with_classical_controls(sympy.Eq(sympy.Symbol("pair"), 3)),
+        cirq.measure(a, key="c0"),
+        cirq.measure(b, key="c1"),
+    )
+    records = cirq.Simulator(seed=4).run(native, repetitions=8).measurements
+    np.testing.assert_array_equal(records["pair"], np.ones((8, 2)))
+    np.testing.assert_array_equal(records["c0"] + records["c1"], np.zeros((8, 1)))
+    ir = convert(native, target="ir", source_options={"measurement_map": {"pair": (3, 2)}}).value
+    assert sample(ir, 8, backend="numpy") == {"0011": 8}
+    single = cirq.Circuit(cirq.measure(a, key="c0", invert_mask=(True,)))
+    assert len(convert(single, target="ir", max_operations=3).value.operations) == 3
+    with pytest.raises(ConversionError, match="EXPANSION_LIMIT"):
+        convert(single, target="ir", max_operations=2)
+
+
 def test_cirq_unsupported_measurement_transform():
     cirq = pytest.importorskip("cirq")
     q = cirq.LineQubit(0)
     for op in (
-        cirq.measure(q, key="c0", invert_mask=(True,)),
+        cirq.measure(q, key="c0", confusion_map={(0,): np.eye(2)}),
         cirq.measure(q, key="arbitrary_name"),
     ):
         with pytest.raises(ConversionError):

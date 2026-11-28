@@ -11,9 +11,9 @@ def operation_resources(op):
     resources = {(0, q) for q in op.qubits} | {(1, c) for c in op.clbits}
     if op.condition is not None:
         resources.update((1, c) for c in op.condition.bits)
-        for block in op.blocks:
-            for child in block.operations:
-                resources.update(operation_resources(child))
+    for block in op.blocks:
+        for child in block.operations:
+            resources.update(operation_resources(child))
     return resources
 
 

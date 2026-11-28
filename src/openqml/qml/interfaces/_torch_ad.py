@@ -21,7 +21,8 @@ _HIGHER_ORDER = (
 
 
 def _numpy(value):
-    return value.detach().cpu().numpy()
+    value = value.detach().cpu()
+    return (value.float() if value.dtype == torch.bfloat16 else value).numpy()
 
 
 def _batch_values(size, dimensions, values):

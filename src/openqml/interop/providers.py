@@ -337,7 +337,8 @@ class QiskitSamplerBackend:
         circuits, options = _submission(circuits, self, options)
         shots = validate_shots(shots)
         measured = [
-            c if c.has_measurements else replace(c, num_clbits=0).measure_all() for c in circuits
+            c if c.has_classical_outputs else replace(c, num_clbits=0).measure_all()
+            for c in circuits
         ]
         jobs, layouts = [], []
         for rows, prototype, bindings in parameter_batches(measured, options.max_memory_mb):
