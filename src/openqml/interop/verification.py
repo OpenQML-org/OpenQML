@@ -244,7 +244,9 @@ def _bounded_records(circuit, max_branches, remaining_work, unit_work, size, bud
 
 
 def _runtime_roundtrip(plan, circuit, restored, size, budget, remaining, max_branches, atol, rtol):
-    from ..sim._runtime_control import run_control
+    from ..ir._control import RuntimeIndexError
+    from ..sim._absorption import absorbing_instrument
+    from ..sim._runtime_control import RecurrentControl, run_control
     from ..sim.dense import _TensorOps
 
     _basis_capacity((circuit, restored), (1, 1), size, budget)
@@ -258,29 +260,47 @@ def _runtime_roundtrip(plan, circuit, restored, size, budget, remaining, max_bra
         if remaining < 0:
             raise ResourceError("Runtime conversion verification exceeds max_work.")
 
-    for start in range(size):
-        basis = np.zeros((1, size), dtype=complex)
-        basis[0, start] = 1
-        results = []
-        for program in (circuit, restored):
-            charge(size)
-            results.append(
-                run_control(
-                    program,
-                    {},
-                    _TensorOps(),
-                    (1,),
-                    input_operator=basis,
-                    max_memory_mb=local_mb,
-                    max_branches=max_branches,
-                    retain_classical=True,
-                    max_loop_steps=max(1, remaining),
-                    charge=charge,
+    try:
+        for start in range(size):
+            basis = np.zeros((1, size), dtype=complex)
+            basis[0, start] = 1
+            results = []
+            for program in (circuit, restored):
+                charge(size)
+                results.append(
+                    run_control(
+                        program,
+                        {},
+                        _TensorOps(),
+                        (1,),
+                        input_operator=basis,
+                        max_memory_mb=local_mb,
+                        max_branches=max_branches,
+                        retain_classical=True,
+                        max_loop_steps=max(1, remaining),
+                        charge=charge,
+                    )
                 )
+            if not any(results):
+                results = [{frozenset(): np.zeros_like(basis)} for _ in results]
+            comparison.add(*results, start, atol, rtol)
+    except (RecurrentControl, RuntimeIndexError):
+        results = [
+            absorbing_instrument(
+                program,
+                {},
+                _TensorOps(),
+                (),
+                complete_basis=True,
+                max_memory_mb=local_mb,
+                max_branches=max_branches,
+                retain_classical=True,
+                charge=charge,
             )
-        if not any(results):
-            results = [{frozenset(): np.zeros_like(basis)} for _ in results]
-        comparison.add(*results, start, atol, rtol)
+            for program in (circuit, restored)
+        ]
+        comparison = _Comparison()
+        comparison.add(*results, 0, atol, rtol)
     return comparison.result(circuit, plan.target_format, "quantum_instrument", size, atol, rtol)
 
 
@@ -303,6 +323,8 @@ def _verify_conversion(
     if not isinstance(mode, str) or mode not in {"roundtrip", "native"}:
         raise ValidationError("Verification mode must be roundtrip or native.")
     if mode == "native":
+        if plan.portable:
+            raise ValidationError("Portable programs are verified through the OpenQML runtime.")
         from ._native_verification import _native_scope
 
         _native_scope(plan.circuit, plan.target_format, source_options)
@@ -331,6 +353,8 @@ def _verify_conversion(
             max_operations=plan.max_operations,
             max_depth=plan.max_depth,
             max_output_statements=plan.max_output_statements,
+            max_output_bytes=plan.max_output_bytes,
+            portable=plan.portable,
         )
         circuit = plan.circuit
     if circuit.parameters:

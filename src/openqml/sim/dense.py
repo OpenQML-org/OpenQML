@@ -1061,6 +1061,7 @@ def execute(
     max_branches=256,
     max_loop_steps=100_000,
     classical_bits=None,
+    like=None,
 ) -> ExecutionResult:
     """Execute locally, optionally sampling final classical storage.
 
@@ -1080,6 +1081,7 @@ def execute(
         max_branches=max_branches,
         max_loop_steps=max_loop_steps,
         classical_bits=classical_bits,
+        like=like,
     )
 
 
@@ -1096,6 +1098,7 @@ def _execute(
     max_loop_steps=100_000,
     classical_bits=None,
     counts_only=False,
+    like=None,
 ):
     _require_circuit(circuit)
     if bindings is not None:
@@ -1110,7 +1113,6 @@ def _execute(
     from ..runtime.backends import ExecutionOptions, get_backend
 
     options = ExecutionOptions(max_qubits, max_memory_mb, seed, max_branches)
-    device = get_backend(backend)
     if shots is not None or counts_only:
         shots = validate_shots(shots)
     classical_bits = validate_classical_bits(circuit, classical_bits)
@@ -1118,6 +1120,23 @@ def _execute(
         raise ValidationError("Set shots when selecting classical count bits.")
     if circuit.has_measurements and shots is None:
         raise ValidationError("Set shots for a measured circuit.")
+    if circuit.has_runtime_control and isinstance(backend, str) and backend in {"torch", "jax"}:
+        from ._absorption import execute_tensor_control
+
+        return execute_tensor_control(
+            circuit,
+            bindings,
+            backend,
+            options,
+            shots,
+            classical_bits,
+            max_loop_steps,
+            like,
+            counts_only,
+        )
+    if like is not None:
+        raise ValidationError("like selects the device for Torch or JAX runtime control.")
+    device = get_backend(backend)
     bound = circuit.bind({} if bindings is None else bindings)
     from ..runtime.scheduler import resolve_backend
 

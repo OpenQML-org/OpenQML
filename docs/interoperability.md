@@ -223,8 +223,18 @@ preserve runtime iteration for supported loop conditions.
 ## Runtime loops and addressed wires
 
 Qiskit and OpenQASM 3 can exchange runtime loops through OpenQML IR and JSON.
-Older IR versions remain readable. Cirq, PennyLane tape and OpenQASM 2 exports
-report an unsupported runtime loop before export.
+Cirq exports supported measurement-controlled loops as native
+`CircuitOperation` repeat-until operations. The Cirq import retains the final
+measurement values and checks that the exit condition reads the current
+iteration's measurements. PennyLane tapes and OpenQASM 2 accept loops after
+their control has been resolved to a finite sequence of operations.
+
+For other control structures, pass `portable=True` to `plan_conversion` or
+`convert`. The result carries the requested target and an executable
+`PortableProgram`. Its JSON representation retains IR registers, runtime
+branches, exits and index errors. Load it with `PortableProgram.from_json` and
+call `execute` to run it through OpenQML. Use `to_native` when the target
+supports all of its operations.
 
 ```python
 import openqml as oq
@@ -249,16 +259,38 @@ A dynamic quantum wire lowers to conditional operations on concrete wires.
 The core frontend accepts unsigned register and bit selectors, unsigned casts,
 and literal masks. A comparison with a literal can prove a smaller range.
 A write to the index invalidates the bound. The same dispatch handles classical
-reads, writes and measurement destinations. Unproved bounds, aliased gate
-operands, and excessive expansion produce a conversion diagnostic.
+reads, writes and measurement destinations. When a static proof is unavailable,
+IR v7 retains a runtime range check. An out-of-range execution raises
+`CLASSICAL_INDEX_RANGE` before the addressed operation. Native exports that
+cannot represent this error return a diagnostic. The portable form retains it.
 
 NumPy samples measurement-controlled loops until every shot exits.
 `max_loop_steps` bounds executed instructions across trajectory groups.
-Exhausting the budget raises an error. For finitely resolved paths,
-`density_matrix` sums branch contributions and `plan.verify()` compares a
-complete operator basis. A recurrent branch can exceed the scope of exact
-verification, even when termination has probability one. Sampling remains
-available for these programs.
+For probability-one loops with an unbounded number of possible iterations,
+`density_matrix` evaluates the limit of the quantum instrument on the finite
+control graph. `plan.verify()` checks termination and compares the instrument
+on a complete operator basis at the selected bindings. Both enforce numerical
+convergence and their resource budgets. Programs with nonzero nontermination
+probability produce a diagnostic.
+
+Set `backend="torch"` or `backend="jax"` for runtime density calculation
+and sampling on those tensor backends. Keep parameters as native tensors
+when differentiating the density result. `execute` and `sample` return
+classical counts as Python dictionaries.
+
+## Import Python circuit builders
+
+Pass `source="python"` to convert a bounded circuit-building entry point.
+The static frontend accepts explicit circuit constructors, scalar arguments,
+arithmetic, finite `range` loops, gates, measurements and supported Qiskit
+control contexts. Use `source_options={"entrypoint": "build", "arguments": {...}}`
+to select a function and its concrete arguments. Source text is compiled
+without executing imports or arbitrary statements.
+
+Pass a trusted callable with `source="python"` and explicit `args` or `kwargs`
+to capture the circuit it returns. This entry point covers the returned
+circuit. Python I/O, callbacks, device services and other surrounding
+application behavior stay with their host program.
 
 ## Finite loops with early exits
 

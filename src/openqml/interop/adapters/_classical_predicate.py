@@ -9,6 +9,7 @@ class _BDD:
         self.limit, self.depth, self.location = work, depth, location
         self.work = 0
         self.reachable = 1
+        self.index_error = 0
         self.nodes = [None, None]
         self.heights = [0, 0]
         self.unique, self.cache = {}, {}
@@ -156,12 +157,17 @@ class _BitVectors:
         extended = amount + (0,) * (width - len(amount))
         bound = tuple((size >> i) & 1 for i in range(width))
         _, greater_equal = self.add(extended, bound, subtract=True, with_carry=True)
-        if self.bdd.apply("and", self.bdd.reachable, greater_equal):
-            raise conversion_error(
-                "CLASSICAL_INDEX_RANGE" if index else "CLASSICAL_SHIFT_RANGE",
-                "Every possible index/shift must be symbolically proven inside its operand width.",
-                self.bdd.location,
-            )
+        invalid = self.bdd.apply("and", self.bdd.reachable, greater_equal)
+        if not invalid:
+            return
+        if index and any(bit >= 2 for bit in amount):
+            self.bdd.index_error = self.bdd.apply("or", self.bdd.index_error, invalid)
+            return
+        raise conversion_error(
+            "CLASSICAL_INDEX_RANGE" if index else "CLASSICAL_SHIFT_RANGE",
+            "Index or shift exceeds the operand width.",
+            self.bdd.location,
+        )
 
     def shift(self, bits, amount, *, left=False, index=False):
         size = len(bits)
@@ -170,8 +176,11 @@ class _BitVectors:
         for i, control in enumerate(amount):
             if control == 0:
                 continue
-            step = 1 << i
-            shifted = (0,) * step + bits[: size - step] if left else bits[step:] + (0,) * step
+            if i >= (size - 1).bit_length():
+                shifted = (0,) * size
+            else:
+                step = 1 << i
+                shifted = (0,) * step + bits[: size - step] if left else bits[step:] + (0,) * step
             if control == 1:
                 bits = shifted
             else:

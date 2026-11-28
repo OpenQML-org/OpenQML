@@ -7,8 +7,12 @@ import numpy as np
 
 from ..compute.kernel import get_compute_kernel
 from ..errors import ResourceError, ValidationError
-from ..ir._control import control_program
+from ..ir._control import INDEX_RANGE_ERROR, RuntimeIndexError, control_program
 from ..ir.core import CHANNEL_GATES, integer
+
+
+class RecurrentControl(ResourceError):
+    """Finite path enumeration encountered a repeated quantum configuration."""
 
 
 def _operator_digest(state):
@@ -87,9 +91,9 @@ def run_control(
 
     def check(live, extra=0):
         if live > max_branches:
-            raise ResourceError("Runtime execution exceeds max_branches.")
+            raise RecurrentControl("Runtime execution exceeds max_branches.")
         if live * state_bytes + extra + pending_bytes + output_bytes > available:
-            raise ResourceError("Runtime execution exceeds max_memory_mb.")
+            raise RecurrentControl("Runtime execution exceeds max_memory_mb.")
 
     def add_count(key, num):
         nonlocal output_bytes
@@ -105,7 +109,7 @@ def run_control(
         while pc != -1:
             steps += 1
             if steps > limit:
-                raise ResourceError("Runtime control exceeds max_loop_steps before termination.")
+                raise RecurrentControl("Runtime control exceeds max_loop_steps before termination.")
             op, following, other = code[pc]
             name = op.name
             if charge is not None:
@@ -124,7 +128,7 @@ def run_control(
                         break
                     signature = pc, key, digest
                     if signature in visited:
-                        raise ResourceError(
+                        raise RecurrentControl(
                             "A recurrent loop path has no finite termination proof. "
                             "Use sample() for trajectories."
                         )
@@ -136,6 +140,11 @@ def run_control(
             pc = following
             if name == "barrier":
                 continue
+            if name == "index_error":
+                if np.any(state):
+                    raise RuntimeIndexError(INDEX_RANGE_ERROR)
+                state = None
+                break
             if name == "classical_set":
                 bit = op.clbits[0]
                 key = key | {bit} if op.params[0].constant else key - {bit}

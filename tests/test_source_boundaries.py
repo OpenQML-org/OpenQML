@@ -100,6 +100,43 @@ def test_classical_target_keyword_is_not_misidentified_as_hardware():
     assert "PYTHON_HARDWARE_CONTEXT" not in codes(report)
 
 
+def test_python_circuit_frontend_compiles_bounded_builders_and_runtime_conditions():
+    source = """from qiskit import QuantumCircuit
+def build(n=2):
+    circuit = QuantumCircuit(n, 1)
+    for q in range(n):
+        circuit.x(q)
+    circuit.measure(0, 0)
+    with circuit.while_loop((circuit.clbits[0], True)):
+        circuit.x(0)
+        circuit.measure(0, 0)
+    return circuit
+"""
+    plan = oq.plan_conversion(
+        source, source="python", target="openqasm3", source_options={"arguments": {"n": 3}}
+    )
+    assert plan.source_format == "python" and plan.circuit.num_qubits == 3
+    assert oq.sample(plan.circuit, 5) == {"0": 5}
+    assert plan.verify().matched
+    with pytest.raises(oq.ConversionError, match="OPERATION_LIMIT"):
+        oq.convert(source, source="python", target="ir", max_operations=3)
+
+
+def test_python_callable_capture_only_runs_the_explicit_factory():
+    calls = []
+
+    def build(angle):
+        calls.append(angle)
+        return oq.Circuit(1).rx(angle, 0)
+
+    plan = oq.plan_conversion(
+        build, source="python", target="json", source_options={"args": (0.3,)}
+    )
+    assert calls == [0.3] and plan.source_format == "python"
+    assert plan.verify().matched
+    assert calls == [0.3]
+
+
 @pytest.mark.parametrize("kwargs", [{"max_tokens": 0}, {"max_nodes": True}, {"max_diagnostics": 1}])
 def test_source_inspection_options_are_validated(kwargs):
     with pytest.raises(oq.ValidationError):

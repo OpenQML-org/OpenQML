@@ -213,10 +213,90 @@ def test_repeat_until_measurement_preserves_parity_and_termination():
     assert set(counts) == {"10", "11"} and sum(counts.values()) == 12_000
     # The parity qubit is one after an odd number of fair trials.
     assert abs(counts["11"] / 12_000 - 2 / 3) < 0.02
+    np.testing.assert_allclose(oq.density_matrix(circuit), np.diag([0, 0, 1 / 3, 2 / 3]))
+    plan = oq.plan_conversion(circuit, target="openqasm3")
+    assert plan.verify(max_work=48_000_000).matched
     with pytest.raises(oq.ResourceError, match="recurrent"):
-        oq.density_matrix(circuit)
+        oq.density_matrix(oq.Circuit(1).while_loop(None, oq.Circuit(1)))
     with pytest.raises(oq.ResourceError, match="max_loop_steps"):
         oq.sample(oq.Circuit(1).while_loop(None, oq.Circuit(1)), shots=3, max_loop_steps=9)
+
+
+def test_absorption_checks_rare_exits_and_detects_probability_leakage():
+    guard = oq.ClassicalCondition((0,), 1)
+    retry = oq.Circuit(1).reset(0).ry(2 * np.arcsin(np.sqrt(1e-10)), 0).measure(0, 0)
+    loop = oq.Circuit(1).while_loop(None, retry.if_else(guard, oq.Circuit(1).break_loop()))
+    np.testing.assert_allclose(oq.density_matrix(loop), np.diag([0, 1]), atol=3e-12)
+    assert oq.plan_conversion(loop, target="json").verify().matched
+
+    initial = oq.Circuit(1).h(0).measure(0, 0)
+    dark = initial.while_loop(guard, oq.Circuit(1).measure(0, 0))
+    with pytest.raises(oq.ResourceError, match="probability-one termination"):
+        oq.density_matrix(dark)
+
+
+@pytest.mark.parametrize("backend", ["torch", "jax"])
+def test_absorbing_loop_preserves_native_gradient_and_sampling(backend):
+    xp = pytest.importorskip(backend)
+    guard = oq.ClassicalCondition((0,), 1)
+    angle = oq.Parameter("angle")
+    body = (
+        oq.Circuit(2)
+        .reset(0)
+        .ry(angle, 0)
+        .measure(0, 0)
+        .x(1)
+        .if_else(guard, oq.Circuit(2).break_loop())
+    )
+    circuit = oq.Circuit(2).while_loop(None, body).measure(1, 1)
+    value = 0.8
+    probability = np.sin(value / 2) ** 2
+
+    def odd(x):
+        return oq.density_matrix(circuit, {"angle": x}, backend=backend).real[3, 3]
+
+    if backend == "torch":
+        x = xp.tensor(value, dtype=xp.float64, requires_grad=True)
+        result = odd(x)
+        (gradient,) = xp.autograd.grad(result, x)
+        actual = float(result.detach()), float(gradient)
+    else:
+        x = xp.numpy.asarray(value)
+        result, gradient = xp.jit(xp.value_and_grad(odd))(x)
+        actual = float(result), float(gradient)
+    np.testing.assert_allclose(
+        actual,
+        [1 / (2 - probability), np.sin(value) / (2 * (2 - probability) ** 2)],
+        atol=4e-6,
+    )
+    counts = oq.sample(circuit, 3000, {"angle": x}, backend=backend, seed=44)
+    assert set(counts) == {"10", "11"} and sum(counts.values()) == 3000
+    assert abs(counts["11"] / 3000 - 1 / (2 - probability)) < 0.04
+
+
+def test_cirq_native_repeat_preserves_terminal_measurement():
+    cirq = pytest.importorskip("cirq")
+    guard = oq.ClassicalCondition((0,), 1)
+    retry = oq.Circuit(1).reset(0).h(0).measure(0, 0)
+    circuit = oq.Circuit(1).while_loop(None, retry.if_else(guard, oq.Circuit(1).break_loop()))
+    plan = oq.plan_conversion(circuit, target="cirq")
+    native = plan.export().value
+    assert next(native.all_operations()).repeat_until is not None
+    assert cirq.Simulator(seed=7).simulate(native).measurements["c0"][-1] == 1
+    assert plan.verify().matched
+
+
+@pytest.mark.parametrize("target", ["cirq", "pennylane", "openqasm2"])
+def test_portable_runtime_export_retains_control_and_executes_without_sdk(target):
+    guard = oq.ClassicalCondition((0,), 1)
+    body = oq.Circuit(1).x(0).measure(0, 0)
+    circuit = body.while_loop(guard, body)
+    plan = oq.plan_conversion(circuit, target=target, portable=True)
+    assert plan.compatible and not plan.required_integrations
+    transport = oq.PortableProgram.from_json(plan.export().value.to_json())
+    assert transport.target_format == target and transport.circuit == circuit
+    assert transport.execute(shots=5).counts == {"0": 5}
+    assert plan.verify().matched
 
 
 def test_finite_measurement_loop_can_revisit_the_same_classical_record():
@@ -241,10 +321,10 @@ def test_runtime_schema_and_unsupported_targets():
     old["version"] = 5
     with pytest.raises(oq.ValidationError):
         oq.Circuit.from_dict(old)
-    for target in ("cirq", "pennylane", "openqasm2"):
-        assert "CONTROL_FLOW_UNSUPPORTED" in {
-            d.code for d in oq.plan_conversion(circuit, target=target).diagnostics
-        }
+    for target in ("pennylane", "openqasm2"):
+        plan = oq.plan_conversion(circuit, target=target)
+        assert plan.compatible and not plan.prepared_circuit.has_runtime_control
+    assert oq.plan_conversion(circuit, target="openqasm2").verify().matched
     with pytest.raises(oq.ConversionError, match="CLASSICAL_CONTROL"):
         oq.convert(oq.Circuit(1).break_loop(), target="ir")
     with pytest.raises(oq.ResourceError, match="max_work"):

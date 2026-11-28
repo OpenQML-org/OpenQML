@@ -3,6 +3,7 @@
 from .._lazy import resolve as _resolve
 
 _EXPORTS = {
+    "PortableProgram": (".portable", "PortableProgram"),
     "convert": (".conversion", "convert"),
     "diagnose": (".conversion", "diagnose"),
     "plan_conversion": (".conversion", "plan_conversion"),

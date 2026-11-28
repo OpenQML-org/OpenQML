@@ -255,10 +255,12 @@ def from_pennylane(
 
 
 def to_pennylane(circuit: Circuit, bindings=None, *, max_operations=100_000, max_depth=64):
+    from ...ir._control import flatten_static_control
     from ...ir.compiler import _check_circuit_limits
 
     _check_circuit_limits(circuit, max_operations=max_operations, max_depth=max_depth)
     circuit = bound_for_export(circuit, bindings)
+    circuit = flatten_static_control(circuit)
     qml = dependency("pennylane", "pennylane")
     from ..conversion import diagnose
 

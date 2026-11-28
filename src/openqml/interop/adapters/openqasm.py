@@ -927,6 +927,10 @@ def to_openqasm(
 
     _check_circuit_limits(circuit, max_operations=max_operations, max_depth=max_depth)
     circuit = bound_for_export(circuit, bindings)
+    if version == 2:
+        from ...ir._control import flatten_static_control
+
+        circuit = flatten_static_control(circuit)
     from ..conversion import diagnose
 
     limits = {

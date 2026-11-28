@@ -1,5 +1,19 @@
 # Changes
 
+## 0.40.0
+
+- Check dynamic OpenQASM 3 addresses and Qiskit indexed reads and stores at
+  execution when a static range proof is unavailable. IR v7 carries the error
+  branch and continues to read v1–v6 circuits.
+- Exchange measurement-based Cirq repeat-until loops and resolve deterministic
+  runtime control before exporting PennyLane tapes or OpenQASM 2. A portable
+  program retains dynamic behavior for execution through OpenQML.
+- Sum terminating feedback paths over an absorbing quantum instrument. NumPy
+  verifies the instrument on a complete operator basis. Torch and JAX compute
+  native density outputs and gradients and sample the final classical record.
+- Compile bounded Python circuit builders with explicit entry arguments.
+  Circuit factories can also be captured through the conversion interface.
+
 ## 0.39.1
 
 - Fix exact density simulation and conversion verification for finite

@@ -63,7 +63,8 @@ GATES_V4 = frozenset(GATES)
 GATES["classical_set"] = (0, 1)
 LOOP_OPERATIONS = frozenset({"while_loop", "break_loop", "continue_loop"})
 GATES.update({name: (0, 0) for name in LOOP_OPERATIONS})
-IR_VERSION = 6
+GATES["index_error"] = (0, 0)
+IR_VERSION = 7
 _ZERO_PHASE = Expression()
 GATES_V2 = GATES_V3 - {"unitary"}
 GATES_V1 = GATES_V2 - {"u", "sxdg", "cp", "crx", "cry", "crz", "ch", "cswap", "iswap"}
@@ -120,7 +121,7 @@ class Operation:
         if (
             not qubits
             and self.name not in LOOP_OPERATIONS
-            and self.name not in {"if_else", "classical_set"}
+            and self.name not in {"if_else", "classical_set", "index_error"}
         ) or (arity is not None and len(qubits) != arity):
             raise ValidationError(f"{self.name} expects {arity or 'one or more'} qubits.")
         if len(set(qubits)) != len(qubits):
@@ -448,7 +449,10 @@ class Circuit(_CircuitGates):
 
     @property
     def has_runtime_control(self):
-        return any(op.name in LOOP_OPERATIONS for _, op in self.walk_operations())
+        return any(
+            op.name in LOOP_OPERATIONS or op.name == "index_error"
+            for _, op in self.walk_operations()
+        )
 
     def walk_operations(self, prefix=()):
         for index, op in enumerate(self.operations):
@@ -679,9 +683,16 @@ class Circuit(_CircuitGates):
         def encode(p):
             return p.to_dict()
 
+        version = 5
+        for _, operation in self.walk_operations():
+            if operation.name == "index_error":
+                version = IR_VERSION
+                break
+            if operation.name in LOOP_OPERATIONS:
+                version = 6
         return {
             "schema": "openqml.ir",
-            "version": IR_VERSION if self.has_runtime_control else 5,
+            "version": version,
             "bit_order": "q0-msb",
             "num_qubits": self.num_qubits,
             "num_clbits": self.num_clbits,
@@ -752,7 +763,7 @@ class Circuit(_CircuitGates):
             if (
                 payload["schema"] != "openqml.ir"
                 or type(payload["version"]) is not int
-                or payload["version"] not in {1, 2, 3, 4, 5, IR_VERSION}
+                or payload["version"] not in {1, 2, 3, 4, 5, 6, IR_VERSION}
                 or payload["bit_order"] != "q0-msb"
             ):
                 raise ValidationError("Unsupported IR schema, version, or bit order.")
@@ -787,6 +798,13 @@ class Circuit(_CircuitGates):
                     )
                 ):
                     raise ValidationError("Runtime control requires IR v6.")
+                if payload["version"] < 7 and (
+                    op["name"] == "index_error"
+                    or any(
+                        isinstance(b, dict) and b.get("version") == 7 for b in op.get("blocks", ())
+                    )
+                ):
+                    raise ValidationError("Runtime index errors require IR v7.")
                 if payload["version"] < 5 and op["name"] not in GATES_V4:
                     raise ValidationError("This IR schema does not support classical assignment.")
                 if payload["version"] < 3 and op["name"] == "unitary":

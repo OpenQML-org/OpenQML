@@ -54,6 +54,8 @@ class Address:
     start: int
     digits: tuple
     extent: int
+    high_bits: tuple = ()
+    checked: bool = False
 
 
 def runtime_address(text, registers, classical, bounds, limit, location):
@@ -67,13 +69,13 @@ def runtime_address(text, registers, classical, bounds, limit, location):
     upper = bounds.get(digits)
     if upper is not None:
         digits = tuple((b, i) for b, i in digits if i < max(0, upper - 1).bit_length())
-    if (upper is None or upper > width) and (
-        any(i >= width.bit_length() for _, i in digits) or sum(1 << i for _, i in digits) >= width
-    ):
-        raise conversion_error(
-            "CLASSICAL_INDEX_RANGE", "The address can exceed the register width.", location
-        )
-    return Address(base, digits, width if upper is None else min(width, upper))
+    extent = width if upper is None else min(width, upper)
+    if upper is not None and upper <= width:
+        return Address(base, digits, extent)
+    size = (width - 1).bit_length()
+    low = tuple((b, i) for b, i in digits if i < size)
+    high = tuple(b for b, i in digits if i >= size)
+    return Address(base, low, extent, high, bool(high) or sum(1 << i for _, i in low) >= width)
 
 
 def split_operands(text):
@@ -94,13 +96,15 @@ def addressed(groups, emit, nq, nc, limit, depth, location):
     if not indices:
         yield from emit(groups)
         return
-    bits = tuple(sorted({b for g in indices for b, _ in g.digits}))
-    if len(bits) > depth or len(bits) >= (limit + 1).bit_length():
+    high = {b for g in indices for b in g.high_bits}
+    bits = tuple(sorted({b for g in indices for b, _ in g.digits} - high))
+    if len(bits) + bool(high) > depth or len(bits) >= (limit + 1).bit_length():
         raise conversion_error(
             "OPERATION_LIMIT", "Dynamic dispatch exceeds the depth/work budget.", location
         )
-    work = 0
+    work = 2 if high else 0
     empty = Circuit(nq, num_clbits=nc)
+    invalid = empty.gate("index_error")
 
     def visit(level, ones):
         nonlocal work
@@ -121,7 +125,7 @@ def addressed(groups, emit, nq, nc, limit, depth, location):
             if isinstance(group, Address):
                 index = sum(1 << i for b, i in group.digits if b in ones)
                 if index >= group.extent:
-                    return empty
+                    return invalid if group.checked else empty
                 targets.append((group.start + index,))
             else:
                 targets.append(group)
@@ -135,7 +139,10 @@ def addressed(groups, emit, nq, nc, limit, depth, location):
             ops.append(op)
         return Circuit(nq, tuple(ops), nc)
 
-    yield from visit(0, frozenset()).operations
+    result = visit(0, frozenset())
+    if high:
+        result = empty.if_else(ClassicalCondition(tuple(sorted(high)), 0), result, invalid)
+    yield from result.operations
 
 
 @dataclass(frozen=True)

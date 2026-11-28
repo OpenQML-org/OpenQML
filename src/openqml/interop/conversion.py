@@ -89,6 +89,10 @@ def diagnose(
     from .adapters._common import bound_for_export
 
     circuit = bound_for_export(circuit, None)
+    if target in {"openqasm2", "pennylane"}:
+        from ..ir._control import flatten_static_control
+
+        circuit = flatten_static_control(circuit)
     if target not in BUILTIN_FORMATS:
         adapter = get_adapter(target)
         diagnostics = () if adapter.diagnose is None else tuple(adapter.diagnose(circuit))
@@ -154,8 +158,21 @@ def diagnose(
                 )
             )
     written = []
+    repeat_forms = {}
+    if target == "cirq" and circuit.has_runtime_control:
+        from .adapters._cirq_loops import repeat_forms as cirq_repeats
+
+        repeat_forms = cirq_repeats(circuit)
     for path, op in circuit.walk_operations():
         location = _operation_location(path)
+        if op.name == "index_error" and target not in {"ir", "json"}:
+            diagnostics.append(
+                Diagnostic(
+                    "RUNTIME_INDEX_CHECK_UNSUPPORTED",
+                    f"{target} cannot carry the runtime invalid-index error.",
+                    location,
+                )
+            )
         if op.name == "classical_set" and target not in {"qiskit", "openqasm3", "ir", "json"}:
             diagnostics.append(
                 Diagnostic(
@@ -181,11 +198,16 @@ def diagnose(
                         location,
                     )
                 )
-        if op.name in {"while_loop", "break_loop", "continue_loop"} and target in {
-            "cirq",
-            "openqasm2",
-            "pennylane",
-        }:
+        if (
+            op.name in {"while_loop", "break_loop", "continue_loop"}
+            and target
+            in {
+                "cirq",
+                "openqasm2",
+                "pennylane",
+            }
+            and path[0] not in repeat_forms
+        ):
             diagnostics.append(
                 Diagnostic(
                     "CONTROL_FLOW_UNSUPPORTED", f"{target} cannot encode runtime loops.", location
@@ -286,6 +308,7 @@ class ConversionPlan:
     max_depth: int = 64
     max_output_statements: int = 100_000
     max_output_bytes: int = 2_000_000
+    portable: bool = False
 
     @property
     def preparation_complete(self):
@@ -302,6 +325,8 @@ class ConversionPlan:
     @property
     def required_integrations(self):
         """Integrations used at export, without importing or probing their packages."""
+        if self.portable:
+            return ()
         extras = (
             {self.target_format} if self.target_format in {"qiskit", "cirq", "pennylane"} else set()
         )
@@ -318,8 +343,12 @@ class ConversionPlan:
         """A compatible plan covers circuit IR, not its surrounding Python runtime."""
         return {
             "unit": "circuit",
-            "python_program": "not_converted",
-            "dynamic_control": "representable_IR_subset_only",
+            "python_program": (
+                "declared_circuit_boundary" if self.source_format == "python" else "not_converted"
+            ),
+            "dynamic_control": "portable_IR_runtime"
+            if self.portable
+            else "representable_IR_subset_only",
             "custom_instructions": "supported_definition_matrix_or_adapter_required",
             "noise": "explicit_supported_IR_channels_only",
             "external_backend_configuration": "not_preserved",
@@ -339,6 +368,7 @@ class ConversionPlan:
             "version": 1,
             "source_format": self.source_format,
             "target_format": self.target_format,
+            "portable": self.portable,
             "compatible": self.compatible,
             "semantic_scope": self.semantic_scope,
             "preparation_complete": self.preparation_complete,
@@ -442,7 +472,7 @@ class ConversionPlan:
         if type(partial) is not bool:
             raise ValidationError("partial must be a boolean.")
         bound = self.circuit.bind(bindings, partial=partial)
-        if not self.compatible:
+        if self.portable or not self.compatible:
             plan = plan_conversion(
                 bound,
                 target=self.target_format,
@@ -450,6 +480,7 @@ class ConversionPlan:
                 max_depth=self.max_depth,
                 max_output_statements=self.max_output_statements,
                 max_output_bytes=self.max_output_bytes,
+                portable=self.portable,
             )
             return replace(plan, source_format=self.source_format, optimization=self.optimization)
         prepared = self.prepared_circuit if self.prepared_circuit is not None else self.circuit
@@ -501,7 +532,11 @@ class ConversionPlan:
         """Export exactly this plan, refusing every reported incompatibility."""
         self.raise_for_errors()
         circuit = self.prepared_circuit if self.prepared_circuit is not None else self.circuit
-        if self.target_format == "ir":
+        if self.portable:
+            from .portable import PortableProgram
+
+            value = PortableProgram(circuit, self.target_format)
+        elif self.target_format == "ir":
             value = circuit
         elif self.target_format == "json":
             value = circuit.to_json(max_bytes=self.max_output_bytes)
@@ -546,8 +581,10 @@ def plan_conversion(
     max_depth=64,
     max_output_statements=100_000,
     max_output_bytes=2_000_000,
+    portable=False,
 ) -> ConversionPlan:
     """Import and prepare a conversion; report all known target incompatibilities."""
+    from .portable import _TARGETS, PortableProgram
     from .program import QuantumProgram, detect_framework
 
     max_operations = integer(max_operations, "max_operations", 1)
@@ -556,6 +593,8 @@ def plan_conversion(
     max_output_bytes = integer(max_output_bytes, "max_output_bytes", 1)
     if type(optimize) is not bool:
         raise ValidationError("optimize must be a boolean.")
+    if type(portable) is not bool:
+        raise ValidationError("portable must be a boolean.")
     try:
         optimization_options = {} if optimization_options is None else dict(optimization_options)
     except (TypeError, ValueError) as exc:
@@ -577,13 +616,35 @@ def plan_conversion(
         program = value if bindings is None else value.bind(bindings)
         value, source, bindings = program.native, program.framework, None
         source_options = dict(program.import_options) | dict(source_options or {})
-    if source == "python" and "python" not in list_formats():
-        from .inspection import inspect_python
+    if isinstance(value, PortableProgram):
+        if source not in {None, "ir", value.target_format}:
+            raise conversion_error("SOURCE_FORMAT", "Portable program target metadata differs.")
+        value, source = value.circuit, "ir"
+    python_source = source == "python" and "python" not in list_formats()
+    if python_source:
+        _require_mapping(source_options if source_options is not None else {}, "source_options")
+        options = dict(source_options or {})
+        if callable(value):
+            args, kwargs = options.pop("args", ()), options.pop("kwargs", {})
+            framework = options.pop("framework", None)
+            if not isinstance(args, (tuple, list)) or not isinstance(kwargs, dict):
+                raise ValidationError("Pass callable args as a sequence and kwargs as a mapping.")
+            program = QuantumProgram.from_callable(value, *args, framework=framework, **kwargs)
+            value, source = program.native, program.framework
+            source_options = options
+        else:
+            from ._python_circuit import from_python
 
-        inspect_python(value, **(source_options or {})).raise_for_errors()
+            options["max_operations"] = min(
+                integer(options.get("max_operations", max_operations), "max_operations", 1),
+                max_operations,
+            )
+            value, source, source_options = from_python(value, **options), "ir", None
     if source is None:
         source = detect_framework(value)
     source, target = _format(source), _format(target)
+    if portable and target not in _TARGETS:
+        raise ValidationError("Portable export requires a native target.")
     source_options = {} if source_options is None else dict(source_options)
     if source in BUILTIN_FORMATS:
         context = set(source_options) & {
@@ -743,6 +804,12 @@ def plan_conversion(
             )
             for key, bits in source_options["measurement_map"].items()
         )
+    if python_source:
+        frontend_notes += (
+            Diagnostic(
+                "PYTHON_CIRCUIT_CAPTURE", "Imported the declared circuit boundary.", severity="info"
+            ),
+        )
     from .adapters._common import bound_for_export
 
     circuit = bound_for_export(circuit, bindings)
@@ -754,6 +821,35 @@ def plan_conversion(
         circuit = optimization.circuit
         frontend_notes += optimization.diagnostics
     original_circuit = circuit
+    if portable:
+        diagnostics = diagnose(
+            circuit,
+            "json",
+            max_operations=max_operations,
+            max_depth=max_depth,
+            max_output_bytes=max_output_bytes,
+        )
+        try:
+            PortableProgram(circuit, target).to_json(max_bytes=max_output_bytes)
+        except ValidationError as exc:
+            diagnostics += (Diagnostic("PORTABLE_OUTPUT_LIMIT", str(exc)),)
+        return ConversionPlan(
+            circuit=circuit,
+            source_format="python" if python_source else source,
+            target_format=target,
+            diagnostics=frontend_notes + diagnostics,
+            optimization=optimization,
+            prepared_circuit=circuit,
+            max_operations=max_operations,
+            max_depth=max_depth,
+            max_output_statements=max_output_statements,
+            max_output_bytes=max_output_bytes,
+            portable=True,
+        )
+    if target in {"openqasm2", "pennylane"}:
+        from ..ir._control import flatten_static_control
+
+        circuit = flatten_static_control(circuit)
     parameter_map = {}
     if target == "openqasm3":
         from ..ir.compiler import rename_parameters
@@ -851,7 +947,7 @@ def plan_conversion(
                 )
     return ConversionPlan(
         original_circuit,
-        source,
+        "python" if python_source else source,
         target,
         frontend_notes + diagnostics + notes,
         parameter_map,
@@ -877,6 +973,7 @@ def convert(
     max_depth=64,
     max_output_statements=100_000,
     max_output_bytes=2_000_000,
+    portable=False,
 ) -> ConversionResult:
     """Import -> prepare -> export, rejecting unsupported semantics explicitly."""
     return plan_conversion(
@@ -891,4 +988,5 @@ def convert(
         max_depth=max_depth,
         max_output_statements=max_output_statements,
         max_output_bytes=max_output_bytes,
+        portable=portable,
     ).export()

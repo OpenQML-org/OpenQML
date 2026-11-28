@@ -93,8 +93,8 @@ def test_provable_index_and_shift_ranges_and_expanded_work_have_bounded_diagnost
     )
     with dynamic.if_test(expr.index(dynamic.cregs[0], dynamic.cregs[1])):
         dynamic.x(0)
-    with pytest.raises(oq.ConversionError, match="RANGE"):
-        oq.convert(dynamic, target="ir")
+    compiled = oq.convert(dynamic, target="ir").value
+    assert np.argmax(oq.density_matrix(compiled).diagonal().real) == 0
     large = qiskit.QuantumCircuit(1)
     zero = expr.Value(0, types.Uint(200))
     with large.if_test(expr.equal(expr.mul(zero, zero), zero)):
@@ -173,5 +173,6 @@ def test_guarded_dynamic_read_invalidated_by_write():
         native.measure(0, addr[0])
         with native.if_test(expr.index(data, addr)):
             native.x(1)
-    with pytest.raises(oq.ConversionError, match="CLASSICAL_INDEX_RANGE"):
-        oq.convert(native, target="ir")
+    checked = oq.convert(native, target="ir").value
+    with pytest.raises(oq.ValidationError, match="CLASSICAL_INDEX_RANGE"):
+        oq.sample(checked, shots=3)

@@ -182,6 +182,7 @@ class QuantumProgram:
         max_depth=64,
         max_output_statements=100_000,
         max_output_bytes=2_000_000,
+        portable=False,
     ):
         from .conversion import convert
 
@@ -196,6 +197,7 @@ class QuantumProgram:
             max_depth=max_depth,
             max_output_statements=max_output_statements,
             max_output_bytes=max_output_bytes,
+            portable=portable,
         )
 
     def certified_readout(self, observables=None, **options):

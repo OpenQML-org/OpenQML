@@ -73,6 +73,7 @@ from .interop.frontends import register_adapter as register_adapter
 from .interop.frontends import unregister_adapter as unregister_adapter
 from .interop.inspection import PythonSourceReport as PythonSourceReport
 from .interop.inspection import inspect_python as inspect_python
+from .interop.portable import PortableProgram as PortableProgram
 from .interop.program import QuantumProgram as QuantumProgram
 from .interop.program import as_circuit as as_circuit
 from .interop.program_compilation import ProgramConversion as ProgramConversion

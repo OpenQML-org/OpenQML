@@ -127,19 +127,28 @@ class _Lowering:
                 value, native, bdd, classical_map=cmap, variable_bits=self.storage.variables
             )
             self.charge(bdd.work)
-            table = {0: low, 1: high}
-            pending, reachable = [root], set()
-            while pending:
-                index = pending.pop()
-                if index < 2 or index in reachable:
-                    continue
-                reachable.add(index)
-                pending.extend(bdd.nodes[index][1:])
-            for index in sorted(reachable):
-                node = bdd.nodes[index]
-                bit, false, true = node
-                table[index] = self.branch(ClassicalCondition((bit,), 1), table[true], table[false])
-            return table[root]
+
+            def lower(root, low, high):
+                table = {0: low, 1: high}
+                pending, reachable = [root], set()
+                while pending:
+                    index = pending.pop()
+                    if index < 2 or index in reachable:
+                        continue
+                    reachable.add(index)
+                    pending.extend(bdd.nodes[index][1:])
+                for index in sorted(reachable):
+                    bit, false, true = bdd.nodes[index]
+                    table[index] = self.branch(
+                        ClassicalCondition((bit,), 1), table[true], table[false]
+                    )
+                return table[root]
+
+            result = lower(root, low, high)
+            if bdd.index_error:
+                invalid = Circuit(self.width, num_clbits=self.bits).gate("index_error")
+                result = lower(bdd.index_error, result, self.prefix(invalid, self.empty))
+            return result
         return self.branch(
             ClassicalCondition(tuple(cmap[bit] for bit in condition.bits), condition.value),
             high,
@@ -152,6 +161,19 @@ class _Lowering:
         from ._classical_predicate import _BitVectors, _compile, decision_circuit
 
         bdd = self.bounds_bdd(bounds, location)
+        empty = Circuit(self.width, num_clbits=self.bits)
+
+        def select(root, yes, no):
+            return decision_circuit(
+                bdd, root, (yes, no), self.width, self.bits, self.limit, self.max_depth, location
+            )
+
+        def checked(result):
+            self.charge(bdd.work)
+            if bdd.index_error:
+                return select(bdd.index_error, empty.gate("index_error"), result)
+            return result
+
         roots = _compile(
             operation.rvalue,
             native,
@@ -176,19 +198,6 @@ class _Lowering:
             _BitVectors(bdd).check_range(len(target), address)
             if len(roots) != 1:
                 self.fail("Indexed stores require one bit.", location, "CLASSICAL_STORE_WIDTH")
-            empty = Circuit(self.width, num_clbits=self.bits)
-
-            def select(root, yes, no):
-                return decision_circuit(
-                    bdd,
-                    root,
-                    (yes, no),
-                    self.width,
-                    self.bits,
-                    self.limit,
-                    self.max_depth,
-                    location,
-                )
 
             def route(level, offset):
                 self.charge()
@@ -206,15 +215,13 @@ class _Lowering:
                 )
 
             result = route(min(len(address), (len(target) - 1).bit_length()) - 1, 0)
-            self.charge(bdd.work)
-            return result
+            return checked(result)
         targets = self.storage.targets(operation.lvalue, native, cmap)
         if len(roots) != len(targets):
             self.fail("Store widths differ.", location, "CLASSICAL_STORE_WIDTH")
-        self.charge(bdd.work)
 
         def write(bit, value):
-            body = Circuit(self.width, num_clbits=self.bits).classical_set(bit, value)
+            body = empty.classical_set(bit, value)
             return self.prefix(body, self.empty)
 
         def decision(root, bit):
@@ -232,11 +239,11 @@ class _Lowering:
                 )
             return self.materialize(table[root])
 
-        result = Circuit(self.width, num_clbits=self.bits)
+        result = empty
         if all(root < 2 for root in roots):
             for bit, root in zip(targets, roots, strict=True):
                 result = result.classical_set(bit, root)
-            return result
+            return checked(result)
         # Resolve every RHS bit before mutating any destination bit.
         for i, root in enumerate(roots):
             result = result.compose(decision(root, self.storage.scratch + i))
@@ -246,7 +253,7 @@ class _Lowering:
                 self.materialize(write(bit, 1)),
                 self.materialize(write(bit, 0)),
             )
-        return result
+        return checked(result)
 
     def block(self, native, qmap, cmap, normal, break_to=None, continue_to=None, depth=0):
         from qiskit.circuit import (

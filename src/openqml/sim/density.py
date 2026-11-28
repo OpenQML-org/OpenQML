@@ -410,13 +410,10 @@ def _simulate(
     except ValueError as exc:
         raise ValidationError("Parameter batch shapes cannot be broadcast together.") from exc
     if circuit.has_runtime_control:
-        from ._runtime_control import run_control
+        from ._absorption import absorbing_instrument
+        from ._runtime_control import RecurrentControl, run_control
 
-        states = run_control(
-            circuit,
-            bindings,
-            ops,
-            shape,
+        options = dict(
             max_qubits=max_qubits,
             max_memory_mb=max_memory_mb,
             max_branches=max_branches,
@@ -424,6 +421,13 @@ def _simulate(
             retain_classical=retain_classical,
             classical_bits=classical_bits,
         )
+        if backend == "numpy":
+            try:
+                states = run_control(circuit, bindings, ops, shape, **options)
+                return states, ops, shape
+            except RecurrentControl:
+                pass
+        states = absorbing_instrument(circuit, bindings, ops, shape, **options)
         return states, ops, shape
     branch_limit = _planning_limit(
         circuit, max_qubits, max_memory_mb, math.prod(shape), max_branches

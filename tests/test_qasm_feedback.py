@@ -255,8 +255,10 @@ def test_index_guard_expires_after_writes_and_loop_back_edges():
     assert oq.sample(restored, shots=19, classical_bits=(0, 1)) == {"11": 19}
     assert plan.verify().matched
     for body in ("while(i<2){i+=1; x q[i];}", "if(i<2){while(true){x q[i]; i+=1;}}"):
-        with pytest.raises(ConversionError, match="CLASSICAL_INDEX_RANGE"):
-            convert(header + body, target="ir", source_options={"parser": "builtin"})
+        checked = convert(header + body, target="ir", source_options={"parser": "builtin"}).value
+        assert checked.to_dict()["version"] == 7
+        with pytest.raises(oq.ValidationError, match="CLASSICAL_INDEX_RANGE"):
+            oq.sample(checked, shots=8)
     for options in ({"max_depth": 1}, {"max_operations": 4}):
         with pytest.raises(ConversionError, match="LIMIT|DEPTH"):
             convert(good, target="ir", **options)
@@ -271,6 +273,22 @@ def test_64_bit_unsigned_counter_wraps_and_drives_qubit_index():
     circuit = convert(src, target="ir", max_depth=8).value
     assert sum(1 for _ in circuit.walk_operations()) < 1000
     assert oq.sample(circuit, shots=12, classical_bits=(0, 1)) == {"01": 12}
+
+
+def test_wide_dynamic_address_checks_high_bits_without_enumerating_them():
+    import openqml as oq
+
+    source = "OPENQASM 3; qubit[3] q; bit[3] out; uint[64] i=2; x q[i]; out=measure q;"
+    plan = oq.plan_conversion(source, target="json", max_depth=6)
+    restored = Circuit.from_json(plan.export().value)
+    assert oq.sample(restored, shots=12, classical_bits=(0, 1, 2)) == {"001": 12}
+    unsafe = oq.convert(source.replace("i=2", "i=1099511627778"), target="ir").value
+    with pytest.raises(oq.ValidationError, match="CLASSICAL_INDEX_RANGE"):
+        oq.density_matrix(unsafe)
+    assert "RUNTIME_INDEX_CHECK_UNSUPPORTED" in {
+        d.code for d in oq.plan_conversion(unsafe, target="openqasm3").diagnostics
+    }
+    assert oq.plan_conversion(unsafe, target="json").verify().matched
 
 
 @pytest.mark.parametrize("arms", ["case 0 {} case 0 {}", "default {} default {}", "x q;"])

@@ -3,6 +3,7 @@
 import math
 import re
 from collections.abc import Mapping, Sequence
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -97,7 +98,45 @@ def from_cirq(
         (cirq.ZZPowGate, "rzz"),
     ]
     operations, diagnostics, keys, written_bits = [], [], {}, set()
+    loop_keys = set()
     phase, num_clbits, work = Expression(), 0, 0
+
+    def record(operation, location):
+        nonlocal num_clbits
+        gate = operation.gate
+        if any(gate.invert_mask) or getattr(gate, "confusion_map", {}):
+            raise conversion_error(
+                "MEASUREMENT_TRANSFORM",
+                "Inverted or confused measurements are unsupported.",
+                location,
+            )
+        key = cirq.measurement_key_name(operation)
+        width = len(operation.qubits)
+        if key in keys:
+            raise conversion_error(
+                "REPEATED_MEASUREMENT_KEY",
+                "Repeated Cirq keys cannot preserve IR bit writes.",
+                location,
+            )
+        if key in key_map:
+            targets = key_map[key]
+        elif re.fullmatch(r"c(?:0|[1-9][0-9]*)", key) and width == 1:
+            targets = (int(key[1:]),)
+        else:
+            raise conversion_error(
+                "MEASUREMENT_KEY",
+                "Use keys c0, c1, ... or an explicit measurement_map.",
+                location,
+            )
+        if len(targets) != width or written_bits.intersection(targets):
+            raise conversion_error(
+                "MEASUREMENT_MAP", "Keys need disjoint bits matching measurement arity.", location
+            )
+        keys[key] = targets
+        written_bits.update(targets)
+        num_clbits = max(num_clbits, max(targets) + 1)
+        return key, targets
+
     for index, operation in enumerate(native.all_operations()):
         location = f"operations[{index}]"
         work += 1
@@ -115,8 +154,78 @@ def from_cirq(
             continue
         qubits = tuple(mapping[q] for q in operation.qubits)
         try:
-            if isinstance(operation, cirq.ClassicallyControlledOperation):
+            if isinstance(operation, cirq.CircuitOperation) and operation.repeat_until is not None:
                 from ._cirq_control import lower_controls
+
+                condition = operation.repeat_until
+                if (
+                    max_depth == 0
+                    or operation.parent_path
+                    or (type(condition) is cirq.KeyCondition and condition.index != -1)
+                ):
+                    raise conversion_error(
+                        "CONTROL_FLOW_UNSUPPORTED",
+                        "A native repeat-until requires bounded depth and latest-record keys.",
+                        location,
+                    )
+                plain = operation.replace(repeat_until=None).mapped_circuit()
+                measured = {}
+                for item in plain.all_operations():
+                    if isinstance(item, cirq.CircuitOperation):
+                        raise conversion_error(
+                            "CONTROL_FLOW_UNSUPPORTED",
+                            "Nested Cirq repeats require a portable export.",
+                            location,
+                        )
+                    if isinstance(item.gate, cirq.MeasurementGate):
+                        key, targets = record(item, location)
+                        measured[key] = targets
+                if operation.measurement_key_map:
+                    condition = cirq.with_measurement_key_mapping(
+                        condition, operation.measurement_key_map
+                    )
+                condition = cirq.resolve_parameters(condition, operation.param_resolver)
+                if not {str(key) for key in condition.keys} <= measured.keys():
+                    raise conversion_error(
+                        "CLASSICAL_CONDITION",
+                        "A repeat guard must read its own latest measurements.",
+                        location,
+                    )
+                body = from_cirq(
+                    plain,
+                    qubit_order=order,
+                    measurement_map=measured,
+                    max_matrix_qubits=max_matrix_qubits,
+                    max_operations=max_operations - work,
+                    max_depth=max_depth - 1,
+                    max_condition_bits=max_condition_bits,
+                )
+                work += sum(1 for _ in body.walk_operations())
+                exit_block, cost = lower_controls(
+                    SimpleNamespace(classical_controls=(condition,)),
+                    lambda: Circuit(len(order)).break_loop(),
+                    measured,
+                    max_bits=max_condition_bits,
+                    max_operations=max_operations - work,
+                    max_depth=max_depth - 1,
+                    location=location,
+                )
+                work += cost
+                body = body.compose(exit_block)
+                operations.append(Operation("while_loop", (), blocks=(body,)))
+                loop_keys.update(measured)
+            elif isinstance(operation, cirq.ClassicallyControlledOperation):
+                from ._cirq_control import lower_controls
+
+                if any(
+                    type(control) is cirq.KeyCondition
+                    and control.index != -1
+                    and str(control.key) in loop_keys
+                    for control in operation.classical_controls
+                ):
+                    raise conversion_error(
+                        "MEASUREMENT_HISTORY", "A repeated key must use its latest value.", location
+                    )
 
                 def body(operation=operation, available=max_operations - work + 1):
                     return from_cirq(
@@ -175,47 +284,16 @@ def from_cirq(
                 kind, attribute = kinds[type(gate)]
                 operations.append(Operation(kind, qubits, (getattr(gate, attribute),)))
             elif isinstance(gate, cirq.MeasurementGate):
-                if any(gate.invert_mask) or getattr(gate, "confusion_map", {}):
-                    raise conversion_error(
-                        "MEASUREMENT_TRANSFORM",
-                        "Inverted or confused measurements are unsupported.",
-                        location,
-                    )
-                key = cirq.measurement_key_name(operation)
-                if key in keys:
-                    raise conversion_error(
-                        "REPEATED_MEASUREMENT_KEY",
-                        "Repeated Cirq keys cannot preserve IR bit writes.",
-                        location,
-                    )
-                if key in key_map:
-                    targets = key_map[key]
-                elif re.fullmatch(r"c(?:0|[1-9][0-9]*)", key) and len(qubits) == 1:
-                    targets = (int(key[1:]),)
-                else:
-                    raise conversion_error(
-                        "MEASUREMENT_KEY",
-                        "Use keys c0, c1, ... or an explicit measurement_map in qubit order.",
-                        location,
-                    )
-                if len(targets) != len(qubits) or written_bits.intersection(targets):
-                    raise conversion_error(
-                        "MEASUREMENT_MAP",
-                        "Keys need disjoint bits matching measurement arity.",
-                        location,
-                    )
+                _, targets = record(operation, location)
                 work += len(targets) - 1
                 if work > max_operations:
                     raise conversion_error(
                         "EXPANSION_LIMIT", "Measurement expansion exceeds budget.", location
                     )
-                keys[key] = targets
-                written_bits.update(targets)
                 operations.extend(
                     Operation("measure", (q,), clbits=(bit,))
                     for q, bit in zip(qubits, targets, strict=True)
                 )
-                num_clbits = max(num_clbits, max(targets) + 1)
             else:
                 name = next((name for candidate, name in fixed if gate == candidate), None)
                 if name:
@@ -338,11 +416,13 @@ def to_cirq(circuit: Circuit, bindings=None, *, max_operations=100_000, max_dept
     circuit = bound_for_export(circuit, bindings)
     cirq = dependency("cirq", "cirq")
     from ..conversion import diagnose
+    from ._cirq_loops import repeat_forms
 
     diagnostics = diagnose(circuit, "cirq", max_operations=max_operations, max_depth=max_depth)
     if diagnostics:
         raise ConversionError(diagnostics)
     circuit = decompose(circuit, max_operations=max_operations, max_depth=max_depth)
+    loops = repeat_forms(circuit)
     qubits = cirq.LineQubit.range(circuit.num_qubits)
     fixed = {
         "id": cirq.I,
@@ -369,15 +449,42 @@ def to_cirq(circuit: Circuit, bindings=None, *, max_operations=100_000, max_dept
             native.append(cirq.I(qubits[q]), strategy=cirq.InsertStrategy.NEW)
     written = set()
 
-    def append(operation, controls):
-        native.append(
+    def append(destination, operation, controls):
+        destination.append(
             operation.with_classical_controls(*controls) if controls else operation,
             strategy=cirq.InsertStrategy.NEW,
         )
 
-    def emit(block, controls=()):
-        for op in block.operations:
+    def condition_expression(condition, bits):
+        sympy = dependency("sympy", "cirq")
+        return sympy.And(
+            *(
+                sympy.Eq(sympy.Symbol(f"c{bit}"), (condition.value >> i) & 1)
+                for i, bit in enumerate(condition.bits)
+                if bit in bits
+            )
+        )
+
+    def emit(block, destination, controls=(), *, top=False):
+        for index, op in enumerate(block.operations):
             targets = [qubits[q] for q in op.qubits]
+            if top and index in loops:
+                body, guard, inverted = loops[index]
+                sub = cirq.Circuit()
+                emit(body, sub)
+                condition = condition_expression(guard, written)
+                if inverted:
+                    condition = dependency("sympy", "cirq").Not(condition)
+                append(
+                    destination,
+                    cirq.CircuitOperation(
+                        sub.freeze(),
+                        use_repetition_ids=False,
+                        repeat_until=cirq.SympyCondition(condition),
+                    ),
+                    controls,
+                )
+                continue
             if op.name == "if_else":
                 sympy = dependency("sympy", "cirq")
                 # Unwritten IR storage is zero; Cirq raises on missing keys.
@@ -386,7 +493,7 @@ def to_cirq(circuit: Circuit, bindings=None, *, max_operations=100_000, max_dept
                     (bit, (op.condition.value >> i) & 1) for i, bit in enumerate(op.condition.bits)
                 ]
                 if any(bit not in written and value for bit, value in expected):
-                    emit(op.blocks[1], controls)
+                    emit(op.blocks[1], destination, controls)
                 else:
                     terms = [
                         sympy.Eq(sympy.Symbol(f"c{bit}"), value)
@@ -394,11 +501,11 @@ def to_cirq(circuit: Circuit, bindings=None, *, max_operations=100_000, max_dept
                         if bit in written
                     ]
                     if not terms:
-                        emit(op.blocks[0], controls)
+                        emit(op.blocks[0], destination, controls)
                     else:
                         predicate = sympy.And(*terms)
-                        emit(op.blocks[0], controls + (predicate,))
-                        emit(op.blocks[1], controls + (sympy.Not(predicate),))
+                        emit(op.blocks[0], destination, controls + (predicate,))
+                        emit(op.blocks[1], destination, controls + (sympy.Not(predicate),))
                 continue
             if op.name == "reset":
                 gate = cirq.reset(targets[0])
@@ -425,7 +532,7 @@ def to_cirq(circuit: Circuit, bindings=None, *, max_operations=100_000, max_dept
                         op.name
                     ]
                     gate = kind(exponent=angle / math.pi, global_shift=-0.5).on(*targets)
-            append(gate, controls)
+            append(destination, gate, controls)
         phase = block.global_phase
         if phase.parameters:
             sympy = dependency("sympy", "cirq")
@@ -433,7 +540,7 @@ def to_cirq(circuit: Circuit, bindings=None, *, max_operations=100_000, max_dept
         else:
             coefficient = np.exp(1j * phase.constant)
         if phase.parameters or phase.constant:
-            append(cirq.global_phase_operation(coefficient), controls)
+            append(destination, cirq.global_phase_operation(coefficient), controls)
 
-    emit(circuit)
+    emit(circuit, native, top=True)
     return native
