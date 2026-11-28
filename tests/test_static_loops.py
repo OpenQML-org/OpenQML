@@ -173,6 +173,8 @@ def test_loop_budget_depth_and_import_policy_survive_program_binding_and_convers
         'OPENQASM 3.0; include "stdgates.inc"; input float w; qubit q; '
         "for int i in [0:7] { ry(w*i) q; }"
     )
+    with pytest.raises(ConversionError, match="OPERATION_LIMIT"):
+        QuantumProgram.from_qasm(source, max_operations=1)
     program = QuantumProgram.from_qasm(source, max_operations=3)
     for action in (
         lambda: program.to_ir(),

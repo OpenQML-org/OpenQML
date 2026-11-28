@@ -110,10 +110,9 @@ class QuantumProgram:
                 "REGISTER_LIMIT", "SDK register sizes exceed the configured limit."
             )
         remaining = max_operations
-        pending = [(iter(native.data), 0)]
+        pending = [iter(native.data)]
         while pending:
-            rows, depth = pending[-1]
-            item = next(rows, None)
+            item = next(pending[-1], None)
             if item is None:
                 pending.pop()
                 continue
@@ -122,10 +121,7 @@ class QuantumProgram:
                 raise conversion_error(
                     "OPERATION_LIMIT", "SDK instruction count exceeds the configured limit."
                 )
-            for block in getattr(item.operation, "blocks", ()):
-                if depth >= max_depth:
-                    raise conversion_error("CONTROL_DEPTH", "SDK blocks exceed max_depth.")
-                pending.append((iter(block.data), depth + 1))
+            pending.extend(iter(block.data) for block in getattr(item.operation, "blocks", ()))
         return cls(
             native,
             "qiskit",
