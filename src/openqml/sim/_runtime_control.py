@@ -11,6 +11,25 @@ from ..ir._control import control_program
 from ..ir.core import CHANNEL_GATES, integer
 
 
+def _operator_digest(state):
+    components = np.ascontiguousarray(state).view(state.real.dtype)
+    magnitude = np.max(np.abs(components), initial=0)
+    if not magnitude:
+        return None
+    # The remaining program acts linearly, so a common scale cannot affect
+    # which measurement branches of this operator can reach the loop again.
+    normalized = components / magnitude
+    normalized[normalized == 0] = 0
+    return hashlib.blake2b(normalized.view(np.uint8), digest_size=16).digest()
+
+
+def _scale_operator(state, exponent):
+    result = np.empty_like(state)
+    np.ldexp(state.real, exponent, out=result.real)
+    np.ldexp(state.imag, exponent, out=result.imag)
+    return result
+
+
 def run_control(
     circuit,
     bindings,
@@ -62,7 +81,7 @@ def run_control(
     available = budget - 160 * len(code) - 3 * state_bytes
     rng = np.random.default_rng(seed) if sampled else None
     projectors = (np.diag([1.0, 0.0]), np.diag([0.0, 1.0]))
-    pending = [(entry, frozenset(), state, shots, {}, 0, 0)]
+    pending = [(entry, frozenset(), state, shots, 0, set(), 0)]
     outputs = {}
     steps = pending_bytes = output_bytes = 0
 
@@ -81,7 +100,7 @@ def run_control(
 
     check(1)
     while pending:
-        pc, key, state, count, visited, history_bytes, splits = pending.pop()
+        pc, key, state, count, exponent, visited, history_bytes = pending.pop()
         pending_bytes -= history_bytes
         while pc != -1:
             steps += 1
@@ -99,17 +118,17 @@ def run_control(
             if name in {"while_loop", "if_else"}:
                 take = op.condition is None or op.condition.matches(key)
                 if name == "while_loop" and take and not sampled:
-                    header = (pc, key)
-                    digest = hashlib.blake2b(
-                        np.ascontiguousarray(state).view(np.uint8), digest_size=16
-                    ).digest()
+                    digest = _operator_digest(state)
+                    if digest is None:
+                        state = None
+                        break
                     signature = pc, key, digest
-                    if visited.setdefault(header, splits) != splits or signature in visited:
+                    if signature in visited:
                         raise ResourceError(
                             "A recurrent loop path has no finite termination proof. "
                             "Use sample() for trajectories."
                         )
-                    visited[signature] = splits
+                    visited.add(signature)
                     history_bytes += 512 + 32 * len(key)
                     check(len(pending) + len(outputs) + 1, history_bytes)
                 pc = following if take else other
@@ -137,30 +156,40 @@ def run_control(
                     counts = count - ones, ones
                 branches = []
                 for value, child in enumerate(children):
-                    num = counts[value] if sampled else None
-                    if (sampled and not num) or (not sampled and not np.any(child)):
-                        continue
+                    num, child_exponent = None, exponent
                     if sampled:
+                        num = counts[value]
+                        if not num:
+                            continue
                         child = child / (math.sqrt(weights[value]) if pure else weights[value])
+                    else:
+                        magnitude = float(np.max(np.abs(child), initial=0))
+                        if not magnitude:
+                            continue
+                        # Track the scale separately so a recurrent branch
+                        # cannot disappear through probability underflow.
+                        _, shift = math.frexp(magnitude)
+                        if shift:
+                            child = _scale_operator(child, -shift)
+                            child_exponent += shift
                     target = key
                     if name == "measure":
                         bit = op.clbits[0]
                         target = key | {bit} if value else key - {bit}
                     elif value:
                         child = _apply_matrix(child, _gate_matrix("x", (), ops), op.qubits, n, ops)
-                    branches.append((pc, target, child, num))
+                    branches.append((pc, target, child, num, child_exponent))
                 check(
                     len(pending) + len(branches) + (0 if sampled else len(outputs)),
                     history_bytes * len(branches),
                 )
                 if len(branches) == 2:
-                    splits += 1
                     pending_bytes += history_bytes
-                    pending.append((*branches.pop(), visited.copy(), history_bytes, splits))
+                    pending.append((*branches.pop(), visited.copy(), history_bytes))
                 if not branches:
                     state = None
                     break
-                pc, key, state, count = branches[0]
+                pc, key, state, count, exponent = branches[0]
                 del children, child, branches
             elif name == "reset" or name in CHANNEL_GATES:
                 state = _apply_channel(state, op, bindings, n, ops)
@@ -176,6 +205,8 @@ def run_control(
             if target not in outputs:
                 output_bytes += 256 + 32 * len(target)
             check(len(pending) + len(outputs) + int(target not in outputs), history_bytes)
+            if exponent:
+                state = _scale_operator(state, exponent)
             outputs[target] = outputs[target] + state if target in outputs else state
         elif record:
             bits = range(width) if classical_bits is None else classical_bits

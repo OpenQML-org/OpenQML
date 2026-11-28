@@ -19,6 +19,7 @@ from openqml import (
     execute_batch,
     expectations_batch,
     parameter_shift,
+    sample,
     statevector,
 )
 from openqml.parameters import expression
@@ -262,14 +263,14 @@ def test_custom_gate_expansion_budget_persists_on_native_program():
         convert(source, source="openqasm2", target="ir", source_options={"max_operations": 1})
 
 
-def test_auto_frontend_preserves_classical_control_diagnostic():
-    pytest.importorskip("qiskit_qasm3_import")
+def test_auto_frontend_preserves_runtime_while_loop():
     source = (
         'OPENQASM 3.0; include "stdgates.inc"; qubit q; bit c; '
-        "c = measure q; while(c) { x q; c = measure q; }"
+        "x q; c = measure q; while(c) { x q; c = measure q; }"
     )
-    with pytest.raises(ConversionError, match="CLASSICAL_CONTROL"):
-        convert(source, source="openqasm3", target="ir")
+    result = convert(source, source="openqasm3", target="ir")
+    assert result.circuit.operations[-1].name == "while_loop"
+    assert sample(result.circuit, shots=17) == {"0": 17}
 
 
 def test_explicit_include_path_and_comments_work_through_auto_frontend(tmp_path):

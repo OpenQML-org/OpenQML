@@ -219,6 +219,17 @@ def test_repeat_until_measurement_preserves_parity_and_termination():
         oq.sample(oq.Circuit(1).while_loop(None, oq.Circuit(1)), shots=3, max_loop_steps=9)
 
 
+def test_finite_measurement_loop_can_revisit_the_same_classical_record():
+    guard = oq.ClassicalCondition((0,), 1)
+    body = oq.Circuit(2).measure(0, 0).x(0).x(1)
+    circuit = oq.Circuit(2).classical_set(0, 1).h(0).while_loop(guard, body)
+
+    # Outcome 0 exits at once in |11>. Outcome 1 revisits the same guard
+    # with the first qubit flipped, then exits in |10>.
+    np.testing.assert_allclose(oq.density_matrix(circuit), np.diag([0, 0, 0.5, 0.5]))
+    assert oq.plan_conversion(circuit, target="openqasm3").verify().matched
+
+
 def test_runtime_schema_and_unsupported_targets():
     inner = oq.Circuit(1).x(0).break_loop()
     outer = oq.Circuit(1).while_loop(None, inner).x(0).break_loop()

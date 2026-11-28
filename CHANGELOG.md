@@ -1,5 +1,13 @@
 # Changes
 
+## 0.39.1
+
+- Fix exact density simulation and conversion verification for finite
+  measurement-controlled loops that revisit a classical record with a
+  different quantum state.
+- Verify that automatic OpenQASM import preserves and executes runtime while
+  loops, restoring the PyPI release check.
+
 ## 0.39.0
 
 - Preserve runtime while loops and nested break/continue in Qiskit, OpenQASM 3
